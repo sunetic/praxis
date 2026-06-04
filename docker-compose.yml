@@ -1,0 +1,15 @@
+version: '3.8'
+
+services:
+  praxis:
+    build:
+      context: .
+    image: praxis:latest
+    ports:
+      - "8000:8000"
+    volumes:
+      - praxis_data:/app/data
+    restart: unless-stopped
+
+volumes:
+  praxis_data:
