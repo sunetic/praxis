@@ -1,0 +1,91 @@
+# Dependencies
+node_modules/
+.pnp/
+.pnp.js
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+.venv/
+env/
+.env
+.env.local
+.env.*.local
+
+# Build
+dist/
+build/
+site_handbook/
+*.egg-info/
+*.egg
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+npm-debug.log*
+
+# Temp (per project rules)
+tmp/
+
+# Vite
+*.local
+
+# Local sqlite database
+praxis.db
+tracing.db
+tracing.db-shm
+tracing.db-wal
+.aider*
+
+# Runtime logs directory
+logs/
+
+# AI toolchain working files (symlink from EE repo locally)
+.captain
+.cursor
+.codex
+.opencode
+.claude
+openspec
+CLAUDE.md
+AGENTS.md
+.codegraph
+frontend/.captain
+
+# Local artifacts and session outputs
+.artifacts/
+frontend/.artifacts/
+.playwright-mcp/
+frontend/.artifacts-*.png
+page-current.yml
+page-main.yml
+
+# Scratch screenshots (root-level)
+*.png
+*.jpg
+*.jpeg
+
+# Local databases
+app.db
+test_tmp.db
+frontend/app.db
+
+# data/ runtime outputs
+data/knowledge/[0-9]*/
+data/state_store.db/
+data/stream_store/
+
+frontend/.vite/

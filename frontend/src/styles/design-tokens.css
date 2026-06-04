@@ -1,0 +1,50 @@
+/**
+ * Praxis Design System — 精心设计的统一令牌
+ * 原则：整体、协调、克制。8px 网格，单一主色，清晰层级。
+ */
+
+:root {
+    /* === 间距 (8px 网格) === */
+    --space-1: 0.25rem;   /* 4px */
+    --space-2: 0.5rem;    /* 8px */
+    --space-3: 0.75rem;   /* 12px */
+    --space-4: 1rem;      /* 16px */
+    --space-5: 1.25rem;   /* 20px */
+    --space-6: 1.5rem;    /* 24px */
+    --space-8: 2rem;      /* 32px */
+    --space-10: 2.5rem;   /* 40px */
+    --space-12: 3rem;     /* 48px */
+
+    /* === 圆角 (统一) === */
+    --radius: 0.5rem;     /* 8px - 卡片、按钮、输入 */
+    --radius-lg: 0.75rem; /* 12px - 气泡、弹窗 */
+
+    /* === 阴影 (克制，单层) === */
+    --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.04);
+    --shadow-md: 0 4px 6px -1px rgb(0 0 0 / 0.05), 0 2px 4px -2px rgb(0 0 0 / 0.05);
+
+    /* === 色彩 (马卡龙：薰衣草 + 暖灰) === */
+    --color-surface: #FFFFFF;
+    --color-surface-elevated: #FAFAF9;
+    --color-background: #F7F6F4;
+    --color-ink: #1c1917;
+    --color-ink-secondary: #57534e;
+    --color-ink-tertiary: #a8a29e;
+    --color-border: #e7e5e4;
+    --color-border-strong: #d6d3d1;
+    --color-chart-grid: #e7e5e4;
+    --color-primary: #5B5BD6;
+    --color-primary-hover: #4F4FC4;
+    --color-primary-muted: #ede9fe;
+    --color-positive: #4d7c5a;
+    --color-negative: #c75c5c;
+    --color-warning: #e5a54b;
+    --color-warning: #e5a54b;
+
+    /* === 马卡龙 Pastel（数据卡片背景，Dabang 风格）=== */
+    --color-pastel-pink: #FEE2E2;
+    --color-pastel-orange: #FFEDD5;
+    --color-pastel-green: #D1FAE5;
+    --color-pastel-purple: #EDE9FE;
+    --color-pastel-blue: #DBEAFE;
+}
