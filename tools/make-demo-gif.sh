@@ -71,17 +71,17 @@ build_gif() {
 # ── GIF 1: Chat ──
 build_gif "demo-chat.gif" \
   "seg1-chat.webm"      0 10  \
-  "seg1-chat.webm"     34 38  \
+  "seg1-chat.webm"     33 38  \
   "seg2-followup.webm"  2  8  \
-  "seg2-followup.webm" 46 50
+  "seg2-followup.webm" 45 50
 
 # ── GIF 2: Agent ──
 build_gif "demo-agent.gif" \
   "seg3-save-agent.webm"  2  8  \
-  "seg3-save-agent.webm" 19 23  \
+  "seg3-save-agent.webm" 18 23  \
   "seg4-run-agent.webm"   0  6  \
   "seg4-run-agent.webm"  10 16  \
-  "seg4-run-agent.webm"  70 74
+  "seg4-run-agent.webm"  69 74
 
 # ── GIF 3: Scheduler ──
 build_gif "demo-scheduler.gif" \
