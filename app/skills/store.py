@@ -13,7 +13,7 @@ logger = get_logger("skills.store")
 
 
 VALID_VERSION_PATTERN = re.compile(r"^\d+\.\d+\.\d+$")
-VALID_DATABASE = {"oceanbase", "mysql", "general"}
+VALID_DATABASE = {"mysql", "postgresql", "general"}
 VALID_SOURCE = {"built_in", "custom"}
 CUSTOM_SKILLS_DIR = "custom"
 REFERENCE_SEPARATOR = "<!-- skill:reference -->"
