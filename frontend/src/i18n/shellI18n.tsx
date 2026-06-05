@@ -1854,3 +1854,4 @@ export function ShellI18nProvider({ children }: ShellI18nProviderProps) {
 export function useShellI18n() {
   return useContext(ShellI18nContext)
 }
+
