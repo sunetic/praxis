@@ -45,14 +45,6 @@ Schedule any agent for recurring execution — daily health checks, weekly index
 
 <p align="center"><img src="assets/demo-scheduler.gif" alt="Schedule agents" width="720"></p>
 
-## More Features
-
-- **Pluggable Skills** — Markdown-based prompt modules that give agents domain expertise (e.g. layered diagnosis, slow-query analysis). Write your own with YAML front matter.
-- **SQL Analysis** — Paste a SQL statement and get execution plan analysis, rewrite suggestions, and AI-powered performance insights.
-- **Knowledge Base** — Upload documents for agents to reference during conversations, providing context-aware, grounded answers.
-- **Functions** — Define reusable data-retrieval functions backed by SQL templates. Build and test them visually, then expose to agents or schedule for automation.
-- **Channels** — Connect external messaging platforms (Slack, DingTalk, etc.) so users can interact with agents outside the Praxis UI.
-
 ## Quick Start
 
 ```bash
@@ -60,6 +52,13 @@ docker run -d -p 8000:8000 -v ~/.praxis/data:/app/data sunzy2/praxis:latest
 ```
 
 Open [http://localhost:8000](http://localhost:8000) and follow the onboarding wizard to connect your first database and configure your AI provider.
+
+## More Features
+
+- **Pluggable Skills** — Markdown-based prompt modules that give agents domain expertise (e.g. layered diagnosis, slow-query analysis). Write your own with YAML front matter.
+- **Knowledge Base** — Upload documents for agents to reference during conversations, providing context-aware, grounded answers.
+- **Functions** — Define reusable data-retrieval functions backed by SQL templates. Build and test them visually, then expose to agents or schedule for automation.
+- **Channels** — Connect external messaging platforms (Slack, DingTalk, etc.) so users can interact with agents outside the Praxis UI.
 
 ## Architecture
 

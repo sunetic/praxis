@@ -45,14 +45,6 @@ Praxis 是一个可自部署的平台，把你的数据库变成 AI 对话工作
 
 <p align="center"><img src="assets/demo-scheduler.gif" alt="调度 Agent" width="720"></p>
 
-## 更多功能
-
-- **可插拔技能** — Markdown 格式的提示词模块，赋予 Agent 领域专业能力（如分层诊断策略、慢查询分析）。用 YAML Front Matter 编写，无需写代码。
-- **SQL 分析** — 粘贴一条 SQL，获取执行计划分析、改写建议和 AI 驱动的性能洞察。
-- **知识库** — 上传文档构建知识库。Agent 对话时可引用知识库内容，提供更精准、有依据的回答。
-- **函数** — 定义基于 SQL 模板的可复用数据查询函数，可视化构建和测试，然后提供给 Agent 使用或调度自动执行。
-- **渠道** — 对接外部消息平台（Slack、钉钉等），让用户在 Praxis 界面之外也能与 Agent 交互。
-
 ## 快速开始
 
 ```bash
@@ -60,6 +52,13 @@ docker run -d -p 8000:8000 -v ~/.praxis/data:/app/data sunzy2/praxis:latest
 ```
 
 打开 [http://localhost:8000](http://localhost:8000)，按引导向导连接你的第一个数据库并配置 AI 提供商。
+
+## 更多功能
+
+- **可插拔技能** — Markdown 格式的提示词模块，赋予 Agent 领域专业能力（如分层诊断策略、慢查询分析）。用 YAML Front Matter 编写，无需写代码。
+- **知识库** — 上传文档构建知识库。Agent 对话时可引用知识库内容，提供更精准、有依据的回答。
+- **函数** — 定义基于 SQL 模板的可复用数据查询函数，可视化构建和测试，然后提供给 Agent 使用或调度自动执行。
+- **渠道** — 对接外部消息平台（Slack、钉钉等），让用户在 Praxis 界面之外也能与 Agent 交互。
 
 ## 架构
 
