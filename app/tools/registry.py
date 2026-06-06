@@ -1055,6 +1055,42 @@ class SkillReferenceTool(BaseTool):
         return ToolResult(success=True, data={"skill_name": skill_name, "reference": reference})
 
 
+class KnowledgeSearchTool(BaseTool):
+    name = "knowledge_search"
+    description = (
+        "Search the platform knowledge base for relevant documentation. "
+        "An autonomous search agent will find, read, and synthesize information from knowledge base documents. "
+        "Returns structured results with snippets and a summary."
+    )
+    parameters = {
+        "type": "object",
+        "properties": {
+            "query": {
+                "type": "string",
+                "description": "The search query in natural language (Chinese or English)",
+            },
+            "kb_ids": {
+                "type": "array",
+                "items": {"type": "integer"},
+                "description": "Optional list of knowledge base IDs to search. If omitted, searches all.",
+            },
+        },
+        "required": ["query"],
+    }
+
+    async def execute(self, query: str = "", kb_ids: list[int] | None = None, **params: object) -> ToolResult:
+        del params
+        if not query.strip():
+            return ToolResult(success=False, error={"code": "invalid_argument", "message": "query is required"})
+        from app.services.knowledge.search_agent import KnowledgeSearchAgent
+        agent = KnowledgeSearchAgent()
+        try:
+            result = await agent.run(query=query, kb_ids=kb_ids)
+            return ToolResult(success=True, data=result)
+        except Exception as e:
+            return ToolResult(success=False, error={"code": "search_error", "message": str(e)})
+
+
 registry = ToolRegistry()
 registry.register(ExecuteSQLTool())
 registry.register(ExplainSQLTool())
@@ -1066,3 +1102,4 @@ registry.register(DatasourceSwitchTool())
 registry.register(AgentSaveTool())
 registry.register(AgentRunTool())
 registry.register(SkillReferenceTool())
+registry.register(KnowledgeSearchTool())
