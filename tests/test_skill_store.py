@@ -8,13 +8,13 @@ def test_skill_store_crud_flow(tmp_path: Path):
     created = store.create(
         name="ob-slow-query",
         version="1.0.0",
-        description="diagnose slow sql for oceanbase",
-        database="oceanbase",
+        description="diagnose slow sql for postgresql",
+        database="postgresql",
         always_apply=False,
         prompt="You are a slow query expert.",
     )
     assert created.name == "ob-slow-query"
-    assert created.path.endswith("/custom/oceanbase/ob-slow-query.md")
+    assert created.path.endswith("/custom/postgresql/ob-slow-query.md")
     assert created.source == "custom"
 
     loaded = store.load()
@@ -52,10 +52,10 @@ def test_skill_store_update_moves_file_by_database(tmp_path: Path):
 
     updated = store.update(
         original_name="generic-sql-helper",
-        database="oceanbase",
+        database="postgresql",
         always_apply=True,
     )
-    assert updated.path.endswith("/custom/oceanbase/generic-sql-helper.md")
+    assert updated.path.endswith("/custom/postgresql/generic-sql-helper.md")
     assert updated.always_apply is True
 
 
@@ -86,7 +86,7 @@ def test_skill_store_rejects_duplicate_create(tmp_path: Path):
         name="ob-lock-analysis",
         version="1.0.0",
         description="analyze lock waits for oceanbase",
-        database="oceanbase",
+        database="postgresql",
         always_apply=False,
         prompt="lock analysis",
     )
@@ -95,7 +95,7 @@ def test_skill_store_rejects_duplicate_create(tmp_path: Path):
             name="ob-lock-analysis",
             version="1.0.0",
             description="analyze lock waits for oceanbase",
-            database="oceanbase",
+            database="postgresql",
             always_apply=False,
             prompt="lock analysis",
         )
@@ -110,7 +110,7 @@ def test_skill_store_supports_non_ascii_name(tmp_path: Path):
         name="慢查询诊断",
         version="1.0.0",
         description="用于诊断慢查询并输出优化建议",
-        database="oceanbase",
+        database="postgresql",
         always_apply=False,
         prompt="你是慢查询诊断专家。",
     )
@@ -128,7 +128,7 @@ def test_skill_store_requires_always_apply_in_frontmatter(tmp_path: Path):
 name: xx
 version: 1.0.0
 description: this is a valid description
-database: oceanbase
+database: postgresql
 ---
 prompt
 """,
@@ -148,7 +148,7 @@ def test_skill_store_infers_built_in_by_path_and_blocks_mutation(tmp_path: Path)
 name: ob-built-in
 version: 1.0.0
 description: built in skill for system use
-database: oceanbase
+database: postgresql
 always_apply: false
 ---
 built in prompt
