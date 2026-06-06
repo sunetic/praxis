@@ -78,6 +78,9 @@ page-main.yml
 *.jpg
 *.jpeg
 
+# Raw demo recordings
+assets/recordings/
+
 # Local databases
 app.db
 test_tmp.db
