@@ -27,21 +27,21 @@ Praxis 是一个可自部署的平台，把你的数据库变成 AI 对话工作
 
 ## 看看效果
 
-### 和数据库对话
+### 诊断你的数据库
 
-用自然语言提问。Agent 自动发现表结构、编写 SQL、执行查询并展示结果——全程对话式交互，保持完整上下文。
+让 Agent 执行一次健康检查。它会自主检查表大小、索引使用情况和存储指标——执行多步诊断查询，并给出可操作的建议，就像一个 DBA 一样。
 
-<p align="center"><img src="assets/demo-chat.gif" alt="和数据库对话" width="720"></p>
+<p align="center"><img src="assets/demo-chat.gif" alt="数据库健康检查" width="720"></p>
 
 ### 保存和运行 Agent
 
-当一段对话产生了有价值的分析流程，一句话保存为可复用的 **Agent**。随时运行，用最新数据重复同样的分析。
+当一段诊断流程效果不错，一句话保存为可复用的 **Agent**。Agent 会记住整个多步分析过程——随时运行，用最新数据对任意数据源重复同样的检查。
 
 <p align="center"><img src="assets/demo-agent.gif" alt="保存和运行 Agent" width="720"></p>
 
 ### 调度自动化
 
-配置任意 Agent 按计划定时执行——日报、周期性健康检查、趋势监控。选好 Agent，设好时间，剩下的交给 Praxis。
+配置任意 Agent 按计划定时执行——每日健康检查、每周索引审查、定期性能审计。Praxis 自动运行并保存结果。
 
 <p align="center"><img src="assets/demo-scheduler.gif" alt="调度 Agent" width="720"></p>
 

@@ -1,14 +1,15 @@
 #!/usr/bin/env bash
 #
 # Generate per-feature demo GIFs from raw recordings.
-# Only trims long idle waits; keeps all meaningful content at normal speed.
+# Trims only long idle waits; keeps all meaningful content at normal speed.
 #
 # Usage: bash tools/make-demo-gif.sh
 #   Env overrides: WIDTH=1280 FPS=12
+#   Source dir: /Users/weixiao/Documents/Praxis/recordings/v2
 #
 set -euo pipefail
 
-SRC="/Users/weixiao/Documents/Praxis/recordings"
+SRC="/Users/weixiao/Documents/Praxis/recordings/v2"
 OUT="assets"
 WIDTH=${WIDTH:-1280}
 FPS=${FPS:-12}
@@ -16,15 +17,6 @@ FPS=${FPS:-12}
 echo "=== Praxis Demo GIF Builder ==="
 echo "  Width=${WIDTH}  FPS=${FPS}"
 
-# Convert a single webm to scaled mp4
-to_mp4() {
-  local src="$1" dst="$2"
-  ffmpeg -y -i "$src" \
-    -vf "scale=${WIDTH}:-2:flags=lanczos" \
-    -an -r "$FPS" "$dst" 2>/dev/null
-}
-
-# Extract a clip from webm
 clip_mp4() {
   local src="$1" start="$2" duration="$3" dst="$4"
   ffmpeg -y -ss "$start" -i "$src" -t "$duration" \
@@ -32,7 +24,13 @@ clip_mp4() {
     -an -r "$FPS" "$dst" 2>/dev/null
 }
 
-# Concat mp4s and convert to GIF
+to_mp4() {
+  local src="$1" dst="$2"
+  ffmpeg -y -i "$src" \
+    -vf "scale=${WIDTH}:-2:flags=lanczos" \
+    -an -r "$FPS" "$dst" 2>/dev/null
+}
+
 finish_gif() {
   local name="$1"
   shift
@@ -73,29 +71,37 @@ finish_gif() {
 TMPDIR_MAIN=$(mktemp -d)
 trap "rm -rf $TMPDIR_MAIN" EXIT
 
-# ── GIF 1: Chat (seg1 only, trim idle wait) ──
+# ── GIF 1: Chat — Database Health Check ──
+# seg1: 79s total. Three cuts:
+#   t14-t25: pure "..." idle wait (LLM thinking)
+#   t40-t60: tool call counter incrementing (visually static)
+# Keep [0-14] + [25-40] + [60-79] → ~49s
 echo ""
 echo "── demo-chat.gif ──"
-echo "  seg1-chat.webm: [0-12] + [26-38] (trim 14s idle wait)"
-clip_mp4 "$SRC/seg1-chat.webm" 0 12 "$TMPDIR_MAIN/s1a.mp4"
-clip_mp4 "$SRC/seg1-chat.webm" 26 12 "$TMPDIR_MAIN/s1b.mp4"
-finish_gif "demo-chat.gif" "$TMPDIR_MAIN/s1a.mp4" "$TMPDIR_MAIN/s1b.mp4"
+echo "  seg1: [0-14] + [25-40] + [60-79] (trim idle + static mid-section)"
+clip_mp4 "$SRC/seg1-health-check.webm"  0 14 "$TMPDIR_MAIN/s1a.mp4"
+clip_mp4 "$SRC/seg1-health-check.webm" 25 15 "$TMPDIR_MAIN/s1b.mp4"
+clip_mp4 "$SRC/seg1-health-check.webm" 60 19 "$TMPDIR_MAIN/s1c.mp4"
+finish_gif "demo-chat.gif" "$TMPDIR_MAIN/s1a.mp4" "$TMPDIR_MAIN/s1b.mp4" "$TMPDIR_MAIN/s1c.mp4"
 
-# ── GIF 2: Agent (seg3 up to save success + seg4 agent page → run) ──
+# ── GIF 2: Agent — Save + Run ──
+# seg2: 26s (save as agent). seg3: 24s (run agent).
+# Both start with ~2s white flash from new browser context.
 echo ""
 echo "── demo-agent.gif ──"
-echo "  seg3-save-agent.webm: [0-20] (cut before page jump to avoid double-enter)"
-echo "  seg4-run-agent.webm: [1-20] (skip white flash, show agent auto-executing)"
-clip_mp4 "$SRC/seg3-save-agent.webm" 0 20 "$TMPDIR_MAIN/s3.mp4"
-clip_mp4 "$SRC/seg4-run-agent.webm"  1 19 "$TMPDIR_MAIN/s4.mp4"
-finish_gif "demo-agent.gif" "$TMPDIR_MAIN/s3.mp4" "$TMPDIR_MAIN/s4.mp4"
+echo "  seg2-save-agent.webm: [2-26] (skip white flash)"
+echo "  seg3-run-agent.webm: [2-24] (skip white flash)"
+clip_mp4 "$SRC/seg2-save-agent.webm" 2 24 "$TMPDIR_MAIN/s2.mp4"
+clip_mp4 "$SRC/seg3-run-agent.webm"  2 22 "$TMPDIR_MAIN/s3.mp4"
+finish_gif "demo-agent.gif" "$TMPDIR_MAIN/s2.mp4" "$TMPDIR_MAIN/s3.mp4"
 
-# ── GIF 3: Scheduler (seg5 full) ──
+# ── GIF 3: Scheduler ──
+# seg4: 19s. Skip 1s white flash at start.
 echo ""
 echo "── demo-scheduler.gif ──"
-echo "  seg5-scheduler.webm: full (10s)"
-to_mp4 "$SRC/seg5-scheduler.webm" "$TMPDIR_MAIN/s5.mp4"
-finish_gif "demo-scheduler.gif" "$TMPDIR_MAIN/s5.mp4"
+echo "  seg4-scheduler.webm: [1-19] (skip white flash)"
+clip_mp4 "$SRC/seg4-scheduler.webm" 1 18 "$TMPDIR_MAIN/s4.mp4"
+finish_gif "demo-scheduler.gif" "$TMPDIR_MAIN/s4.mp4"
 
 echo ""
 echo "=== All GIFs built ==="

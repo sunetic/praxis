@@ -27,21 +27,21 @@ Praxis is a self-hosted platform that turns your databases into conversational A
 
 ## See It in Action
 
-### Chat with Your Database
+### Diagnose Your Database
 
-Ask questions in natural language. The agent discovers your schema, writes SQL, executes queries, and presents results — all in a conversational flow with full context.
+Ask the agent to run a health check. It autonomously examines table sizes, index usage, and storage metrics — running multiple diagnostic queries and presenting findings with actionable recommendations, just like a DBA would.
 
-<p align="center"><img src="assets/demo-chat.gif" alt="Chat with your database" width="720"></p>
+<p align="center"><img src="assets/demo-chat.gif" alt="Database health check" width="720"></p>
 
 ### Save & Run Agents
 
-When a conversation produces a useful workflow, save it as a reusable **Agent** with one command. Then run the agent anytime to repeat the analysis with fresh data.
+When a diagnostic workflow works well, save it as a reusable **Agent** with one command. The agent captures the entire multi-step analysis — run it anytime against any datasource to repeat the same checks with fresh data.
 
 <p align="center"><img src="assets/demo-agent.gif" alt="Save and run agents" width="720"></p>
 
 ### Automate with Scheduler
 
-Configure any agent to run on a schedule — daily reports, periodic health checks, trend monitoring. Just pick the agent, set the timing, and let Praxis handle the rest.
+Schedule any agent for recurring execution — daily health checks, weekly index reviews, periodic performance audits. Praxis runs them automatically and stores the results.
 
 <p align="center"><img src="assets/demo-scheduler.gif" alt="Schedule agents" width="720"></p>
 
