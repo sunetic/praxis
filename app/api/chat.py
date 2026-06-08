@@ -913,6 +913,7 @@ async def chat_stream(
                         event.get("data") if isinstance(event.get("data"), dict) else None,
                     )
                     await _save_messages_to_db(saved_messages)
+                    saved_messages.clear()
 
                 mapped_event = _map_tool_event_to_step_event(
                     event,
@@ -969,6 +970,12 @@ async def chat_stream(
                     "error_class": "runtime_error",
                 },
             )
+        finally:
+            _flush_turn()
+            if saved_messages:
+                await _save_messages_to_db(saved_messages)
+            if saved_timeline_events:
+                await _save_chat_events_to_db(saved_timeline_events)
 
     return StreamingResponse(generate(), media_type="text/plain; charset=utf-8")
 
