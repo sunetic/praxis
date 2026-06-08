@@ -24,7 +24,7 @@ describe("ChannelConsolePage", () => {
     channelsApi.list.mockResolvedValue([])
     channelsApi.create.mockResolvedValue({
       id: 1,
-      name: "钉钉通知",
+      name: "Alert Bot",
       provider: "dingtalk",
       status: "active",
       config: {
@@ -35,7 +35,7 @@ describe("ChannelConsolePage", () => {
     })
     channelsApi.update.mockResolvedValue({
       id: 1,
-      name: "钉钉通知",
+      name: "Alert Bot",
       provider: "dingtalk",
       status: "active",
       config: {
@@ -47,7 +47,7 @@ describe("ChannelConsolePage", () => {
     channelsApi.sendTest.mockResolvedValue({ object_type: "channel", action: "send" })
   })
 
-  it("shows channel cards and enters dingtalk wizard", async () => {
+  it("shows channel cards including Slack and Telegram", async () => {
     render(
       <MemoryRouter initialEntries={["/channel"]}>
         <Routes>
@@ -57,14 +57,28 @@ describe("ChannelConsolePage", () => {
       </MemoryRouter>
     )
 
-    expect(screen.getByText(/管理 IM 通知通道/)).toBeInTheDocument()
+    expect(screen.getByText(/Manage IM notification channels/)).toBeInTheDocument()
     await waitFor(() => expect(channelsApi.list).toHaveBeenCalled())
-    expect(screen.getByRole("button", { name: "配置钉钉" })).toBeInTheDocument()
-    expect(screen.getByRole("button", { name: "即将支持飞书" })).toBeInTheDocument()
-    expect(screen.getByRole("button", { name: "即将支持企业微信" })).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "Configure DingTalk" })).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "Configure Slack" })).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "Configure Telegram" })).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "Coming soon Feishu" })).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "Coming soon WeCom" })).toBeInTheDocument()
+  })
 
-    await userEvent.click(screen.getByRole("button", { name: "配置钉钉" }))
-    expect(await screen.findByText("基础信息")).toBeInTheDocument()
+  it("enters dingtalk wizard from card", async () => {
+    render(
+      <MemoryRouter initialEntries={["/channel"]}>
+        <Routes>
+          <Route path="/channel" element={<ChannelConsolePage />} />
+          <Route path="/channel/:provider" element={<ChannelConsolePage />} />
+        </Routes>
+      </MemoryRouter>
+    )
+
+    await waitFor(() => expect(channelsApi.list).toHaveBeenCalled())
+    await userEvent.click(screen.getByRole("button", { name: "Configure DingTalk" }))
+    expect(await screen.findByText("Basic Info")).toBeInTheDocument()
   })
 
   it("validates webhook token and security secret in wizard", async () => {
@@ -76,23 +90,23 @@ describe("ChannelConsolePage", () => {
       </MemoryRouter>
     )
 
-    await userEvent.click(screen.getByRole("button", { name: "下一步" }))
-    expect(screen.getByLabelText("钉钉 Webhook")).toBeInTheDocument()
+    await userEvent.click(screen.getByRole("button", { name: "Next" }))
+    expect(screen.getByLabelText("DingTalk Webhook")).toBeInTheDocument()
 
-    await userEvent.type(screen.getByLabelText("钉钉 Webhook"), "https://oapi.dingtalk.com/robot/send")
-    await userEvent.click(screen.getByRole("button", { name: "下一步" }))
-    expect(screen.getByLabelText("钉钉 Webhook")).toBeInTheDocument()
+    await userEvent.type(screen.getByLabelText("DingTalk Webhook"), "https://oapi.dingtalk.com/robot/send")
+    await userEvent.click(screen.getByRole("button", { name: "Next" }))
+    expect(screen.getByLabelText("DingTalk Webhook")).toBeInTheDocument()
 
-    await userEvent.clear(screen.getByLabelText("钉钉 Webhook"))
+    await userEvent.clear(screen.getByLabelText("DingTalk Webhook"))
     await userEvent.type(
-      screen.getByLabelText("钉钉 Webhook"),
+      screen.getByLabelText("DingTalk Webhook"),
       "https://oapi.dingtalk.com/robot/send?access_token=abc123token"
     )
-    await userEvent.click(screen.getByRole("button", { name: "下一步" }))
-    expect(await screen.findByLabelText("加签密钥（SEC 开头）")).toBeInTheDocument()
+    await userEvent.click(screen.getByRole("button", { name: "Next" }))
+    expect(await screen.findByLabelText("Sign Secret (starts with SEC)")).toBeInTheDocument()
 
-    await userEvent.click(screen.getByRole("button", { name: "下一步" }))
-    expect(screen.getByLabelText("加签密钥（SEC 开头）")).toBeInTheDocument()
+    await userEvent.click(screen.getByRole("button", { name: "Next" }))
+    expect(screen.getByLabelText("Sign Secret (starts with SEC)")).toBeInTheDocument()
   })
 
   it("saves dingtalk config via backend api and returns to channel list", async () => {
@@ -105,19 +119,106 @@ describe("ChannelConsolePage", () => {
       </MemoryRouter>
     )
 
-    await userEvent.clear(screen.getByLabelText("钉钉 Webhook"))
+    await userEvent.clear(screen.getByLabelText("DingTalk Webhook"))
     await userEvent.type(
-      screen.getByLabelText("钉钉 Webhook"),
+      screen.getByLabelText("DingTalk Webhook"),
       "https://oapi.dingtalk.com/robot/send?access_token=abc123token"
     )
-    await userEvent.click(screen.getByRole("button", { name: "下一步" }))
+    await userEvent.click(screen.getByRole("button", { name: "Next" }))
 
-    await userEvent.type(screen.getByLabelText("加签密钥（SEC 开头）"), "SEC_TEST_VALUE")
-    await userEvent.click(screen.getByRole("button", { name: "下一步" }))
-    expect(await screen.findByLabelText("消息类型")).toBeInTheDocument()
+    await userEvent.type(screen.getByLabelText("Sign Secret (starts with SEC)"), "SEC_TEST_VALUE")
+    await userEvent.click(screen.getByRole("button", { name: "Next" }))
+    expect(await screen.findByLabelText("Message Type")).toBeInTheDocument()
 
-    await userEvent.click(screen.getByRole("button", { name: "保存配置" }))
+    await userEvent.click(screen.getByRole("button", { name: "Save Config" }))
     await waitFor(() => expect(channelsApi.create).toHaveBeenCalled())
-    expect(await screen.findByText(/管理 IM 通知通道/)).toBeInTheDocument()
+    expect(await screen.findByText(/Manage IM notification channels/)).toBeInTheDocument()
+  })
+
+  it("enters slack wizard and renders webhook form", async () => {
+    render(
+      <MemoryRouter initialEntries={["/channel/slack"]}>
+        <Routes>
+          <Route path="/channel/:provider" element={<ChannelConsolePage />} />
+        </Routes>
+      </MemoryRouter>
+    )
+
+    expect(screen.getByLabelText("Slack Webhook URL")).toBeInTheDocument()
+    expect(screen.getByLabelText(/Bot Display Name/)).toBeInTheDocument()
+  })
+
+  it("saves slack config via backend api", async () => {
+    channelsApi.create.mockResolvedValue({
+      id: 2,
+      name: "Slack Alert",
+      provider: "slack",
+      status: "active",
+      config: { webhook_url: "https://hooks.slack.com/services/T00/B00/xxx" },
+      created_at: "2026-03-25T12:00:00Z",
+      updated_at: "2026-03-25T12:00:00Z",
+    })
+
+    render(
+      <MemoryRouter initialEntries={["/channel/slack"]}>
+        <Routes>
+          <Route path="/channel" element={<ChannelConsolePage />} />
+          <Route path="/channel/:provider" element={<ChannelConsolePage />} />
+        </Routes>
+      </MemoryRouter>
+    )
+
+    await userEvent.clear(screen.getByLabelText("Channel Name"))
+    await userEvent.type(screen.getByLabelText("Channel Name"), "Slack Alert")
+    await userEvent.type(screen.getByLabelText("Slack Webhook URL"), "https://hooks.slack.com/services/T00/B00/xxx")
+    await userEvent.click(screen.getByRole("button", { name: "Next" }))
+
+    expect(await screen.findByLabelText("Message Body")).toBeInTheDocument()
+    await userEvent.click(screen.getByRole("button", { name: "Save Config" }))
+    await waitFor(() => expect(channelsApi.create).toHaveBeenCalled())
+  })
+
+  it("enters telegram wizard and renders bot token form", async () => {
+    render(
+      <MemoryRouter initialEntries={["/channel/telegram"]}>
+        <Routes>
+          <Route path="/channel/:provider" element={<ChannelConsolePage />} />
+        </Routes>
+      </MemoryRouter>
+    )
+
+    expect(screen.getByLabelText("Bot Token")).toBeInTheDocument()
+    expect(screen.getByLabelText("Chat ID")).toBeInTheDocument()
+  })
+
+  it("saves telegram config via backend api", async () => {
+    channelsApi.create.mockResolvedValue({
+      id: 3,
+      name: "Telegram Alert",
+      provider: "telegram",
+      status: "active",
+      config: { bot_token: "123:ABC", chat_id: "-100123" },
+      created_at: "2026-03-25T12:00:00Z",
+      updated_at: "2026-03-25T12:00:00Z",
+    })
+
+    render(
+      <MemoryRouter initialEntries={["/channel/telegram"]}>
+        <Routes>
+          <Route path="/channel" element={<ChannelConsolePage />} />
+          <Route path="/channel/:provider" element={<ChannelConsolePage />} />
+        </Routes>
+      </MemoryRouter>
+    )
+
+    await userEvent.clear(screen.getByLabelText("Channel Name"))
+    await userEvent.type(screen.getByLabelText("Channel Name"), "Telegram Alert")
+    await userEvent.type(screen.getByLabelText("Bot Token"), "123:ABC")
+    await userEvent.type(screen.getByLabelText("Chat ID"), "-100123")
+    await userEvent.click(screen.getByRole("button", { name: "Next" }))
+
+    expect(await screen.findByLabelText("Message Body")).toBeInTheDocument()
+    await userEvent.click(screen.getByRole("button", { name: "Save Config" }))
+    await waitFor(() => expect(channelsApi.create).toHaveBeenCalled())
   })
 })

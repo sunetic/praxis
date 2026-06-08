@@ -256,7 +256,7 @@ _FUNCTION_RUNTIME_CONTRACT: dict[str, Any] = {
                 "type": "object",
                 "additional_properties": False,
                 "properties": {
-                    "provider": {"type": "string", "enum": ["dingtalk", "feishu", "wechat"]},
+                    "provider": {"type": "string", "enum": ["dingtalk", "feishu", "wechat", "slack", "telegram"]},
                     "status": {"type": "string", "enum": ["active", "inactive"]},
                 },
             },
@@ -405,7 +405,7 @@ _FUNCTION_RUNTIME_CONTRACT: dict[str, Any] = {
                     "additional_properties": False,
                     "properties": {
                         "name": {"type": "string", "min_length": 1},
-                        "provider": {"type": "string", "enum": ["dingtalk", "feishu", "wechat"]},
+                        "provider": {"type": "string", "enum": ["dingtalk", "feishu", "wechat", "slack", "telegram"]},
                         "description": {"one_of": [{"type": "string"}, {"type": "null"}]},
                         "status": {"type": "string", "enum": ["active", "inactive"]},
                         "config": {"type": "object"},

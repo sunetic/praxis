@@ -330,7 +330,7 @@ export type ScheduleRunsPage = {
   offset: number;
 }
 
-export type ChannelProvider = "dingtalk" | "feishu" | "wechat";
+export type ChannelProvider = "dingtalk" | "feishu" | "wechat" | "slack" | "telegram";
 export type ChannelStatus = "active" | "inactive";
 export type ChannelMessageType = "text" | "markdown" | "actionCard" | "feedCard";
 
@@ -350,10 +350,23 @@ export type ChannelTemplateConfig = {
   links?: Record<string, any>[];
 };
 
+export type SlackTemplateConfig = {
+  username?: string | null;
+  icon_emoji?: string | null;
+  channel?: string | null;
+};
+
+export type TelegramTemplateConfig = {
+  parse_mode?: "Markdown" | "HTML" | "";
+  disable_notification?: boolean;
+};
+
 export type ChannelConfig = {
-  webhook_url: string;
+  webhook_url?: string;
   security?: ChannelSecurityConfig;
-  template?: ChannelTemplateConfig;
+  template?: ChannelTemplateConfig | SlackTemplateConfig | TelegramTemplateConfig;
+  bot_token?: string;
+  chat_id?: string;
 };
 
 export type Channel = {
@@ -1709,6 +1722,7 @@ export const sessionAnalysisApi = {
 export type PlatformSettings = {
   build_engine: "pi_lite" | "external_cli"
   external_cli_command: string
+  sql_allow_mutating?: boolean
   [key: string]: unknown
 }
 
