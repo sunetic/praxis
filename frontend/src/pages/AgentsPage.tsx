@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useNavigate, useSearchParams } from "react-router-dom"
-import { AlertTriangle, Bot, Check, Loader2, Pencil, Play, RefreshCw, Search, Sparkles, Trash2 } from "lucide-react"
+import { AlertTriangle, Bot, Check, Database, Loader2, Pencil, Play, RefreshCw, Search, Sparkles, Trash2, Wrench, Blocks } from "lucide-react"
 import { toast } from "sonner"
 
 import { useShellI18n, type ShellCopyKey, type ShellTranslatorFn } from "@/i18n/shellI18n"
@@ -9,6 +9,7 @@ import { ListTable, ListTableLoadingRows } from "@/components/shared/ListTable"
 import { PaginationFooter } from "@/components/shared/PaginationFooter"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import { Checkbox } from "@/components/ui/checkbox"
 import { ConfirmActionDialog } from "@/components/ui/confirm-action-dialog"
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
@@ -921,76 +922,137 @@ export function AgentsPage() {
 
       {/* Run Datasource Picker Dialog */}
       <Dialog open={runDatasourcePickerAgentId !== null} onOpenChange={(open) => !open && closeRunDatasourcePicker()}>
-        <DialogContent className="max-w-2xl">
+        <DialogContent className="max-w-lg">
           <DialogHeader>
-            <DialogTitle>{t("agents.runDsDialogTitle")}</DialogTitle>
-            <DialogDescription>
-              {runDatasourcePickerAgent ? t("agents.runDsDialogDescNamed").replace("{name}", runDatasourcePickerAgent.name) : t("agents.runDsDialogDescDefault")}
-            </DialogDescription>
+            <DialogTitle>
+              {runDatasourcePickerAgent
+                ? t("agents.runDsDialogTitle").replace("{name}", runDatasourcePickerAgent.name)
+                : t("agents.runDsDialogTitleDefault")}
+            </DialogTitle>
+            <DialogDescription>{t("agents.runDsDialogDesc")}</DialogDescription>
           </DialogHeader>
-          <div className="space-y-3">
-            <div className="flex items-center gap-2">
-              <Input
-                value={runDatasourceFilter}
-                onChange={(event) => setRunDatasourceFilter(event.target.value)}
-                placeholder={t("agents.runDsSearchPlaceholder")}
-              />
-              {runDatasourcePickerAgent ? (
-                <>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={() => handleSelectAllRunDatasources(runDatasourcePickerAgent.id)}
-                  >
-                    {t("agents.runDsSelectAll")}
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={() => handleClearRunDatasources(runDatasourcePickerAgent.id)}
-                  >
-                    {t("agents.runDsClear")}
-                  </Button>
-                </>
-              ) : null}
-            </div>
-            <div className="max-h-80 overflow-y-auto rounded-md border border-border p-2">
-              {filteredRunnableDatasources.length === 0 ? (
-                <p className="px-1 py-2 text-xs text-muted-foreground">{t("agents.runDsEmpty")}</p>
-              ) : runDatasourcePickerAgent ? (
-                filteredRunnableDatasources.map((item) => (
-                  <label
-                    key={item.id}
-                    className="flex cursor-pointer items-center justify-between rounded-md px-2 py-2 hover:bg-muted"
-                  >
-                    <div className="min-w-0 pr-2">
-                      <p className="truncate text-sm text-foreground">
-                        {item.name}（{item.tenant_role}）
-                      </p>
-                      <p className="truncate text-xs text-muted-foreground">
-                        #{item.id} · {item.cluster_key} · {item.host}:{item.port}
-                      </p>
-                    </div>
-                    <input
-                      type="checkbox"
-                      checked={isRunDatasourceSelected(runDatasourcePickerAgent.id, item.id)}
-                      onChange={(event) =>
-                        handleToggleRunDatasource(
-                          runDatasourcePickerAgent.id,
-                          item.id,
-                          event.target.checked
-                        )
-                      }
-                    />
-                  </label>
-                ))
-              ) : null}
-            </div>
+          <div className="space-y-4">
+            {/* Capabilities section */}
             {runDatasourcePickerAgent ? (
-              <p className="text-xs text-muted-foreground">
-                {getRunDatasourceSummary(runDatasourcePickerAgent.id)}
-              </p>
+              <div>
+                <h4 className="mb-2 text-xs font-medium uppercase tracking-wider text-muted-foreground">
+                  {t("agents.runDsCapabilities")}
+                </h4>
+                {(runDatasourcePickerAgent.tools?.length || 0) + (runDatasourcePickerAgent.skills?.length || 0) > 0 ? (
+                  <div className="flex flex-wrap gap-1.5">
+                    {(runDatasourcePickerAgent.tools || []).map((tool) => (
+                      <span key={`tool-${tool}`} className="inline-flex items-center gap-1 rounded-md bg-muted/60 px-2 py-1 text-xs text-muted-foreground">
+                        <Wrench className="size-3" />
+                        {tool}
+                      </span>
+                    ))}
+                    {(runDatasourcePickerAgent.skills || []).map((skill) => (
+                      <span key={`skill-${skill}`} className="inline-flex items-center gap-1 rounded-md bg-primary/[0.06] px-2 py-1 text-xs text-primary">
+                        <Blocks className="size-3" />
+                        {skill}
+                      </span>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-xs text-muted-foreground">{t("agents.runDsNoCapabilities")}</p>
+                )}
+              </div>
             ) : null}
+
+            {/* Datasources section */}
+            <div>
+              <div className="mb-2 flex items-center justify-between">
+                <h4 className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+                  {t("agents.runDsDatasources")}
+                  {runDatasourcePickerAgent && getSelectedRunDatasourceIds(runDatasourcePickerAgent.id).length > 1 ? (
+                    <span className="ml-1.5 normal-case tracking-normal font-normal">· {t("agents.runDsDatasourcesHint")}</span>
+                  ) : null}
+                </h4>
+                {runDatasourcePickerAgent && runnableDatasources.length >= 4 ? (
+                  <div className="flex items-center">
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="h-auto px-1.5 py-0.5 text-xs text-muted-foreground"
+                      onClick={() => handleSelectAllRunDatasources(runDatasourcePickerAgent.id)}
+                    >
+                      {t("agents.runDsSelectAll")}
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="h-auto px-1.5 py-0.5 text-xs text-muted-foreground"
+                      onClick={() => handleClearRunDatasources(runDatasourcePickerAgent.id)}
+                    >
+                      {t("agents.runDsClear")}
+                    </Button>
+                  </div>
+                ) : null}
+              </div>
+
+              {/* Search — only when ≥ 4 datasources */}
+              {runnableDatasources.length >= 4 ? (
+                <div className="relative mb-2">
+                  <Search className="pointer-events-none absolute left-3 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground/60" />
+                  <Input
+                    value={runDatasourceFilter}
+                    onChange={(event) => setRunDatasourceFilter(event.target.value)}
+                    placeholder={t("agents.runDsSearchPlaceholder")}
+                    className="pl-9"
+                  />
+                </div>
+              ) : null}
+
+              {/* Datasource list */}
+              <div className="max-h-52 overflow-y-auto rounded-lg border border-border">
+                {filteredRunnableDatasources.length === 0 ? (
+                  <div className="flex flex-col items-center gap-2 py-8">
+                    <Database className="size-7 text-muted-foreground/30" />
+                    <p className="text-xs text-muted-foreground">{t("agents.runDsEmpty")}</p>
+                  </div>
+                ) : runDatasourcePickerAgent ? (
+                  filteredRunnableDatasources.map((item, index) => {
+                    const selected = isRunDatasourceSelected(runDatasourcePickerAgent.id, item.id)
+                    return (
+                      <div
+                        key={item.id}
+                        className={`flex cursor-pointer items-center gap-3 px-4 py-2.5 transition-colors hover:bg-muted/40 ${
+                          index > 0 ? "border-t border-border" : ""
+                        } ${selected ? "bg-primary/[0.04]" : ""}`}
+                        onClick={() =>
+                          handleToggleRunDatasource(
+                            runDatasourcePickerAgent.id,
+                            item.id,
+                            !selected
+                          )
+                        }
+                      >
+                        <Checkbox
+                          checked={selected}
+                          onCheckedChange={(checked) =>
+                            handleToggleRunDatasource(
+                              runDatasourcePickerAgent.id,
+                              item.id,
+                              !!checked
+                            )
+                          }
+                          onClick={(e) => e.stopPropagation()}
+                        />
+                        <div className="min-w-0 flex-1">
+                          <span className="text-sm text-foreground">
+                            {item.name}
+                            <span className="ml-1.5 text-xs text-muted-foreground">({item.tenant_role})</span>
+                          </span>
+                          <p className="mt-0.5 truncate text-xs text-muted-foreground">
+                            {item.cluster_key} · {item.host}:{item.port}
+                          </p>
+                        </div>
+                      </div>
+                    )
+                  })
+                ) : null}
+              </div>
+            </div>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={closeRunDatasourcePicker}>
@@ -1000,8 +1062,14 @@ export function AgentsPage() {
               disabled={runningAgentId !== null}
               onClick={() => runDatasourcePickerAgent && handleConfirmRunAgent(runDatasourcePickerAgent)}
             >
-              {runningAgentId !== null ? <Loader2 className="mr-1.5 size-3.5 animate-spin" /> : null}
-              {t("agents.runDsRun")}
+              {runningAgentId !== null ? (
+                <Loader2 className="mr-1.5 size-3.5 animate-spin" />
+              ) : (
+                <Play className="mr-1.5 size-3.5" />
+              )}
+              {runDatasourcePickerAgent && getSelectedRunDatasourceIds(runDatasourcePickerAgent.id).length > 0
+                ? t("agents.runDsRunWithCount").replace("{count}", String(getSelectedRunDatasourceIds(runDatasourcePickerAgent.id).length))
+                : t("agents.runDsRun")}
             </Button>
           </DialogFooter>
         </DialogContent>
