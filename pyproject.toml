@@ -67,6 +67,7 @@ ignore = ["E501"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
+markers = ["llm: requires live LLM endpoint"]
 
 [tool.mypy]
 python_version = "3.11"

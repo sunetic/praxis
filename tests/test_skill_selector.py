@@ -1,28 +1,22 @@
+"""Deterministic tests for skill selector logic (no LLM required).
+
+Uses a mock LLM client to verify set arithmetic, always_apply enforcement,
+JSON parsing tolerance, invalid-name filtering, and error fallback.
+"""
+
+import json
 import shutil
 from pathlib import Path
 
 import pytest
 
-from app.services.platform.skill_selector import select_skills_for_context
+from app.services.platform.skill_selector import (
+    _extract_selector_payload,
+    select_skills_for_context,
+)
 from app.skills.store import SkillStore
 
 BUILTIN_DIR = Path(__file__).resolve().parents[1] / "data" / "skills"
-
-MYSQL_SKILLS = {
-    "mysql-connection-diagnosis",
-    "mysql-innodb-health",
-    "mysql-lock-diagnosis",
-    "mysql-replication-check",
-    "mysql-slow-query-triage",
-}
-PG_SKILLS = {
-    "pg-connection-diagnosis",
-    "pg-lock-diagnosis",
-    "pg-replication-check",
-    "pg-slow-query-triage",
-    "pg-vacuum-health",
-}
-ALL_DB_SKILLS = MYSQL_SKILLS | PG_SKILLS
 
 
 @pytest.fixture()
@@ -32,73 +26,235 @@ def skill_store(tmp_path: Path) -> SkillStore:
     return SkillStore(skills_dir=str(target))
 
 
-async def _select(store: SkillStore, prompt: str) -> set[str]:
+def _make_llm_factory(add=None, remove=None, reason="mock"):
+    """Return a factory that produces a mock LLM returning canned JSON."""
+    payload = json.dumps({"add": add or [], "remove": remove or [], "reason": reason})
+
+    class MockLLM:
+        async def chat(self, messages, tools=None, stream=False):
+            yield {"choices": [{"message": {"content": payload}}]}
+
+    return lambda: MockLLM()
+
+
+def _make_raw_llm_factory(raw_content: str):
+    """Return a factory where the LLM returns arbitrary raw text."""
+
+    class MockLLM:
+        async def chat(self, messages, tools=None, stream=False):
+            yield {"choices": [{"message": {"content": raw_content}}]}
+
+    return lambda: MockLLM()
+
+
+def _make_error_llm_factory():
+    """Return a factory where the LLM raises an exception."""
+
+    class MockLLM:
+        async def chat(self, messages, tools=None, stream=False):
+            raise RuntimeError("LLM unavailable")
+            yield  # noqa: unreachable — make it an async generator
+
+    return lambda: MockLLM()
+
+
+# -- set arithmetic ----------------------------------------------------------
+
+
+@pytest.mark.anyio
+async def test_add_skills(skill_store):
     result = await select_skills_for_context(
-        prompt=prompt,
-        skill_store_instance=store,
+        prompt="test",
+        skill_store_instance=skill_store,
+        llm_client_factory=_make_llm_factory(add=["mysql-slow-query-triage", "mysql-lock-diagnosis"]),
     )
-    assert result["selector_ok"], f"Selector failed: {result['reason']}"
-    return set(result["active_skills"])
+    assert result["selector_ok"]
+    assert "mysql-slow-query-triage" in result["active_skills"]
+    assert "mysql-lock-diagnosis" in result["active_skills"]
+    assert "mysql-slow-query-triage" in result["added"]
 
 
-@pytest.mark.llm
 @pytest.mark.anyio
-async def test_mysql_slow_query_selects_mysql_skills(skill_store):
-    active = await _select(skill_store, "MySQL 慢查询特别多，帮我排查一下")
-    assert "mysql-slow-query-triage" in active
-    assert active.isdisjoint(PG_SKILLS), f"PG skills leaked: {active & PG_SKILLS}"
+async def test_remove_skills(skill_store):
+    result = await select_skills_for_context(
+        prompt="test",
+        current_active_skill_names=["mysql-slow-query-triage", "mysql-lock-diagnosis"],
+        skill_store_instance=skill_store,
+        llm_client_factory=_make_llm_factory(remove=["mysql-lock-diagnosis"]),
+    )
+    assert result["selector_ok"]
+    assert "mysql-slow-query-triage" in result["active_skills"]
+    assert "mysql-lock-diagnosis" not in result["active_skills"]
+    assert "mysql-lock-diagnosis" in result["removed"]
 
 
-@pytest.mark.llm
 @pytest.mark.anyio
-async def test_pg_lock_selects_pg_skills(skill_store):
-    active = await _select(skill_store, "PostgreSQL 锁等待很严重，很多事务被阻塞")
-    assert "pg-lock-diagnosis" in active
-    assert active.isdisjoint(MYSQL_SKILLS), f"MySQL skills leaked: {active & MYSQL_SKILLS}"
+async def test_add_and_remove_combined(skill_store):
+    result = await select_skills_for_context(
+        prompt="test",
+        current_active_skill_names=["mysql-slow-query-triage"],
+        skill_store_instance=skill_store,
+        llm_client_factory=_make_llm_factory(
+            add=["pg-lock-diagnosis"],
+            remove=["mysql-slow-query-triage"],
+        ),
+    )
+    assert result["selector_ok"]
+    assert "pg-lock-diagnosis" in result["active_skills"]
+    assert "mysql-slow-query-triage" not in result["active_skills"]
 
 
-@pytest.mark.llm
+# -- always_apply enforcement ------------------------------------------------
+
+
 @pytest.mark.anyio
-async def test_pg_vacuum_selects_vacuum_skill(skill_store):
-    active = await _select(skill_store, "PG 表膨胀严重，autovacuum 好像没跑起来")
-    assert "pg-vacuum-health" in active
-    assert active.isdisjoint(MYSQL_SKILLS), f"MySQL skills leaked: {active & MYSQL_SKILLS}"
+async def test_always_apply_cannot_be_removed(skill_store):
+    result = await select_skills_for_context(
+        prompt="test",
+        skill_store_instance=skill_store,
+        llm_client_factory=_make_llm_factory(remove=["skill-layered-diagnosis-policy"]),
+    )
+    assert result["selector_ok"]
+    assert "skill-layered-diagnosis-policy" in result["active_skills"]
+    assert "skill-layered-diagnosis-policy" not in result["removed"]
 
 
-@pytest.mark.llm
 @pytest.mark.anyio
-async def test_mysql_replication_selects_repl_skill(skill_store):
-    active = await _select(skill_store, "MySQL 主从延迟越来越大，需要排查原因")
-    assert "mysql-replication-check" in active
-    assert active.isdisjoint(PG_SKILLS), f"PG skills leaked: {active & PG_SKILLS}"
+async def test_always_apply_present_even_with_empty_response(skill_store):
+    result = await select_skills_for_context(
+        prompt="test",
+        skill_store_instance=skill_store,
+        llm_client_factory=_make_llm_factory(),
+    )
+    assert result["selector_ok"]
+    assert "skill-layered-diagnosis-policy" in result["active_skills"]
 
 
-@pytest.mark.llm
+# -- invalid name filtering --------------------------------------------------
+
+
 @pytest.mark.anyio
-async def test_irrelevant_prompt_selects_nothing(skill_store):
-    active = await _select(skill_store, "帮我写一个 React 登录页面，用 TypeScript")
-    assert active.isdisjoint(ALL_DB_SKILLS), f"DB skills on irrelevant prompt: {active & ALL_DB_SKILLS}"
+async def test_invalid_skill_names_ignored(skill_store):
+    result = await select_skills_for_context(
+        prompt="test",
+        skill_store_instance=skill_store,
+        llm_client_factory=_make_llm_factory(
+            add=["nonexistent-skill", "mysql-slow-query-triage"],
+            remove=["also-fake"],
+        ),
+    )
+    assert result["selector_ok"]
+    assert "mysql-slow-query-triage" in result["active_skills"]
+    assert "nonexistent-skill" not in result["active_skills"]
 
 
-@pytest.mark.llm
+# -- JSON parsing tolerance ---------------------------------------------------
+
+
 @pytest.mark.anyio
-async def test_always_apply_policy_always_present(skill_store):
-    active = await _select(skill_store, "随便聊聊天气怎么样")
-    assert "skill-layered-diagnosis-policy" in active
+async def test_fenced_json_response(skill_store):
+    raw = '```json\n{"add": ["pg-vacuum-health"], "remove": [], "reason": "ok"}\n```'
+    result = await select_skills_for_context(
+        prompt="test",
+        skill_store_instance=skill_store,
+        llm_client_factory=_make_raw_llm_factory(raw),
+    )
+    assert result["selector_ok"]
+    assert "pg-vacuum-health" in result["active_skills"]
 
 
-@pytest.mark.llm
 @pytest.mark.anyio
-async def test_cross_engine_no_contamination(skill_store):
-    cases = [
-        ("MySQL 连接数快满了", MYSQL_SKILLS, PG_SKILLS),
-        ("MySQL InnoDB 的 buffer pool 命中率很低", MYSQL_SKILLS, PG_SKILLS),
-        ("MySQL 出现了死锁", MYSQL_SKILLS, PG_SKILLS),
-        ("PostgreSQL 慢 SQL 需要优化", PG_SKILLS, MYSQL_SKILLS),
-        ("PG 流复制延迟监控", PG_SKILLS, MYSQL_SKILLS),
-        ("PostgreSQL 连接数异常", PG_SKILLS, MYSQL_SKILLS),
-    ]
-    for prompt, _own_pool, wrong_pool in cases:
-        active = await _select(skill_store, prompt)
-        leaked = active & wrong_pool
-        assert not leaked, f"Cross-engine leak for '{prompt}': {leaked}"
+async def test_json_embedded_in_prose(skill_store):
+    raw = 'Here is my selection:\n{"add": ["pg-lock-diagnosis"], "remove": [], "reason": "needed"}\nDone.'
+    result = await select_skills_for_context(
+        prompt="test",
+        skill_store_instance=skill_store,
+        llm_client_factory=_make_raw_llm_factory(raw),
+    )
+    assert result["selector_ok"]
+    assert "pg-lock-diagnosis" in result["active_skills"]
+
+
+@pytest.mark.anyio
+async def test_garbage_response_treated_as_no_change(skill_store):
+    result = await select_skills_for_context(
+        prompt="test",
+        current_active_skill_names=["mysql-slow-query-triage"],
+        skill_store_instance=skill_store,
+        llm_client_factory=_make_raw_llm_factory("I don't understand the question"),
+    )
+    assert result["selector_ok"]
+    assert "mysql-slow-query-triage" in result["active_skills"]
+
+
+# -- error fallback -----------------------------------------------------------
+
+
+@pytest.mark.anyio
+async def test_llm_error_falls_back_to_current(skill_store):
+    result = await select_skills_for_context(
+        prompt="test",
+        current_active_skill_names=["pg-slow-query-triage"],
+        skill_store_instance=skill_store,
+        llm_client_factory=_make_error_llm_factory(),
+    )
+    assert not result["selector_ok"]
+    assert "pg-slow-query-triage" in result["active_skills"]
+    assert result["reason"] == "selector_failed_fallback_keep_current"
+
+
+# -- empty store edge case ----------------------------------------------------
+
+
+@pytest.mark.anyio
+async def test_empty_store_returns_no_skills(tmp_path):
+    store = SkillStore(skills_dir=str(tmp_path))
+    result = await select_skills_for_context(
+        prompt="test",
+        skill_store_instance=store,
+        llm_client_factory=_make_llm_factory(add=["anything"]),
+    )
+    assert result["selector_ok"]
+    assert result["active_skills"] == []
+    assert result["candidate_count"] == 0
+
+
+# -- configured_skill_names ---------------------------------------------------
+
+
+@pytest.mark.anyio
+async def test_configured_names_become_initial_active(skill_store):
+    result = await select_skills_for_context(
+        prompt="test",
+        configured_skill_names=["mysql-slow-query-triage", "mysql-lock-diagnosis"],
+        skill_store_instance=skill_store,
+        llm_client_factory=_make_llm_factory(),
+    )
+    assert result["selector_ok"]
+    assert "mysql-slow-query-triage" in result["active_skills"]
+    assert "mysql-lock-diagnosis" in result["active_skills"]
+
+
+# -- _extract_selector_payload unit tests -------------------------------------
+
+
+def test_extract_raw_json():
+    assert _extract_selector_payload('{"add": [], "remove": []}') == {"add": [], "remove": []}
+
+
+def test_extract_fenced_json():
+    raw = '```json\n{"add": ["x"], "remove": []}\n```'
+    assert _extract_selector_payload(raw) == {"add": ["x"], "remove": []}
+
+
+def test_extract_embedded_json():
+    raw = 'Some text {"add": ["x"]} more text'
+    assert _extract_selector_payload(raw) == {"add": ["x"]}
+
+
+def test_extract_empty_returns_none():
+    assert _extract_selector_payload("") is None
+
+
+def test_extract_garbage_returns_none():
+    assert _extract_selector_payload("not json at all") is None
