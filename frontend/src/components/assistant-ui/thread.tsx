@@ -394,7 +394,7 @@ const UserActionBar: FC = () => {
   return (
     <ActionBarPrimitive.Root
       hideWhenRunning
-      autohide="not-last"
+      autohide="always"
       className="flex flex-col items-end"
     >
       <ActionBarPrimitive.Edit asChild>

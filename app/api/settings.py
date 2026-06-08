@@ -19,6 +19,7 @@ _DEFAULTS: dict[str, Any] = {
     "external_cli_command": "",
     "external_cli_pre_flags": "",
     "external_cli_post_flags": "",
+    "sql_allow_mutating": False,
 }
 
 

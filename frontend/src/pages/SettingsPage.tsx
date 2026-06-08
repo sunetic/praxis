@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react"
-import { BrainCircuit, Wrench } from "lucide-react"
+import { BrainCircuit, ShieldCheck, Wrench } from "lucide-react"
 import { useShellI18n } from "@/i18n/shellI18n"
 import { settingsApi } from "@/lib/api"
 import { WorkbenchPage } from "@/components/shared/WorkbenchPage"
@@ -7,11 +7,12 @@ import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Skeleton } from "@/components/ui/skeleton"
+import { Switch } from "@/components/ui/switch"
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { cn } from "@/lib/utils"
 
 type EngineChoice = "pi_lite" | "external_cli"
-type TabId = "llm" | "build"
+type TabId = "llm" | "build" | "safety"
 
 // ── LLM tab ───────────────────────────────────────────────────────────────────
 
@@ -263,6 +264,80 @@ function BuildTab() {
   )
 }
 
+// ── Safety tab ───────────────────────────────────────────────────────────────
+
+function SafetyTab() {
+  const { t } = useShellI18n()
+  const [allowMutating, setAllowMutating] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [saved, setSaved] = useState(false)
+  const [loaded, setLoaded] = useState(false)
+
+  useEffect(() => {
+    settingsApi.get().then((data) => {
+      setAllowMutating(data.sql_allow_mutating === true)
+      setLoaded(true)
+    })
+  }, [])
+
+  const handleToggle = useCallback(async (checked: boolean) => {
+    setAllowMutating(checked)
+    setSaving(true)
+    setSaved(false)
+    try {
+      await settingsApi.patch({ sql_allow_mutating: checked })
+      setSaved(true)
+      setTimeout(() => setSaved(false), 2000)
+    } finally {
+      setSaving(false)
+    }
+  }, [])
+
+  if (!loaded) {
+    return (
+      <div className="space-y-5 p-5">
+        <Skeleton className="h-4 w-48" />
+        <Skeleton className="h-10 w-full max-w-lg" />
+      </div>
+    )
+  }
+
+  return (
+    <div className="space-y-5 p-5 max-w-lg">
+      <div className="space-y-3">
+        <label className="text-sm font-medium">{t("settings.safety.title")}</label>
+        <div className="flex items-center gap-3 rounded-lg border bg-muted/30 p-4">
+          <Switch
+            id="sql-allow-mutating"
+            checked={allowMutating}
+            onCheckedChange={handleToggle}
+            disabled={saving}
+          />
+          <div className="space-y-0.5">
+            <label htmlFor="sql-allow-mutating" className="text-sm font-medium cursor-pointer">
+              {t("settings.safety.allowMutatingLabel")}
+            </label>
+            <p className="text-xs text-muted-foreground">
+              {t("settings.safety.allowMutatingDesc")}
+            </p>
+          </div>
+        </div>
+        <div className="flex items-center gap-2 pt-1">
+          <span className={cn(
+            "text-xs font-medium px-2 py-0.5 rounded",
+            allowMutating
+              ? "bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300"
+              : "bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300"
+          )}>
+            {allowMutating ? t("settings.safety.readWriteBadge") : t("settings.safety.readOnlyBadge")}
+          </span>
+          {saved && <span className="text-sm text-positive">{t("settings.saved")}</span>}
+        </div>
+      </div>
+    </div>
+  )
+}
+
 // ── Page ──────────────────────────────────────────────────────────────────────
 
 export function SettingsPage() {
@@ -272,6 +347,7 @@ export function SettingsPage() {
   const TABS: { id: TabId; label: string; icon: React.ReactNode }[] = [
     { id: "llm", label: t("settings.tab.llm"), icon: <BrainCircuit className="size-4" /> },
     { id: "build", label: t("settings.tab.build"), icon: <Wrench className="size-4" /> },
+    { id: "safety", label: t("settings.tab.safety"), icon: <ShieldCheck className="size-4" /> },
   ]
 
   const primary = (
@@ -291,6 +367,7 @@ export function SettingsPage() {
         </div>
         {activeTab === "llm" && <LlmTab />}
         {activeTab === "build" && <BuildTab />}
+        {activeTab === "safety" && <SafetyTab />}
       </div>
     </div>
   )

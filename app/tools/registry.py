@@ -167,6 +167,24 @@ class ExecuteSQLTool(BaseTool):
             pool = get_db_pool()
             is_mutating = is_mutating_sql(sql)
             if is_mutating:
+                from app.api.settings import get_setting
+
+                allow_mutating = get_setting(db, "sql_allow_mutating")
+                if not allow_mutating:
+                    logger.info(
+                        "tool_execute_blocked_safety_mode %s",
+                        fmt_kv(tool=self.name, datasource_id=datasource_id, role=role),
+                    )
+                    return ToolResult(
+                        success=False,
+                        error={
+                            "code": "sql_safety_mode_active",
+                            "category": "guardrail_error",
+                            "message": "Write operations are disabled. Enable in Settings to allow.",
+                            "retry_hint": "Change the SQL safety mode setting in Platform Settings, then retry.",
+                        },
+                    )
+
                 conversation_id = params.get("conversation_id")
                 batch_id = str(params.get("request_id") or "").strip()
                 if not isinstance(conversation_id, int):

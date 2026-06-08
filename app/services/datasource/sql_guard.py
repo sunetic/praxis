@@ -12,6 +12,9 @@ READ_ONLY_FIRST_KEYWORDS = {
     "describe",
     "explain",
 }
+SAFE_SESSION_KEYWORDS = {
+    "use",
+}
 MUTATING_KEYWORDS = {
     "insert",
     "update",
@@ -27,7 +30,6 @@ MUTATING_KEYWORDS = {
     "grant",
     "revoke",
     "set",
-    "use",
     "analyze",
     "optimize",
     "flush",
@@ -61,6 +63,8 @@ def is_mutating_sql(sql: str) -> bool:
     if not keyword:
         return False
     if keyword in READ_ONLY_FIRST_KEYWORDS:
+        return False
+    if keyword in SAFE_SESSION_KEYWORDS:
         return False
     if keyword == "with":
         lowered = _strip_sql_comments(sql).lower()
