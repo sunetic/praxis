@@ -35,10 +35,20 @@ def _to_response(kb: models.KnowledgeBase) -> dict:
         "name": kb.name,
         "description": kb.description,
         "tags": kb.tags,
+        "source": kb.source,
+        "pack_id": kb.pack_id,
         "document_count": len(kb.documents),
         "created_at": kb.created_at,
         "updated_at": kb.updated_at,
     }
+
+
+def _ensure_not_pack(kb: models.KnowledgeBase) -> None:
+    if kb.source == "pack":
+        raise HTTPException(
+            status_code=403,
+            detail="Pack-installed knowledge base is read-only. Uninstall via the Knowledge Pack API.",
+        )
 
 
 @router.get("", response_model=List[schemas.KnowledgeBaseResponse])
@@ -72,6 +82,7 @@ def update_knowledge_base(
     db: Session = Depends(get_db),
 ):
     kb = _get_kb_or_404(kb_id, db)
+    _ensure_not_pack(kb)
     for field, value in payload.model_dump(exclude_unset=True).items():
         setattr(kb, field, value)
     db.commit()
@@ -83,6 +94,7 @@ def update_knowledge_base(
 @router.delete("/{kb_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_knowledge_base(kb_id: int, db: Session = Depends(get_db)):
     kb = _get_kb_or_404(kb_id, db)
+    _ensure_not_pack(kb)
     kb_path = _kb_dir(kb_id)
     db.delete(kb)
     db.commit()
@@ -109,7 +121,8 @@ def list_documents(kb_id: int, db: Session = Depends(get_db)):
 
 @router.post("/{kb_id}/documents", response_model=schemas.KnowledgeDocumentResponse, status_code=status.HTTP_201_CREATED)
 async def upload_document(kb_id: int, file: UploadFile, db: Session = Depends(get_db)):
-    _get_kb_or_404(kb_id, db)
+    kb = _get_kb_or_404(kb_id, db)
+    _ensure_not_pack(kb)
 
     if not file.filename or not file.filename.endswith(".md"):
         raise HTTPException(status_code=400, detail="Only .md files are allowed")

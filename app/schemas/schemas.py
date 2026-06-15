@@ -144,6 +144,8 @@ class KnowledgeBaseResponse(KnowledgeBaseBase):
 
     id: int
     document_count: int = 0
+    source: Optional[str] = None
+    pack_id: Optional[str] = None
     created_at: datetime
     updated_at: datetime
 
@@ -158,6 +160,31 @@ class KnowledgeDocumentResponse(BaseModel):
     size_bytes: int
     created_at: datetime
     updated_at: datetime
+
+
+class KnowledgePackResponse(BaseModel):
+    id: str
+    name: str
+    description: str
+    tags: list[str] = []
+    repo_url: str
+    branch: str
+    subdirectory: str
+    license: str
+    source_url: Optional[str] = None
+    estimated_doc_count: int = 0
+    estimated_size_mb: float = 0.0
+    status: str = "available"
+    kb_id: Optional[int] = None
+    error_message: Optional[str] = None
+
+
+class KnowledgePackInstallStatus(BaseModel):
+    pack_id: str
+    status: str
+    progress_message: Optional[str] = None
+    kb_id: Optional[int] = None
+    error_message: Optional[str] = None
 
 
 class MonitorContractTableStatus(BaseModel):

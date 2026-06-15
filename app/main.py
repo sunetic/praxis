@@ -8,7 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.exc import OperationalError
 from starlette.staticfiles import StaticFiles
 
-from app.api import agents, capabilities, channels, chat, chat_agent_draft, chat_handoff, chat_pending, conversations, datasources, functions, knowledge, onboarding, schedules, settings as settings_api, skills, sql_analysis
+from app.api import agents, capabilities, channels, chat, chat_agent_draft, chat_handoff, chat_pending, conversations, datasources, functions, knowledge, knowledge_packs, onboarding, schedules, settings as settings_api, skills, sql_analysis
 from app.core.config import get_settings
 from app.core.logging import configure_logging, fmt_kv, get_logger
 from app.db.database import init_db
@@ -134,6 +134,7 @@ async def request_validation_exception_handler(request: Request, exc: RequestVal
 # ── CE routers (always registered) ──────────────────────────────────────────
 app.include_router(datasources.router, prefix="/api/v1")
 app.include_router(knowledge.router, prefix="/api/v1")
+app.include_router(knowledge_packs.router, prefix="/api/v1")
 app.include_router(conversations.router, prefix="/api/v1")
 app.include_router(conversations.message_router, prefix="/api/v1")
 app.include_router(agents.router, prefix="/api/v1")

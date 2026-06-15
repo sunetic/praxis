@@ -1,0 +1,28 @@
+[
+  {
+    "id": "postgresql-tutorial",
+    "name": "PostgreSQL Tutorial",
+    "description": "Comprehensive PostgreSQL tutorial covering SQL syntax, data types, indexes, views, triggers, functions, and administration. Sourced from neon.com/postgresql.",
+    "tags": ["postgresql", "sql", "database", "tutorial"],
+    "repo_url": "https://github.com/neondatabase/website",
+    "branch": "main",
+    "subdirectory": "content/postgresql",
+    "license": "No explicit license (public repo)",
+    "source_url": "https://neon.tech/postgresql",
+    "estimated_doc_count": 430,
+    "estimated_size_mb": 3.5
+  },
+  {
+    "id": "mysql-percona-docs",
+    "name": "MySQL / Percona Server Documentation",
+    "description": "Percona Server for MySQL documentation covering InnoDB internals, replication, performance tuning, security, backup, and MySQL administration.",
+    "tags": ["mysql", "sql", "database", "percona"],
+    "repo_url": "https://github.com/percona/psmysql-docs",
+    "branch": "8.4",
+    "subdirectory": "docs",
+    "license": "CC BY 4.0",
+    "source_url": "https://docs.percona.com/percona-server/8.4/",
+    "estimated_doc_count": 230,
+    "estimated_size_mb": 2.5
+  }
+]

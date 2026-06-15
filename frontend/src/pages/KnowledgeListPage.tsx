@@ -1,10 +1,11 @@
-import { useEffect, useMemo, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useNavigate } from "react-router-dom"
-import { BookOpen, Loader2, Pencil, Plus, RefreshCw, Search, Trash2 } from "lucide-react"
+import { BookOpen, Download, ExternalLink, Loader2, Package, Pencil, Plus, RefreshCw, Search, Trash2, User } from "lucide-react"
 import { toast } from "sonner"
 
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
 import { ConfirmActionDialog } from "@/components/ui/confirm-action-dialog"
 import {
   Dialog,
@@ -15,17 +16,13 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { FilterToolbar, FilterToolbarGroup } from "@/components/shared/FilterToolbar"
-import { ListTable, ListTableLoadingRows } from "@/components/shared/ListTable"
-import { PaginationFooter } from "@/components/shared/PaginationFooter"
 import { WorkbenchPage } from "@/components/shared/WorkbenchPage"
 import { useShellI18n } from "@/i18n/shellI18n"
-import { knowledgeApi } from "@/lib/api"
-import type { KnowledgeBase, KnowledgeBaseInput } from "@/lib/api"
+import { knowledgeApi, knowledgePackApi } from "@/lib/api"
+import type { KnowledgeBase, KnowledgeBaseInput, KnowledgePack } from "@/lib/api"
 
-const PAGE_SIZE = 10
+const POLL_INTERVAL = 3000
 
 function getErrorMessage(error: unknown, fallback: string): string {
   if (error && typeof error === "object" && "message" in error) {
@@ -43,15 +40,19 @@ type KBFormState = {
 
 const emptyForm: KBFormState = { name: "", description: "", tags: "" }
 
+type CardItem =
+  | { kind: "kb"; kb: KnowledgeBase }
+  | { kind: "pack"; pack: KnowledgePack }
+
 export function KnowledgeListPage() {
   const navigate = useNavigate()
   const { t } = useShellI18n()
+
   const [knowledgeBases, setKnowledgeBases] = useState<KnowledgeBase[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
   const [searchQuery, setSearchQuery] = useState("")
-  const [page, setPage] = useState(1)
 
   const [dialogOpen, setDialogOpen] = useState(false)
   const [editingId, setEditingId] = useState<number | null>(null)
@@ -60,6 +61,13 @@ export function KnowledgeListPage() {
 
   const [deleteTarget, setDeleteTarget] = useState<KnowledgeBase | null>(null)
   const [deleting, setDeleting] = useState(false)
+
+  const [packs, setPacks] = useState<KnowledgePack[]>([])
+  const [packsLoading, setPacksLoading] = useState(false)
+  const [installingPacks, setInstallingPacks] = useState<Set<string>>(new Set())
+  const [uninstallTarget, setUninstallTarget] = useState<KnowledgePack | null>(null)
+  const [uninstalling, setUninstalling] = useState(false)
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   async function fetchData() {
     setLoading(true)
@@ -74,25 +82,83 @@ export function KnowledgeListPage() {
     }
   }
 
-  useEffect(() => { fetchData() }, [])
+  const fetchPacks = useCallback(async () => {
+    setPacksLoading(true)
+    try {
+      const list = await knowledgePackApi.list()
+      setPacks(list)
+    } catch {
+      // packs failing shouldn't block the page
+    } finally {
+      setPacksLoading(false)
+    }
+  }, [])
+
+  function fetchAll() {
+    fetchData()
+    fetchPacks()
+  }
+
+  useEffect(() => { fetchAll() }, [])
+
+  // Poll while any pack is downloading
+  useEffect(() => {
+    const hasDownloading = packs.some((p) => p.status === "downloading")
+    if (hasDownloading) {
+      pollRef.current = setInterval(async () => {
+        try {
+          const list = await knowledgePackApi.list()
+          setPacks(list)
+          if (!list.some((p) => p.status === "downloading")) {
+            if (pollRef.current) clearInterval(pollRef.current)
+            pollRef.current = null
+            fetchData()
+          }
+        } catch {
+          // ignore poll errors
+        }
+      }, POLL_INTERVAL)
+    }
+    return () => {
+      if (pollRef.current) {
+        clearInterval(pollRef.current)
+        pollRef.current = null
+      }
+    }
+  }, [packs])
+
+  // Build unified card list: installed KBs + available (not-yet-installed) packs
+  const cards = useMemo<CardItem[]>(() => {
+    const installedPackIds = new Set(
+      knowledgeBases.filter((kb) => kb.source === "pack" && kb.pack_id).map((kb) => kb.pack_id),
+    )
+    const kbCards: CardItem[] = knowledgeBases.map((kb) => ({ kind: "kb", kb }))
+    const availablePackCards: CardItem[] = packs
+      .filter((p) => !installedPackIds.has(p.id))
+      .map((p) => ({ kind: "pack", pack: p }))
+    return [...kbCards, ...availablePackCards]
+  }, [knowledgeBases, packs])
 
   const filtered = useMemo(() => {
-    if (!searchQuery) return knowledgeBases
+    if (!searchQuery) return cards
     const q = searchQuery.toLowerCase()
-    return knowledgeBases.filter(
-      (kb) =>
-        kb.name.toLowerCase().includes(q) ||
-        (kb.description || "").toLowerCase().includes(q) ||
-        (kb.tags || []).some((tag) => tag.toLowerCase().includes(q)),
-    )
-  }, [knowledgeBases, searchQuery])
-
-  const paged = useMemo(() => {
-    const start = (page - 1) * PAGE_SIZE
-    return filtered.slice(start, start + PAGE_SIZE)
-  }, [filtered, page])
-
-  useEffect(() => setPage(1), [searchQuery])
+    return cards.filter((item) => {
+      if (item.kind === "kb") {
+        const kb = item.kb
+        return (
+          kb.name.toLowerCase().includes(q) ||
+          (kb.description || "").toLowerCase().includes(q) ||
+          (kb.tags || []).some((tag) => tag.toLowerCase().includes(q))
+        )
+      }
+      const pack = item.pack
+      return (
+        pack.name.toLowerCase().includes(q) ||
+        pack.description.toLowerCase().includes(q) ||
+        pack.tags.some((tag) => tag.toLowerCase().includes(q))
+      )
+    })
+  }, [cards, searchQuery])
 
   function openCreateDialog() {
     setEditingId(null)
@@ -100,8 +166,7 @@ export function KnowledgeListPage() {
     setDialogOpen(true)
   }
 
-  function openEditDialog(kb: KnowledgeBase, e?: React.MouseEvent) {
-    if (e) e.stopPropagation()
+  function openEditDialog(kb: KnowledgeBase) {
     setEditingId(kb.id)
     setForm({
       name: kb.name,
@@ -152,7 +217,196 @@ export function KnowledgeListPage() {
     }
   }
 
-  const columnCount = 5
+  async function handleInstallPack(pack: KnowledgePack) {
+    setInstallingPacks((prev) => new Set(prev).add(pack.id))
+    try {
+      await knowledgePackApi.install(pack.id)
+      toast.success(t("knowledge.pack.toast.installStarted"))
+      fetchPacks()
+    } catch (e) {
+      toast.error(getErrorMessage(e, t("knowledge.pack.toast.installFailed")))
+      setInstallingPacks((prev) => {
+        const next = new Set(prev)
+        next.delete(pack.id)
+        return next
+      })
+    }
+  }
+
+  async function handleUninstallPack() {
+    if (!uninstallTarget) return
+    setUninstalling(true)
+    try {
+      await knowledgePackApi.uninstall(uninstallTarget.id)
+      toast.success(t("knowledge.pack.toast.uninstalled"))
+      setUninstallTarget(null)
+      fetchPacks()
+      fetchData()
+    } catch (e) {
+      toast.error(getErrorMessage(e, t("knowledge.pack.toast.uninstallFailed")))
+    } finally {
+      setUninstalling(false)
+    }
+  }
+
+  // --- Card renderers ---
+
+  function renderKBCard(kb: KnowledgeBase) {
+    const isPack = kb.source === "pack"
+    return (
+      <Card
+        key={`kb-${kb.id}`}
+        className="flex flex-col cursor-pointer transition-colors hover:border-primary/30"
+        onClick={() => navigate(`/knowledge/${kb.id}`)}
+      >
+        <CardHeader>
+          <div className="flex items-start justify-between gap-2">
+            <CardTitle className="text-base line-clamp-1">{kb.name}</CardTitle>
+            <Badge variant={isPack ? "outline" : "secondary"} className="text-xs shrink-0">
+              {isPack ? (
+                <><Package className="mr-1 size-3" />{t("knowledge.pack.badge")}</>
+              ) : (
+                <><User className="mr-1 size-3" />{t("knowledge.source.user")}</>
+              )}
+            </Badge>
+          </div>
+          <CardDescription className="line-clamp-2">
+            {kb.description || " "}
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="flex-1">
+          <div className="flex flex-wrap gap-1.5 mb-3">
+            {(kb.tags || []).map((tag) => (
+              <Badge key={tag} variant="secondary" className="text-xs">{tag}</Badge>
+            ))}
+          </div>
+          <div className="text-xs text-muted-foreground">
+            <span className="font-medium text-foreground tabular-nums">{kb.document_count}</span>{" "}
+            {t("knowledge.docCountUnit")}
+          </div>
+        </CardContent>
+        <CardFooter className="justify-end border-t pt-4" onClick={(e) => e.stopPropagation()}>
+          {isPack ? (
+            <Button
+              size="sm"
+              variant="outline"
+              className="text-destructive hover:text-destructive"
+              onClick={() => {
+                const pack = packs.find((p) => p.id === kb.pack_id)
+                if (pack) setUninstallTarget(pack)
+              }}
+            >
+              <Trash2 className="size-3.5" />
+              {t("knowledge.pack.uninstall")}
+            </Button>
+          ) : (
+            <div className="flex gap-1">
+              <Button size="sm" variant="ghost" onClick={() => openEditDialog(kb)}>
+                <Pencil className="size-3.5" />
+              </Button>
+              <Button
+                size="sm"
+                variant="ghost"
+                className="text-destructive hover:text-destructive"
+                onClick={() => setDeleteTarget(kb)}
+              >
+                <Trash2 className="size-3.5" />
+              </Button>
+            </div>
+          )}
+        </CardFooter>
+      </Card>
+    )
+  }
+
+  function renderPackCard(pack: KnowledgePack) {
+    const isInstalling = installingPacks.has(pack.id) || pack.status === "downloading"
+
+    function renderButton() {
+      if (isInstalling) {
+        return (
+          <Button size="sm" variant="outline" disabled>
+            <Loader2 className="size-3.5 animate-spin" />
+            {t("knowledge.pack.downloading")}
+          </Button>
+        )
+      }
+      if (pack.status === "error") {
+        return (
+          <Button size="sm" variant="outline" onClick={() => handleInstallPack(pack)}>
+            <RefreshCw className="size-3.5" />
+            {t("knowledge.pack.retry")}
+          </Button>
+        )
+      }
+      return (
+        <Button size="sm" onClick={() => handleInstallPack(pack)}>
+          <Download className="size-3.5" />
+          {t("knowledge.pack.install")}
+        </Button>
+      )
+    }
+
+    return (
+      <Card key={`pack-${pack.id}`} className="flex flex-col border-dashed">
+        <CardHeader>
+          <div className="flex items-start justify-between gap-2">
+            <CardTitle className="text-base line-clamp-1">{pack.name}</CardTitle>
+            {pack.status === "error" ? (
+              <Badge variant="destructive" className="text-xs shrink-0">{t("knowledge.pack.error")}</Badge>
+            ) : isInstalling ? (
+              <Badge variant="secondary" className="text-xs shrink-0">{t("knowledge.pack.downloading")}</Badge>
+            ) : (
+              <Badge variant="outline" className="text-xs shrink-0">{t("knowledge.pack.available")}</Badge>
+            )}
+          </div>
+          <CardDescription className="line-clamp-2">{pack.description}</CardDescription>
+        </CardHeader>
+        <CardContent className="flex-1">
+          <div className="flex flex-wrap gap-1.5 mb-3">
+            {pack.tags.map((tag) => (
+              <Badge key={tag} variant="secondary" className="text-xs">{tag}</Badge>
+            ))}
+          </div>
+          <div className="space-y-1 text-xs text-muted-foreground">
+            <div className="flex justify-between">
+              <span>{t("knowledge.pack.license")}</span>
+              <span className="font-medium text-foreground">{pack.license || "—"}</span>
+            </div>
+            <div className="flex justify-between">
+              <span>{t("knowledge.docCountUnit")}</span>
+              <span className="font-medium text-foreground tabular-nums">~{pack.estimated_doc_count}</span>
+            </div>
+            {pack.source_url && (
+              <div className="flex justify-between">
+                <span>{t("knowledge.pack.source")}</span>
+                <a
+                  href={pack.source_url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1 font-medium text-primary hover:underline"
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  {new URL(pack.source_url).hostname.replace("www.", "")}
+                  <ExternalLink className="size-3" />
+                </a>
+              </div>
+            )}
+          </div>
+          {pack.status === "error" && pack.error_message && (
+            <p className="mt-2 text-xs text-destructive line-clamp-2">{pack.error_message}</p>
+          )}
+        </CardContent>
+        <CardFooter className="justify-end border-t pt-4">
+          {renderButton()}
+        </CardFooter>
+      </Card>
+    )
+  }
+
+  // --- Layout ---
+
+  const isLoading = loading || packsLoading
 
   const toolbar = (
     <FilterToolbar>
@@ -168,8 +422,8 @@ export function KnowledgeListPage() {
         </div>
       </FilterToolbarGroup>
       <FilterToolbarGroup>
-        <Button variant="outline" size="sm" onClick={fetchData} disabled={loading}>
-          {loading ? <Loader2 className="size-4 animate-spin" /> : <RefreshCw className="size-4" />}
+        <Button variant="outline" size="sm" onClick={fetchAll} disabled={isLoading}>
+          {isLoading ? <Loader2 className="size-4 animate-spin" /> : <RefreshCw className="size-4" />}
           {t("knowledge.btn.refresh")}
         </Button>
         <Button size="sm" onClick={openCreateDialog}>
@@ -180,127 +434,50 @@ export function KnowledgeListPage() {
     </FilterToolbar>
   )
 
-  function renderTableBody() {
-    if (loading) {
-      return <ListTableLoadingRows rowCount={5} columnCount={columnCount} />
+  function renderContent() {
+    if (loading && knowledgeBases.length === 0) {
+      return (
+        <div className="flex items-center justify-center py-20">
+          <Loader2 className="size-6 animate-spin text-muted-foreground" />
+        </div>
+      )
     }
 
     if (error) {
       return (
-        <TableRow>
-          <TableCell colSpan={columnCount} className="h-32 text-center">
-            <div className="flex flex-col items-center gap-2 text-destructive">
-              <BookOpen className="size-5" />
-              <span className="text-sm">{error}</span>
-            </div>
-          </TableCell>
-        </TableRow>
+        <div className="flex flex-col items-center gap-2 py-20 text-destructive">
+          <BookOpen className="size-5" />
+          <span className="text-sm">{error}</span>
+        </div>
       )
     }
 
     if (filtered.length === 0) {
       return (
-        <TableRow>
-          <TableCell colSpan={columnCount} className="h-32 text-center">
-            <div className="flex flex-col items-center gap-2 text-muted-foreground">
-              <BookOpen className="size-5" />
-              <span className="text-sm">{searchQuery ? t("knowledge.empty.noMatch") : t("knowledge.empty.none")}</span>
-            </div>
-          </TableCell>
-        </TableRow>
+        <div className="flex flex-col items-center gap-2 py-20 text-muted-foreground">
+          <BookOpen className="size-5" />
+          <span className="text-sm">{searchQuery ? t("knowledge.empty.noMatch") : t("knowledge.empty.none")}</span>
+        </div>
       )
     }
 
-    return paged.map((kb, idx) => (
-      <TableRow
-        key={kb.id}
-        className="animate-in fade-in slide-in-from-bottom-1 cursor-pointer transition-colors duration-150 hover:bg-muted/40 duration-500"
-        style={{ animationDelay: `${idx * 30}ms` }}
-        onClick={() => navigate(`/knowledge/${kb.id}`)}
-      >
-        <TableCell className="font-mono text-xs text-muted-foreground">
-          {kb.id}
-        </TableCell>
-        <TableCell>
-          <div className="flex items-center gap-2.5">
-            <div className="flex size-7 shrink-0 items-center justify-center rounded-md bg-muted/50">
-              <BookOpen className="size-3.5 text-muted-foreground" />
-            </div>
-            <div>
-              <span className="font-medium">{kb.name}</span>
-              {kb.description && (
-                <p className="text-xs text-muted-foreground line-clamp-1">{kb.description}</p>
-              )}
-            </div>
-          </div>
-        </TableCell>
-        <TableCell>
-          <div className="flex flex-wrap gap-1">
-            {(kb.tags || []).map((tag) => (
-              <Badge key={tag} variant="secondary" className="text-xs">
-                {tag}
-              </Badge>
-            ))}
-          </div>
-        </TableCell>
-        <TableCell className="text-muted-foreground tabular-nums">
-          {kb.document_count} {t("knowledge.docCountUnit")}
-        </TableCell>
-        <TableCell className="text-right">
-          <div className="flex items-center justify-end gap-0.5" onClick={(e) => e.stopPropagation()}>
-            <Button
-              variant="ghost"
-              size="icon-xs"
-              onClick={(e) => openEditDialog(kb, e)}
-            >
-              <Pencil className="size-3.5" />
-            </Button>
-            <Button
-              variant="ghost"
-              size="icon-xs"
-              className="text-destructive hover:text-destructive"
-              onClick={() => setDeleteTarget(kb)}
-            >
-              <Trash2 className="size-3.5" />
-            </Button>
-          </div>
-        </TableCell>
-      </TableRow>
-    ))
+    return (
+      <div className="grid gap-4 p-4 md:grid-cols-2 xl:grid-cols-3">
+        {filtered.map((item) =>
+          item.kind === "kb" ? renderKBCard(item.kb) : renderPackCard(item.pack),
+        )}
+      </div>
+    )
   }
 
   const primary = (
     <div className="rounded-xl bg-card shadow-sm">
       <div className="flex items-center gap-4 px-4 pt-4">
-        <Tabs value="all" onValueChange={() => {}} className="w-fit">
-          <TabsList>
-            <TabsTrigger value="all">{t("knowledge.tab.all")}</TabsTrigger>
-          </TabsList>
-        </Tabs>
         <span className="text-xs tabular-nums text-muted-foreground">
           {filtered.length} {t("knowledge.resultCount")}
         </span>
       </div>
-      <ListTable className="overflow-hidden border-0 rounded-none">
-        <Table>
-          <TableHeader>
-            <TableRow className="hover:bg-transparent">
-              <TableHead>{t("knowledge.col.id")}</TableHead>
-              <TableHead>{t("knowledge.col.name")}</TableHead>
-              <TableHead>{t("knowledge.col.tags")}</TableHead>
-              <TableHead>{t("knowledge.col.docCount")}</TableHead>
-              <TableHead className="text-right">{t("knowledge.col.actions")}</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>{renderTableBody()}</TableBody>
-        </Table>
-        <PaginationFooter
-          page={page}
-          pageSize={PAGE_SIZE}
-          total={filtered.length}
-          onPageChange={setPage}
-        />
-      </ListTable>
+      {renderContent()}
     </div>
   )
 
@@ -363,6 +540,15 @@ export function KnowledgeListPage() {
         onOpenChange={(open) => !open && setDeleteTarget(null)}
         onConfirm={handleDelete}
         confirming={deleting}
+      />
+
+      <ConfirmActionDialog
+        open={!!uninstallTarget}
+        title={t("knowledge.pack.uninstall.title")}
+        description={t("knowledge.pack.uninstall.desc").replace("{name}", uninstallTarget?.name ?? "")}
+        onOpenChange={(open) => !open && setUninstallTarget(null)}
+        onConfirm={handleUninstallPack}
+        confirming={uninstalling}
       />
     </>
   )
