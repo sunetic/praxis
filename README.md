@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/logo-banner.svg" alt="Praxis" width="360">
+  <img src="assets/logo-banner.svg" alt="Praxis" width="300">
 </p>
 
 <p align="center">
