@@ -6,6 +6,7 @@ import { ChatPage } from "@/pages/ChatPage"
 import { DataSourcesPage } from "@/pages/DataSourcesPage"
 import { AgentsPage } from "@/pages/AgentsPage"
 import { SkillsPage } from "@/pages/SkillsPage"
+import { SkillBuilderPage } from "@/pages/SkillBuilderPage"
 import { FunctionListPage } from "@/pages/FunctionListPage"
 import { FunctionBuildPage } from "@/pages/FunctionBuildPage"
 import { SchedulerConsolePage } from "@/pages/SchedulerConsolePage"
@@ -72,6 +73,7 @@ function App() {
             <Route path="agent" element={<AgentsPage />} />
             <Route path="agents" element={<Navigate to="/agent" replace />} />
             <Route path="skills" element={<SkillsPage />} />
+            <Route path="skills/builder" element={<SkillBuilderPage />} />
             <Route path="function" element={<FunctionListPage />} />
             <Route path="function/:functionId/build" element={<FunctionBuildPage />} />
             <Route path="function/:functionId" element={<FunctionLegacyRedirect />} />

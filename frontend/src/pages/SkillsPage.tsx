@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react"
-import { AlertTriangle, Loader2, Pencil, Plus, Search, Sparkles, Trash2 } from "lucide-react"
+import { useNavigate } from "react-router-dom"
+import { AlertTriangle, Loader2, Pencil, Plus, Search, Sparkles, Trash2, Wand2 } from "lucide-react"
 import { toast } from "sonner"
 
 import { DetailDrawer } from "@/components/shared/DetailDrawer"
@@ -13,7 +14,7 @@ import { Checkbox } from "@/components/ui/checkbox"
 import { ConfirmActionDialog } from "@/components/ui/confirm-action-dialog"
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
-import { NativeSelect } from "@/components/ui/select"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Textarea } from "@/components/ui/textarea"
 import { skillsApi } from "@/lib/api"
@@ -34,6 +35,7 @@ const PAGE_SIZE = 10
 
 export function SkillsPage() {
   const { t } = useShellI18n()
+  const navigate = useNavigate()
   const [skills, setSkills] = useState<Skill[]>([])
   const [query, setQuery] = useState("")
   const [sourceFilter, setSourceFilter] = useState<"all" | "built_in" | "custom">("all")
@@ -84,10 +86,7 @@ export function SkillsPage() {
     void fetchSkills(query)
   }
 
-  const databaseOptions = useMemo(() => {
-    const values = Array.from(new Set(skills.map((s) => s.database).filter(Boolean))).sort()
-    return values
-  }, [skills])
+  const SCOPE_OPTIONS = ["general", "mysql", "postgresql"] as const
 
   const visibleSkills = useMemo(() => {
     const q = query.trim().toLowerCase()
@@ -178,27 +177,33 @@ export function SkillsPage() {
             className="w-72 rounded-lg bg-card pl-9 text-sm"
           />
         </div>
-        <NativeSelect
-          value={sourceFilter}
-          onChange={(e) => handleSourceFilterChange(e.target.value as "all" | "built_in" | "custom")}
-          className="w-36 bg-card"
-        >
-          <option value="all">{t("skills.filter.allSources")}</option>
-          <option value="built_in">{t("shared.term.builtIn")}</option>
-          <option value="custom">{t("shared.term.custom")}</option>
-        </NativeSelect>
-        <NativeSelect
-          value={databaseFilter}
-          onChange={(e) => handleDatabaseFilterChange(e.target.value)}
-          className="w-36 bg-card"
-        >
-          <option value="all">{t("skills.filter.allScopes")}</option>
-          {databaseOptions.map((db) => (
-            <option key={db} value={db}>{displaySkillScope(db, t)}</option>
-          ))}
-        </NativeSelect>
+        <Select value={sourceFilter} onValueChange={(v) => handleSourceFilterChange(v as "all" | "built_in" | "custom")}>
+          <SelectTrigger className="w-36 bg-card">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">{t("skills.filter.allSources")}</SelectItem>
+            <SelectItem value="built_in">{t("shared.term.builtIn")}</SelectItem>
+            <SelectItem value="custom">{t("shared.term.custom")}</SelectItem>
+          </SelectContent>
+        </Select>
+        <Select value={databaseFilter} onValueChange={handleDatabaseFilterChange}>
+          <SelectTrigger className="w-36 bg-card">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">{t("skills.filter.allScopes")}</SelectItem>
+            {SCOPE_OPTIONS.map((db) => (
+              <SelectItem key={db} value={db}>{displaySkillScope(db, t)}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
       </FilterToolbarGroup>
       <FilterToolbarGroup>
+        <Button size="sm" variant="outline" onClick={() => navigate("/skills/builder")}>
+          <Wand2 className="size-4" />
+          {t("skills.btn.aiCreate")}
+        </Button>
         <Button size="sm" onClick={handleOpenCreate}>
           <Plus className="size-4" />
           {t("skills.btn.create")}
@@ -335,31 +340,20 @@ export function SkillsPage() {
       </div>
 
       <Dialog open={formOpen} onOpenChange={setFormOpen}>
-        <DialogContent className="w-[min(92vw,1200px)] max-w-none p-8 sm:max-w-none" aria-describedby={undefined}>
+        <DialogContent className="w-[min(92vw,560px)]" aria-describedby={undefined}>
           <DialogHeader>
             <DialogTitle>{editingSkillName ? t("skills.dialog.editTitle") : t("skills.dialog.createTitle")}</DialogTitle>
           </DialogHeader>
           <div className="space-y-4">
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-1.5">
-                <label htmlFor="skill-name" className="text-sm font-medium">{t("skills.form.name")}</label>
-                <Input
-                  id="skill-name"
-                  value={formData.name}
-                  disabled={Boolean(editingSkillName)}
-                  onChange={(e) => setFormData((prev) => ({ ...prev, name: e.target.value }))}
-                  placeholder="ob-slow-query-diagnosis"
-                />
-              </div>
-              <div className="space-y-1.5">
-                <label htmlFor="skill-version" className="text-sm font-medium">{t("skills.form.version")}</label>
-                <Input
-                  id="skill-version"
-                  value={formData.version}
-                  onChange={(e) => setFormData((prev) => ({ ...prev, version: e.target.value }))}
-                  placeholder="1.0.0"
-                />
-              </div>
+            <div className="space-y-1.5">
+              <label htmlFor="skill-name" className="text-sm font-medium">{t("skills.form.name")}</label>
+              <Input
+                id="skill-name"
+                value={formData.name}
+                disabled={Boolean(editingSkillName)}
+                onChange={(e) => setFormData((prev) => ({ ...prev, name: e.target.value }))}
+                placeholder="slow-query-diagnosis"
+              />
             </div>
             <div className="space-y-1.5">
               <label htmlFor="skill-description" className="text-sm font-medium">{t("skills.form.description")}</label>
@@ -371,25 +365,25 @@ export function SkillsPage() {
               />
             </div>
             <div className="space-y-1.5">
-              <label htmlFor="skill-db" className="text-sm font-medium">{t("skills.form.database")}</label>
-              <NativeSelect
-                id="skill-db"
-                value={formData.database}
-                onChange={(e) => setFormData((prev) => ({ ...prev, database: e.target.value }))}
-              >
-                <option value="general">{t("skills.scope.general")}</option>
-                {databaseOptions.filter((db) => db !== "general").map((db) => (
-                  <option key={db} value={db}>{db}</option>
-                ))}
-              </NativeSelect>
+              <label className="text-sm font-medium">{t("skills.form.scope")}</label>
+              <Select value={formData.database} onValueChange={(v) => setFormData((prev) => ({ ...prev, database: v }))}>
+                <SelectTrigger className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {SCOPE_OPTIONS.map((db) => (
+                    <SelectItem key={db} value={db}>{displaySkillScope(db, t)}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
-            <div className="flex items-center gap-3 rounded-lg border border-border px-3 py-2">
+            <div className="flex items-center gap-2">
               <Checkbox
                 id="skill-always-apply"
                 checked={formData.always_apply}
                 onCheckedChange={(checked) => setFormData((prev) => ({ ...prev, always_apply: checked === true }))}
               />
-              <label htmlFor="skill-always-apply" className="text-sm text-foreground">{t("skills.form.alwaysApply")}</label>
+              <label htmlFor="skill-always-apply" className="text-sm text-muted-foreground">{t("skills.form.alwaysApply")}</label>
             </div>
             <div className="space-y-1.5">
               <label htmlFor="skill-prompt" className="text-sm font-medium">{t("skills.form.prompt")}</label>
@@ -452,8 +446,11 @@ function displaySkillSource(source: Skill["source"], t: (key: "shared.term.built
   return source === "built_in" ? t("shared.term.builtIn") : t("shared.term.custom")
 }
 
-function displaySkillScope(database: Skill["database"], t: (key: "skills.scope.general") => string): string {
-  return database === "general" ? t("skills.scope.general") : database
+function displaySkillScope(database: string, t: (key: "skills.scope.general" | "skills.scope.mysql" | "skills.scope.postgresql") => string): string {
+  if (database === "general") return t("skills.scope.general")
+  if (database === "mysql") return t("skills.scope.mysql")
+  if (database === "postgresql") return t("skills.scope.postgresql")
+  return database
 }
 
 function extractApiErrorMessage(error: unknown, fallback: string): string {

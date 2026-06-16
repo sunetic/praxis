@@ -75,7 +75,7 @@ def _validate_skill_fields(
     if len(description.strip()) < 8:
         raise SkillValidationError("Skill description must be at least 8 characters")
     if database not in VALID_DATABASE:
-        raise SkillValidationError("Skill database must be one of: oceanbase, mysql, general")
+        raise SkillValidationError("Skill database must be one of: general, mysql, postgresql")
     if not isinstance(always_apply, bool):
         raise SkillValidationError("Skill always_apply must be boolean")
     if not prompt.strip():

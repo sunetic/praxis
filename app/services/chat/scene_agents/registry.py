@@ -15,7 +15,10 @@ def register_scene_agent(agent: ChatCoreAgent) -> None:
 
 class SceneAgentRegistry:
     def __init__(self, agents: Iterable[ChatCoreAgent] | None = None) -> None:
-        resolved_agents = list(agents or [FunctionChatAgent(), SqlAnalysisAgent(), *_extra_agents])
+        if agents is None:
+            from app.services.skill.skill_builder_agent import SkillBuilderAgent
+            agents = [FunctionChatAgent(), SqlAnalysisAgent(), SkillBuilderAgent(), *_extra_agents]
+        resolved_agents = list(agents)
         self._agent_map = {agent.key: agent for agent in resolved_agents if agent.key}
 
     def resolve(self, key: str) -> ChatCoreAgent | None:
