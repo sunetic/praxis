@@ -1,5 +1,6 @@
 """Tests for the Knowledge Packs API (manifest, install, uninstall, protection)."""
 
+import asyncio
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
@@ -46,12 +47,15 @@ def manifest_file(tmp_path: Path):
             "name": "Test Pack 1",
             "description": "A test knowledge pack",
             "tags": ["test", "demo"],
+            "db_type": "mysql",
             "repo_url": "https://github.com/example/repo.git",
             "branch": "main",
             "subdirectory": "docs",
             "license": "MIT",
             "estimated_doc_count": 10,
             "estimated_size_mb": 1.0,
+            "version_pattern": "^[0-9]+\\.[0-9]+$",
+            "default_version": "8.4",
         },
         {
             "id": "test-pack-2",
@@ -284,3 +288,275 @@ class TestUserKBStillEditable:
     def test_delete_user_kb_works(self, client: TestClient, user_kb):
         resp = client.delete(f"/api/v1/knowledge-bases/{user_kb.id}")
         assert resp.status_code == 204
+
+
+class TestSwitchVersion:
+    def test_unknown_pack_returns_404(self, client: TestClient):
+        resp = client.post(
+            "/api/v1/knowledge-packs/nonexistent/switch-version",
+            json={"version": "8.0"},
+        )
+        assert resp.status_code == 404
+
+    def test_not_installed_returns_400(self, client: TestClient):
+        with patch("app.api.knowledge_packs._installer") as mock_installer:
+            mock_installer.switch_version = AsyncMock(
+                side_effect=ValueError("Pack 'test-pack-1' is not installed")
+            )
+            resp = client.post(
+                "/api/v1/knowledge-packs/test-pack-1/switch-version",
+                json={"version": "8.0"},
+            )
+            assert resp.status_code == 400
+
+    def test_switch_version_succeeds(self, client: TestClient, db):
+        kb = models.KnowledgeBase(
+            name="Test Pack 1", source="pack", pack_id="test-pack-1", version="8.4",
+        )
+        db.add(kb)
+        db.commit()
+
+        with patch("app.api.knowledge_packs._installer") as mock_installer:
+            mock_installer.switch_version = AsyncMock(
+                return_value={"pack_id": "test-pack-1", "version": "8.0", "doc_count": 15}
+            )
+            resp = client.post(
+                "/api/v1/knowledge-packs/test-pack-1/switch-version",
+                json={"version": "8.0"},
+            )
+            assert resp.status_code == 200
+            data = resp.json()
+            assert data["version"] == "8.0"
+            assert data["doc_count"] == 15
+
+    def test_invalid_version_returns_400(self, client: TestClient, db):
+        kb = models.KnowledgeBase(
+            name="Test Pack 1", source="pack", pack_id="test-pack-1", version="8.4",
+        )
+        db.add(kb)
+        db.commit()
+
+        with patch("app.api.knowledge_packs._installer") as mock_installer:
+            mock_installer.switch_version = AsyncMock(
+                side_effect=ValueError("Version '9.9' not found in pack manifest")
+            )
+            resp = client.post(
+                "/api/v1/knowledge-packs/test-pack-1/switch-version",
+                json={"version": "9.9"},
+            )
+            assert resp.status_code == 400
+
+
+class TestListPacksVersionInfo:
+    def test_uninstalled_pack_has_default_version(self, client: TestClient):
+        resp = client.get("/api/v1/knowledge-packs")
+        assert resp.status_code == 200
+        data = resp.json()
+        pack1 = next(p for p in data if p["id"] == "test-pack-1")
+        assert pack1["default_version"] == "8.4"
+        assert pack1["db_type"] == "mysql"
+        assert pack1["versions"] is None
+
+    def test_installed_pack_shows_versions_from_meta(self, client: TestClient, db, tmp_path):
+        import json
+        kb = models.KnowledgeBase(
+            name="Test Pack 1", source="pack", pack_id="test-pack-1", version="8.0",
+        )
+        db.add(kb)
+        db.commit()
+        db.refresh(kb)
+
+        kb_dir = tmp_path / "knowledge" / str(kb.id)
+        kb_dir.mkdir(parents=True, exist_ok=True)
+        meta = {
+            "pack_id": "test-pack-1",
+            "db_type": "mysql",
+            "version": "8.0",
+            "subdirectory": "docs",
+            "versions": [
+                {"branch": "8.4", "label": "8.4"},
+                {"branch": "8.0", "label": "8.0"},
+            ],
+        }
+        (kb_dir / ".kb_meta.json").write_text(json.dumps(meta), encoding="utf-8")
+
+        resp = client.get("/api/v1/knowledge-packs")
+        data = resp.json()
+        pack1 = next(p for p in data if p["id"] == "test-pack-1")
+        assert pack1["current_version"] == "8.0"
+        assert pack1["status"] == "installed"
+        assert pack1["versions"] is not None
+        assert len(pack1["versions"]) == 2
+        assert pack1["versions"][0]["label"] == "8.4"
+
+
+class TestDiscoverVersions:
+    def test_parses_ls_remote_output(self):
+        from app.services.knowledge.pack_installer import _discover_versions
+
+        ls_output = (
+            "abc123\trefs/heads/8.4\n"
+            "def456\trefs/heads/8.0\n"
+            "ghi789\trefs/heads/main\n"
+            "jkl012\trefs/heads/5.7\n"
+        )
+
+        async def fake_exec(*args, **kwargs):
+            class FakeProc:
+                returncode = 0
+                async def communicate(self):
+                    return (ls_output.encode(), b"")
+            return FakeProc()
+
+        with patch("asyncio.create_subprocess_exec", side_effect=fake_exec):
+            result = asyncio.get_event_loop().run_until_complete(
+                _discover_versions("https://example.com/repo.git", r"^[0-9]+\.[0-9]+$")
+            )
+
+        assert len(result) == 3
+        assert result[0]["label"] == "8.4"
+        assert result[1]["label"] == "8.0"
+        assert result[2]["label"] == "5.7"
+
+    def test_returns_empty_on_timeout(self):
+        from app.services.knowledge.pack_installer import _discover_versions
+
+        async def fake_exec(*args, **kwargs):
+            raise OSError("network unreachable")
+
+        with patch("asyncio.create_subprocess_exec", side_effect=fake_exec):
+            result = asyncio.get_event_loop().run_until_complete(
+                _discover_versions("https://example.com/repo.git", r"^[0-9]+\.[0-9]+$")
+            )
+
+        assert result == []
+
+    def test_returns_empty_on_nonzero_exit(self):
+        from app.services.knowledge.pack_installer import _discover_versions
+
+        async def fake_exec(*args, **kwargs):
+            class FakeProc:
+                returncode = 128
+                async def communicate(self):
+                    return (b"", b"fatal: could not resolve host")
+            return FakeProc()
+
+        with patch("asyncio.create_subprocess_exec", side_effect=fake_exec):
+            result = asyncio.get_event_loop().run_until_complete(
+                _discover_versions("https://example.com/repo.git", r"^[0-9]+\.[0-9]+$")
+            )
+
+        assert result == []
+
+
+class TestSwitchVersionNetworkError:
+    def test_network_error_returns_502(self, client: TestClient, db):
+        kb = models.KnowledgeBase(
+            name="Test Pack 1", source="pack", pack_id="test-pack-1", version="8.4",
+        )
+        db.add(kb)
+        db.commit()
+
+        with patch("app.api.knowledge_packs._installer") as mock_installer:
+            mock_installer.switch_version = AsyncMock(
+                side_effect=RuntimeError(
+                    "Cannot reach remote repository to fetch version '8.0'. "
+                    "Please check your internet connection and try again."
+                )
+            )
+            resp = client.post(
+                "/api/v1/knowledge-packs/test-pack-1/switch-version",
+                json={"version": "8.0"},
+            )
+            assert resp.status_code == 502
+            assert "internet connection" in resp.json()["detail"]
+
+
+class TestKbMetaAndSearchTools:
+    def test_read_kb_meta(self, tmp_path: Path):
+        import json
+        from app.services.knowledge.search_tools import read_kb_meta, _DATA_ROOT
+
+        kb_dir = tmp_path / "1"
+        kb_dir.mkdir()
+        meta = {"subdirectory": "docs", "version": "8.4", "pack_id": "test", "db_type": "mysql"}
+        (kb_dir / ".kb_meta.json").write_text(json.dumps(meta), encoding="utf-8")
+
+        original = _DATA_ROOT
+        import app.services.knowledge.search_tools as st
+        st._DATA_ROOT = tmp_path
+        try:
+            result = read_kb_meta(1)
+            assert result is not None
+            assert result["subdirectory"] == "docs"
+            assert result["version"] == "8.4"
+            assert result["db_type"] == "mysql"
+        finally:
+            st._DATA_ROOT = original
+
+    def test_read_kb_meta_returns_none_for_user_kb(self, tmp_path: Path):
+        from app.services.knowledge.search_tools import read_kb_meta
+
+        kb_dir = tmp_path / "2"
+        kb_dir.mkdir()
+
+        import app.services.knowledge.search_tools as st
+        original = st._DATA_ROOT
+        st._DATA_ROOT = tmp_path
+        try:
+            assert read_kb_meta(2) is None
+        finally:
+            st._DATA_ROOT = original
+
+    def test_find_kb_by_db_type(self, tmp_path: Path):
+        import json
+        from app.services.knowledge.search_tools import find_kb_by_db_type
+
+        kb_dir = tmp_path / "5"
+        kb_dir.mkdir()
+        meta = {"subdirectory": "docs", "version": "8.4", "pack_id": "mysql-test", "db_type": "mysql"}
+        (kb_dir / ".kb_meta.json").write_text(json.dumps(meta), encoding="utf-8")
+
+        import app.services.knowledge.search_tools as st
+        original = st._DATA_ROOT
+        st._DATA_ROOT = tmp_path
+        try:
+            assert find_kb_by_db_type("mysql") == 5
+            assert find_kb_by_db_type("postgresql") is None
+        finally:
+            st._DATA_ROOT = original
+
+    def test_resolve_kb_root_with_meta(self, tmp_path: Path):
+        import json
+        from app.services.knowledge.search_tools import _resolve_kb_root
+
+        kb_dir = tmp_path / "3"
+        kb_dir.mkdir()
+        docs_dir = kb_dir / "docs"
+        docs_dir.mkdir()
+        meta = {"subdirectory": "docs", "version": "8.4", "pack_id": "test", "db_type": "mysql"}
+        (kb_dir / ".kb_meta.json").write_text(json.dumps(meta), encoding="utf-8")
+
+        import app.services.knowledge.search_tools as st
+        original = st._DATA_ROOT
+        st._DATA_ROOT = tmp_path
+        try:
+            root = _resolve_kb_root(3)
+            assert root == docs_dir.resolve()
+        finally:
+            st._DATA_ROOT = original
+
+    def test_resolve_kb_root_without_meta(self, tmp_path: Path):
+        from app.services.knowledge.search_tools import _resolve_kb_root
+
+        kb_dir = tmp_path / "4"
+        kb_dir.mkdir()
+
+        import app.services.knowledge.search_tools as st
+        original = st._DATA_ROOT
+        st._DATA_ROOT = tmp_path
+        try:
+            root = _resolve_kb_root(4)
+            assert root == kb_dir.resolve()
+        finally:
+            st._DATA_ROOT = original

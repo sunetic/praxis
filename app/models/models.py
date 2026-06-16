@@ -762,6 +762,8 @@ class KnowledgeBase(Base):
     tags: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
     source: Mapped[Optional[str]] = mapped_column(String(50), nullable=True, default="user")
     pack_id: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    version: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    repo_subdirectory: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, default=datetime.utcnow, onupdate=datetime.utcnow

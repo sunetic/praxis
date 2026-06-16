@@ -16,6 +16,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { FilterToolbar, FilterToolbarGroup } from "@/components/shared/FilterToolbar"
 import { WorkbenchPage } from "@/components/shared/WorkbenchPage"
 import { useShellI18n } from "@/i18n/shellI18n"
@@ -25,7 +26,9 @@ import type { KnowledgeBase, KnowledgeBaseInput, KnowledgePack } from "@/lib/api
 const POLL_INTERVAL = 3000
 
 function getErrorMessage(error: unknown, fallback: string): string {
-  if (error && typeof error === "object" && "message" in error) {
+  if (error && typeof error === "object") {
+    const axiosDetail = (error as { response?: { data?: { detail?: string } } }).response?.data?.detail
+    if (typeof axiosDetail === "string" && axiosDetail.trim()) return axiosDetail
     const message = (error as { message?: unknown }).message
     if (typeof message === "string" && message.trim()) return message
   }
@@ -67,6 +70,7 @@ export function KnowledgeListPage() {
   const [installingPacks, setInstallingPacks] = useState<Set<string>>(new Set())
   const [uninstallTarget, setUninstallTarget] = useState<KnowledgePack | null>(null)
   const [uninstalling, setUninstalling] = useState(false)
+  const [switchingVersion, setSwitchingVersion] = useState<string | null>(null)
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   async function fetchData() {
@@ -249,10 +253,27 @@ export function KnowledgeListPage() {
     }
   }
 
+  async function handleSwitchVersion(packId: string, version: string) {
+    setSwitchingVersion(packId)
+    try {
+      await knowledgePackApi.switchVersion(packId, version)
+      toast.success(t("knowledge.pack.toast.versionSwitched"))
+      fetchPacks()
+      fetchData()
+    } catch (e) {
+      toast.error(getErrorMessage(e, t("knowledge.pack.toast.switchFailed")))
+    } finally {
+      setSwitchingVersion(null)
+    }
+  }
+
   // --- Card renderers ---
 
   function renderKBCard(kb: KnowledgeBase) {
     const isPack = kb.source === "pack"
+    const packInfo = isPack ? packs.find((p) => p.id === kb.pack_id) : null
+    const hasVersions = packInfo?.versions && packInfo.versions.length > 1
+    const isSwitching = switchingVersion === kb.pack_id
     return (
       <Card
         key={`kb-${kb.id}`}
@@ -262,13 +283,28 @@ export function KnowledgeListPage() {
         <CardHeader>
           <div className="flex items-start justify-between gap-2">
             <CardTitle className="text-base line-clamp-1">{kb.name}</CardTitle>
-            <Badge variant={isPack ? "outline" : "secondary"} className="text-xs shrink-0">
-              {isPack ? (
-                <><Package className="mr-1 size-3" />{t("knowledge.pack.badge")}</>
-              ) : (
-                <><User className="mr-1 size-3" />{t("knowledge.source.user")}</>
-              )}
-            </Badge>
+            {hasVersions ? (
+              <div className="shrink-0" onClick={(e) => e.stopPropagation()}>
+                <Select
+                  value={packInfo!.current_version || packInfo!.default_version || ""}
+                  onValueChange={(v) => handleSwitchVersion(kb.pack_id!, v)}
+                  disabled={isSwitching}
+                >
+                  <SelectTrigger className="h-6 w-auto gap-0.5 rounded-full border px-2 text-xs font-medium shadow-none">
+                    {isSwitching ? <Loader2 className="size-3 animate-spin" /> : <>v<SelectValue /></>}
+                  </SelectTrigger>
+                  <SelectContent>
+                    {packInfo!.versions!.map((v) => (
+                      <SelectItem key={v.label} value={v.label} className="text-xs">{v.label}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            ) : !isPack ? (
+              <Badge variant="secondary" className="text-xs shrink-0">
+                <User className="mr-1 size-3" />{t("knowledge.source.user")}
+              </Badge>
+            ) : null}
           </div>
           <CardDescription className="line-clamp-2">
             {kb.description || " "}
@@ -356,6 +392,8 @@ export function KnowledgeListPage() {
               <Badge variant="destructive" className="text-xs shrink-0">{t("knowledge.pack.error")}</Badge>
             ) : isInstalling ? (
               <Badge variant="secondary" className="text-xs shrink-0">{t("knowledge.pack.downloading")}</Badge>
+            ) : pack.default_version ? (
+              <Badge variant="outline" className="text-xs shrink-0">v{pack.default_version}</Badge>
             ) : (
               <Badge variant="outline" className="text-xs shrink-0">{t("knowledge.pack.available")}</Badge>
             )}

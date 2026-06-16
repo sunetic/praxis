@@ -13,7 +13,7 @@ from app.core.logging import fmt_kv, get_logger
 from app.db.database import SessionLocal, get_db
 from app.models import models
 from app.schemas import schemas
-from app.services.knowledge.pack_installer import PackInstaller, progress
+from app.services.knowledge.pack_installer import PackInstaller, progress, read_kb_meta
 
 router = APIRouter(prefix="/knowledge-packs", tags=["KnowledgePacks"])
 logger = get_logger("api.knowledge_packs")
@@ -59,7 +59,15 @@ def list_packs(db: Session = Depends(get_db)):
             entry.error_message = prog.get("error_message")
         elif pack_id in installed_map:
             entry.status = "installed"
-            entry.kb_id = installed_map[pack_id].id
+            kb = installed_map[pack_id]
+            entry.kb_id = kb.id
+            entry.current_version = kb.version
+            kb_meta = read_kb_meta(_installer._data_root / str(kb.id))
+            if kb_meta and kb_meta.get("versions"):
+                entry.versions = [
+                    schemas.PackVersion(branch=v["branch"], label=v["label"])
+                    for v in kb_meta["versions"]
+                ]
 
         results.append(entry)
 
@@ -126,6 +134,18 @@ def get_pack_status(pack_id: str, db: Session = Depends(get_db)):
         )
 
     return schemas.KnowledgePackInstallStatus(pack_id=pack_id, status="available")
+
+
+@router.post("/{pack_id}/switch-version", response_model=schemas.SwitchVersionResponse)
+async def switch_version(pack_id: str, body: schemas.SwitchVersionRequest):
+    pack = _find_pack(pack_id)
+    try:
+        result = await _installer.switch_version(pack_id, body.version, pack, SessionLocal)
+        return schemas.SwitchVersionResponse(**result)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except RuntimeError as e:
+        raise HTTPException(status_code=502, detail=str(e))
 
 
 @router.delete("/{pack_id}", status_code=status.HTTP_204_NO_CONTENT)

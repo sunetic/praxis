@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import re
 import subprocess
 from pathlib import Path
@@ -14,13 +15,47 @@ _DATA_ROOT = Path("data/knowledge")
 _RG_TIMEOUT = 15
 _MAX_OUTPUT_BYTES = 30_000
 _MAX_READ_LINES = 200
+_KB_META_FILE = ".kb_meta.json"
 
 
 def _resolve_kb_root(kb_id: int) -> Path:
-    root = _DATA_ROOT / str(kb_id)
-    if not root.is_dir():
-        raise FileNotFoundError(f"Knowledge base directory not found: {root}")
-    return root.resolve()
+    base = _DATA_ROOT / str(kb_id)
+    if not base.is_dir():
+        raise FileNotFoundError(f"Knowledge base directory not found: {base}")
+    meta = read_kb_meta(kb_id)
+    if meta:
+        subdir = meta.get("subdirectory", "")
+        if subdir:
+            root = base / subdir
+            if root.is_dir():
+                return root.resolve()
+    return base.resolve()
+
+
+def read_kb_meta(kb_id: int) -> dict[str, Any] | None:
+    meta_file = _DATA_ROOT / str(kb_id) / _KB_META_FILE
+    if not meta_file.is_file():
+        return None
+    try:
+        return json.loads(meta_file.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return None
+
+
+def find_kb_by_db_type(db_type: str) -> int | None:
+    if not _DATA_ROOT.is_dir():
+        return None
+    for entry in _DATA_ROOT.iterdir():
+        if not entry.is_dir():
+            continue
+        try:
+            kb_id = int(entry.name)
+        except ValueError:
+            continue
+        meta = read_kb_meta(kb_id)
+        if meta and meta.get("db_type") == db_type:
+            return kb_id
+    return None
 
 
 def _extract_frontmatter_title(path: Path) -> str:

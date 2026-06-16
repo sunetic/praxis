@@ -9,7 +9,12 @@ from app.services.agent.reasoning_engine import (
     ReasoningEngine,
     SimpleToolExecutor,
 )
-from app.services.knowledge.search_tools import TOOL_SCHEMAS, execute_tool
+from app.services.knowledge.search_tools import (
+    TOOL_SCHEMAS,
+    execute_tool,
+    find_kb_by_db_type,
+    read_kb_meta,
+)
 from app.services.llm import LLMClient, get_llm_client
 from app.services.platform.prompt_loader import PromptLoader
 
@@ -33,8 +38,21 @@ class KnowledgeSearchAgent:
         *,
         query: str,
         kb_ids: list[int] | None = None,
+        db_type: str | None = None,
+        version: str | None = None,
         knowledge_bases: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
+        if db_type and not kb_ids:
+            resolved_kb_id = find_kb_by_db_type(db_type)
+            if resolved_kb_id is not None:
+                if version:
+                    await self._ensure_version(resolved_kb_id, version)
+                kb_ids = [resolved_kb_id]
+            else:
+                return self._build_result(
+                    f"No knowledge base found for db_type='{db_type}'.", []
+                )
+
         if not knowledge_bases:
             knowledge_bases = self._default_kb_list(kb_ids)
 
@@ -98,9 +116,57 @@ class KnowledgeSearchAgent:
                 continue
             if kb_ids and kid not in kb_ids:
                 continue
-            doc_count = sum(1 for _ in entry.rglob("*.md") if _.name.lower() != "readme.md")
-            results.append({"id": kid, "name": entry.name, "doc_count": doc_count})
+            meta = read_kb_meta(kid)
+            if meta:
+                subdir = meta.get("subdirectory", "")
+                doc_root = entry / subdir if subdir else entry
+            else:
+                doc_root = entry
+            doc_count = sum(1 for _ in doc_root.rglob("*.md") if _.name.lower() != "readme.md")
+            item: dict[str, Any] = {"id": kid, "name": entry.name, "doc_count": doc_count}
+            if meta:
+                item["version"] = meta.get("version")
+                item["db_type"] = meta.get("db_type")
+                item["path"] = str(doc_root)
+            results.append(item)
         return results
+
+    async def _ensure_version(self, kb_id: int, target_version: str) -> None:
+        meta = read_kb_meta(kb_id)
+        if not meta:
+            return
+        if meta.get("version") == target_version:
+            return
+
+        pack_id = meta.get("pack_id")
+        if not pack_id:
+            return
+
+        from app.services.knowledge.pack_installer import PackInstaller
+        from app.db.database import SessionLocal
+        import json as _json
+        from pathlib import Path
+
+        manifest_path = Path("data") / "knowledge_packs.json"
+        if not manifest_path.is_file():
+            return
+        manifest = _json.loads(manifest_path.read_text(encoding="utf-8"))
+        manifest_pack = next((p for p in manifest if p.get("id") == pack_id), None)
+        if not manifest_pack:
+            return
+
+        installer = PackInstaller()
+        try:
+            await installer.switch_version(pack_id, target_version, manifest_pack, SessionLocal)
+            logger.info(
+                "auto_version_switch %s",
+                fmt_kv(kb_id=kb_id, pack_id=pack_id, version=target_version),
+            )
+        except Exception:
+            logger.exception(
+                "auto_version_switch_failed %s",
+                fmt_kv(kb_id=kb_id, pack_id=pack_id, version=target_version),
+            )
 
     def _build_result(
         self,

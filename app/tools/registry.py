@@ -1087,23 +1087,38 @@ class KnowledgeSearchTool(BaseTool):
                 "type": "string",
                 "description": "The search query in natural language (Chinese or English)",
             },
+            "db_type": {
+                "type": "string",
+                "description": "Database type to search docs for (e.g. mysql, postgresql, oceanbase). Matches knowledge packs by database type.",
+            },
+            "version": {
+                "type": "string",
+                "description": "Database version (e.g. '8.0', '8.4'). If omitted, uses the currently installed version.",
+            },
             "kb_ids": {
                 "type": "array",
                 "items": {"type": "integer"},
-                "description": "Optional list of knowledge base IDs to search. If omitted, searches all.",
+                "description": "Optional list of knowledge base IDs to search. If omitted and db_type is provided, auto-selects the matching pack.",
             },
         },
         "required": ["query"],
     }
 
-    async def execute(self, query: str = "", kb_ids: list[int] | None = None, **params: object) -> ToolResult:
+    async def execute(
+        self,
+        query: str = "",
+        db_type: str | None = None,
+        version: str | None = None,
+        kb_ids: list[int] | None = None,
+        **params: object,
+    ) -> ToolResult:
         del params
         if not query.strip():
             return ToolResult(success=False, error={"code": "invalid_argument", "message": "query is required"})
         from app.services.knowledge.search_agent import KnowledgeSearchAgent
         agent = KnowledgeSearchAgent()
         try:
-            result = await agent.run(query=query, kb_ids=kb_ids)
+            result = await agent.run(query=query, kb_ids=kb_ids, db_type=db_type, version=version)
             return ToolResult(success=True, data=result)
         except Exception as e:
             return ToolResult(success=False, error={"code": "search_error", "message": str(e)})

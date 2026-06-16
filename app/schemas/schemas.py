@@ -162,11 +162,19 @@ class KnowledgeDocumentResponse(BaseModel):
     updated_at: datetime
 
 
+class PackVersion(BaseModel):
+    branch: str
+    label: str
+
+
 class KnowledgePackResponse(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
     id: str
     name: str
     description: str
     tags: list[str] = []
+    db_type: Optional[str] = None
     repo_url: str
     branch: str
     subdirectory: str
@@ -174,9 +182,22 @@ class KnowledgePackResponse(BaseModel):
     source_url: Optional[str] = None
     estimated_doc_count: int = 0
     estimated_size_mb: float = 0.0
+    versions: Optional[list[PackVersion]] = None
+    default_version: Optional[str] = None
+    current_version: Optional[str] = None
     status: str = "available"
     kb_id: Optional[int] = None
     error_message: Optional[str] = None
+
+
+class SwitchVersionRequest(BaseModel):
+    version: str
+
+
+class SwitchVersionResponse(BaseModel):
+    pack_id: str
+    version: str
+    doc_count: int
 
 
 class KnowledgePackInstallStatus(BaseModel):
