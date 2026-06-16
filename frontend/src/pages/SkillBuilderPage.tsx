@@ -42,12 +42,12 @@ const EMPTY_DRAFT: SkillDraft = {
 }
 
 function extractSkillResult(text: string): SkillDraft | null {
-  const fenceMatch = text.match(/```(?:json)?\s*\n?\s*(\{[\s\S]*?"skill_result"[\s\S]*?\})\s*\n?\s*```/)
+  const fenceMatch = text.match(/```(?:json)?\s*\n?\s*(\{[\s\S]*?"skill_(?:result|draft)"[\s\S]*?\})\s*\n?\s*```/)
   const raw = fenceMatch ? fenceMatch[1] : null
   if (!raw) return null
   try {
     const parsed = JSON.parse(raw)
-    const sr = parsed.skill_result
+    const sr = parsed.skill_result || parsed.skill_draft
     if (!sr || typeof sr !== "object") return null
     return {
       name: String(sr.name || ""),
@@ -99,11 +99,22 @@ export function SkillBuilderPage() {
 
   useEffect(() => {
     const msgs = controller.messages
-    if (!msgs.length) return
+    const streamText = controller.streamingParts
+      .filter((p): p is { type: "text"; text: string } => p.type === "text")
+      .map((p) => p.text)
+      .join("")
+
+    const candidates: string[] = []
+    if (streamText) candidates.push(streamText)
     for (let i = msgs.length - 1; i >= 0; i--) {
       const msg = msgs[i]
-      if (msg.role !== "assistant") continue
-      const text = msg.content || ""
+      if (msg.role === "assistant" && msg.content) {
+        candidates.push(msg.content)
+        break
+      }
+    }
+
+    for (const text of candidates) {
       const result = extractSkillResult(text)
       if (result) {
         const key = JSON.stringify(result)
@@ -111,10 +122,10 @@ export function SkillBuilderPage() {
           lastAppliedRef.current = key
           setDraft(result)
         }
-        break
+        return
       }
     }
-  }, [controller.messages])
+  }, [controller.messages, controller.streamingParts])
 
   const handleSave = useCallback(async () => {
     if (!draft.name.trim() || !draft.description.trim() || !draft.prompt.trim()) {
