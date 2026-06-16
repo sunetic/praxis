@@ -1,4 +1,4 @@
-from app.api.chat import _extract_scene_agent_payload
+from app.services.chat.stream_helpers import _extract_scene_agent_payload
 from app.services.chat.scene_agents import SceneAgentRegistry
 
 

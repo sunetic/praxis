@@ -8,52 +8,19 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
-from app.api.chat_agent_draft import (
-    _build_agent_draft_fallback,  # noqa: F401
-    _build_agent_draft_from_conversation,  # noqa: F401
-    _derive_agent_name_from_seed,  # noqa: F401
-    _stream_save_agent_workflow,
-    save_conversation_as_agent_stream,  # noqa: F401
-)
+from app.api.chat_agent_draft import _stream_save_agent_workflow
+from app.api.chat_history import load_chat_messages
 from app.api.chat_handoff import (
-    HANDOFF_EVENT_TYPE,  # noqa: F401
-    HANDOFF_STATUS_CONSUMED,  # noqa: F401
     HANDOFF_STATUS_PENDING,
-    _format_handoff_context_for_prompt,  # noqa: F401
     _get_handoff_event,
-    _handoff_consumed_at,  # noqa: F401
     _handoff_status,
     _mark_handoff_consumed,
-    _normalize_handoff_packet,  # noqa: F401
-    _resolve_handoff_preferred_execution_datasource_id,  # noqa: F401
-    _serialize_handoff_event,  # noqa: F401
-    _truncate_handoff_text,  # noqa: F401
-    consume_chat_handoff,  # noqa: F401
-    create_chat_handoff,  # noqa: F401
-    get_chat_handoff,  # noqa: F401
-    list_chat_events,  # noqa: F401
-)
-from app.api.chat_pending import (
-    _build_action_result_text,  # noqa: F401
-    _build_confirmed_sql_failure_resume_fallback,  # noqa: F401
-    _build_confirmed_sql_failure_resume_message,  # noqa: F401
-    _build_confirmed_sql_result_summary,  # noqa: F401
-    _build_confirmed_sql_resume_fallback,  # noqa: F401
-    _build_confirmed_sql_resume_message,  # noqa: F401
-    _build_object_tool_session_factory,  # noqa: F401
-    _find_message_with_pending_token,  # noqa: F401
-    _find_pending_action_result_event,  # noqa: F401
-    _find_pending_tool_result_event,  # noqa: F401
-    _render_confirmed_sql_followup,  # noqa: F401
-    _serialize_pending_action,  # noqa: F401
-    cancel_pending_action,  # noqa: F401
-    confirm_pending_action,  # noqa: F401
-    list_pending_actions,  # noqa: F401
 )
 from app.core.config import get_settings
 from app.core.logging import fmt_kv, get_logger
 from app.db.database import get_db
 from app.models import models
+from app.schemas.schemas import ChatCompleteRequest, ChatStreamRequest
 from app.services.chat import get_chat_service
 from app.services.chat.agent import ChatAgent
 from app.services.chat.capabilities import (
@@ -61,29 +28,16 @@ from app.services.chat.capabilities import (
 )
 from app.services.chat.scene_agents import SceneAgentPayload, SceneAgentRegistry
 from app.services.chat.stream_helpers import (
-    _META_TOOL_NAMES,  # noqa: F401
-    ALL_TENANTS_REQUEST_PATTERNS,  # noqa: F401
     _annotate_runtime_event,
     _build_builder_scene_conversation_context,
     _build_cross_tenant_scope_guard_message,
-    _build_knowledge_base_prompt,  # noqa: F401
-    _build_recent_conversation_context,  # noqa: F401
-    _build_step_result_event,  # noqa: F401
-    _build_step_start_event,  # noqa: F401
     _extract_error_message,
-    _extract_latest_active_skills,  # noqa: F401
     _extract_scene_agent_payload,
-    _extract_selector_payload,  # noqa: F401
-    _extract_sse_payloads,  # noqa: F401
-    _extract_tool_call_trace,  # noqa: F401
     _infer_datasource_id_from_scene_agent_payload,
-    _infer_scene_key_from_legacy_page_agent,  # noqa: F401
     _is_all_tenants_request,
     _json_dumps_safe,
-    _json_loads_safe,  # noqa: F401
     _map_tool_event_to_step_event,
     _normalize_json_payload,
-    _normalize_positive_int_list,  # noqa: F401
     _normalize_scene_agent_payload_datasource,
     _normalize_string_list,
     _resolve_builder_scene_target,
@@ -116,7 +70,7 @@ from app.services.chat.tool_binding import (
     resolve_active_build_scope as _resolve_active_build_scope,
 )
 from app.services.chat.turn_context import TurnContextExtras, build_agent_turn_context
-from app.services.chat.vds import event_to_vds as _event_to_vds  # noqa: F401
+from app.services.chat.vds import event_to_vds as _event_to_vds
 from app.skills.store import skill_store
 
 _XML_TOOL_CALL_STRIP_RE = re.compile(
@@ -141,7 +95,7 @@ settings = get_settings()
 @router.post("/{conversation_id}/stream")
 async def chat_stream(
     conversation_id: int,
-    message: dict,
+    message: ChatStreamRequest,
     request: Request = None,
     db: Session = Depends(get_db),
 ):
@@ -155,15 +109,13 @@ async def chat_stream(
     if not conversation:
         raise HTTPException(status_code=404, detail="Conversation not found")
 
-    # Reload to ensure relationships are correctly loaded
     db.refresh(conversation)
-    incoming_content = str(message.get("content") or "").strip()
-    raw_run_datasource_ids = message.get("run_datasource_ids")
+    incoming_content = message.content.strip()
     run_datasource_ids: list[int] = [
-        int(x) for x in (raw_run_datasource_ids or []) if isinstance(x, (int, str)) and str(x).strip().isdigit()
+        x for x in (message.run_datasource_ids or []) if x > 0
     ]
-    scene_agent_payload = _extract_scene_agent_payload(message)
-    locale = str(message.get("locale") or "").strip() or None
+    scene_agent_payload = _extract_scene_agent_payload(message.model_dump())
+    locale = message.locale
     inferred_scene_datasource_id = _infer_datasource_id_from_scene_agent_payload(scene_agent_payload)
     if (
         conversation.datasource_id is None
@@ -189,14 +141,7 @@ async def chat_stream(
             ),
         )
 
-    raw_handoff_id = message.get("handoff_id")
-    handoff_id: int | None = None
-    if isinstance(raw_handoff_id, int) and raw_handoff_id > 0:
-        handoff_id = raw_handoff_id
-    elif isinstance(raw_handoff_id, str) and raw_handoff_id.strip().isdigit():
-        parsed_handoff_id = int(raw_handoff_id.strip())
-        if parsed_handoff_id > 0:
-            handoff_id = parsed_handoff_id
+    handoff_id: int | None = message.handoff_id if (message.handoff_id and message.handoff_id > 0) else None
 
     pending_handoff_turn = False
     if handoff_id is not None:
@@ -255,101 +200,7 @@ async def chat_stream(
             media_type="text/plain; charset=utf-8",
         )
 
-    logger.info("fetch_messages_start %s", fmt_kv(conversation_id=conversation_id))
-    messages = (
-        db.query(models.Message)
-        .filter(models.Message.conversation_id == conversation_id)
-        .order_by(models.Message.created_at.asc())
-        .all()
-    )
-
-    chat_messages = []
-    for m in messages:
-        if m.role not in {"user", "assistant"}:
-            continue
-        # Prefer content_parts (new format), fall back to tool_calls (legacy)
-        parts = m.content_parts if isinstance(m.content_parts, list) else None
-        if m.role == "assistant" and parts:
-            tool_calls_openai = []
-            text_parts = []
-            for part in parts:
-                if not isinstance(part, dict):
-                    continue
-                if part.get("type") == "text" and str(part.get("text") or "").strip():
-                    text_parts.append(part["text"])
-                elif part.get("type") == "tool_use":
-                    tc_id = part.get("id") or f"tool_{part.get('name', '')}"
-                    tool_calls_openai.append({
-                        "id": tc_id,
-                        "type": "function",
-                        "function": {
-                            "name": part.get("name") or "",
-                            "arguments": json.dumps(part.get("input") or {}, ensure_ascii=False),
-                        },
-                    })
-            assistant_msg: dict[str, Any] = {"role": "assistant"}
-            if text_parts:
-                assistant_msg["content"] = "\n".join(text_parts)
-            if tool_calls_openai:
-                assistant_msg["tool_calls"] = tool_calls_openai
-            if text_parts or tool_calls_openai:
-                chat_messages.append(assistant_msg)
-            # Append tool results as role=tool messages
-            for part in parts:
-                if not isinstance(part, dict) or part.get("type") != "tool_use":
-                    continue
-                tc_id = part.get("id") or f"tool_{part.get('name', '')}"
-                result = part.get("result")
-                result_text = result if isinstance(result, str) else json.dumps(result, ensure_ascii=False, default=str)
-                chat_messages.append({"role": "tool", "tool_call_id": tc_id, "content": result_text})
-        elif m.role == "assistant" and m.tool_calls:
-            # Legacy: expand tool_calls into OpenAI multi-turn format
-            tool_calls_openai = []
-            text_content = str(m.content or "").strip()
-            for tc in m.tool_calls:
-                tc_id = tc.get("id") or f"tool_{tc.get('name', '')}"
-                tool_calls_openai.append({
-                    "id": tc_id,
-                    "type": "function",
-                    "function": {
-                        "name": tc.get("name") or "",
-                        "arguments": json.dumps(tc.get("input") or {}, ensure_ascii=False),
-                    },
-                })
-            assistant_msg = {"role": "assistant"}
-            if text_content:
-                assistant_msg["content"] = text_content
-            if tool_calls_openai:
-                assistant_msg["tool_calls"] = tool_calls_openai
-            if text_content or tool_calls_openai:
-                chat_messages.append(assistant_msg)
-            for tc in m.tool_calls:
-                tc_id = tc.get("id") or f"tool_{tc.get('name', '')}"
-                result = tc.get("result")
-                result_text = result if isinstance(result, str) else json.dumps(result, ensure_ascii=False, default=str)
-                chat_messages.append({"role": "tool", "tool_call_id": tc_id, "content": result_text})
-        else:
-            chat_messages.append({"role": m.role, "content": m.content})
-    if incoming_content:
-        chat_messages.append({"role": "user", "content": incoming_content})
-
-    # Sliding window: drop oldest messages if payload is too large.
-    # Always keep the first user message (context anchor) and the last N messages.
-    context_char_limit = settings.ai_context_char_limit
-    while len(chat_messages) > 2:
-        total = sum(
-            len(json.dumps(m.get("content", ""), ensure_ascii=False, default=str))
-            for m in chat_messages
-        )
-        if total <= context_char_limit:
-            break
-        # Drop the second message (index 1) to preserve the first user message
-        chat_messages.pop(1)
-
-    logger.info(
-        "fetch_messages_done %s",
-        fmt_kv(conversation_id=conversation_id, message_count=len(chat_messages)),
-    )
+    chat_messages, messages = load_chat_messages(db, conversation_id, incoming_content)
 
     tools = _filter_tools_by_agent(conversation.agent)
     tools = _bind_default_datasource_to_tools(tools, conversation.datasource_id)
@@ -465,7 +316,7 @@ async def chat_stream(
             conversation_context=_build_builder_scene_conversation_context(
                 messages,
                 latest_user_input=incoming_content,
-                explicit_context=str(message.get("conversation_context") or ""),
+                explicit_context=message.conversation_context or "",
             ),
             scene_agent_payload=scene_agent_payload,
         )
@@ -982,11 +833,11 @@ async def chat_stream(
 
 @router.post("/complete")
 async def chat_complete(
-    message: dict,
+    message: ChatCompleteRequest,
     db: Session = Depends(get_db),
 ):
     """Non-streaming version for simple testing."""
-    content = message.get("content", "")
+    content = message.content
 
     messages = [{"role": "user", "content": content}]
 

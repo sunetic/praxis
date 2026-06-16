@@ -3,7 +3,7 @@ from enum import Enum
 import re
 from typing import Any, Optional
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 SKILL_VERSION_REGEX = re.compile(r"^\d+\.\d+\.\d+$")
 SKILL_DATABASES = {"oceanbase", "mysql", "general"}
@@ -1046,3 +1046,36 @@ class SessionSnapshotForAI(BaseModel):
     user_distribution: dict[str, int]
     ip_distribution: dict[str, int]
     long_transactions: list[dict]
+
+
+# ---------------------------------------------------------------------------
+# Chat Stream
+# ---------------------------------------------------------------------------
+
+
+class SceneAgentRequest(BaseModel):
+    key: str
+    context: dict[str, Any] = Field(default_factory=dict)
+    focus_object: Optional[dict[str, Any]] = None
+    tools: list[str] = Field(default_factory=list)
+    skills: list[str] = Field(default_factory=list)
+
+
+class ChatStreamRequest(BaseModel):
+    content: str = ""
+    run_datasource_ids: Optional[list[int]] = None
+    handoff_id: Optional[int] = None
+    scene_agent: Optional[SceneAgentRequest] = None
+    conversation_context: Optional[str] = None
+    locale: Optional[str] = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _legacy_page_agent(cls, data):
+        if isinstance(data, dict) and "page_agent" in data and "scene_agent" not in data:
+            data["scene_agent"] = data.pop("page_agent")
+        return data
+
+
+class ChatCompleteRequest(BaseModel):
+    content: str = ""

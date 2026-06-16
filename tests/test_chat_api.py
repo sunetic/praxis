@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from app.api import chat as chat_api
 from app.api import chat_pending as chat_pending_api
 from app.api import conversations as conversations_api
-from app.api.chat import _normalize_json_payload
+from app.services.chat.stream_helpers import _normalize_json_payload
 from app.services.chat import stream_helpers as chat_stream_helpers
 from app.services.chat import tool_binding as chat_tool_binding
 from app.services.chat import turn_context as chat_turn_context
@@ -975,16 +975,16 @@ async def test_chat_stream_does_not_override_existing_conversation_datasource(
 
         response = await chat_api.chat_stream(
             conversation_id=conversation.id,
-            message={
-                "content": "继续分析这张表",
-                "scene_agent": {
-                    "key": "stats_analysis",
-                    "context": {
+            message=schemas.ChatStreamRequest(
+                content="继续分析这张表",
+                scene_agent=schemas.SceneAgentRequest(
+                    key="stats_analysis",
+                    context={
                         "datasource": {"id": scene_datasource.id, "cluster_key": "cluster-b", "tenant_role": "user"},
                     },
-                    "focus_object": {"type": "issue", "table_name": "tb_transactions", "tenant_name": "wx"},
-                },
-            },
+                    focus_object={"type": "issue", "table_name": "tb_transactions", "tenant_name": "wx"},
+                ),
+            ),
             request=None,
             db=db,
         )
@@ -1100,7 +1100,7 @@ async def test_chat_stream_injects_and_consumes_handoff(
 
         response = await chat_api.chat_stream(
             conversation_id=conversation.id,
-            message={"content": "继续分析", "handoff_id": handoff_event.id},
+            message=schemas.ChatStreamRequest(content="继续分析", handoff_id=handoff_event.id),
             db=db,
         )
         payloads = await _collect_stream_payloads(response)
@@ -1195,7 +1195,7 @@ async def test_chat_stream_passes_builder_scope_and_filters_tools(
         conversation, _ = _create_conversation_with_scope(db)
         response = await chat_api.chat_stream(
             conversation_id=conversation.id,
-            message={"content": "请继续构建当前页面"},
+            message=schemas.ChatStreamRequest(content="请继续构建当前页面"),
             db=db,
         )
         payloads = await _collect_stream_payloads(response)
@@ -1327,7 +1327,7 @@ async def test_chat_stream_persists_assistant_segments_around_tool_events(
 
         response = await chat_api.chat_stream(
             conversation_id=conversation.id,
-            message={"content": "那给出最近一小时的集群 CPU 负载情况"},
+            message=schemas.ChatStreamRequest(content="那给出最近一小时的集群 CPU 负载情况"),
             db=db,
         )
         payloads = await _collect_stream_payloads(response)
@@ -1411,7 +1411,7 @@ async def test_chat_stream_reports_scope_violation_from_tool_result(
         conversation, _ = _create_conversation_with_scope(db)
         response = await chat_api.chat_stream(
             conversation_id=conversation.id,
-            message={"content": "发布另一个页面"},
+            message=schemas.ChatStreamRequest(content="发布另一个页面"),
             db=db,
         )
         payloads = await _collect_stream_payloads(response)
@@ -1479,7 +1479,7 @@ async def test_chat_stream_emits_error_user_message(
         conversation, _ = _create_conversation_with_scope(db)
         response = await chat_api.chat_stream(
             conversation_id=conversation.id,
-            message={"content": "测试错误提示"},
+            message=schemas.ChatStreamRequest(content="测试错误提示"),
             db=db,
         )
         payloads = await _collect_stream_payloads(response)
@@ -1963,7 +1963,7 @@ async def test_general_chat_system_prompt_includes_kb_prompt_before_skill_conten
 
         response = await chat_api.chat_stream(
             conversation_id=conversation.id,
-            message={"content": "最近1小时 CPU"},
+            message=schemas.ChatStreamRequest(content="最近1小时 CPU"),
             request=None,
             db=db,
         )
@@ -2096,7 +2096,7 @@ async def test_chat_stream_inline_triggers_save_agent_workflow(
 
         response = await chat_api.chat_stream(
             conversation_id=conversation.id,
-            message={"content": "保存为 agent"},
+            message=schemas.ChatStreamRequest(content="保存为 agent"),
             request=None,
             db=db,
         )
@@ -2191,7 +2191,7 @@ async def test_chat_stream_save_agent_workflow_emits_status_stages(
 
         response = await chat_api.chat_stream(
             conversation_id=conversation.id,
-            message={"content": "保存为 agent"},
+            message=schemas.ChatStreamRequest(content="保存为 agent"),
             request=None,
             db=db,
         )
