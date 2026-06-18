@@ -7,12 +7,16 @@ connection pooling, and query execution.
 
 import asyncio
 import inspect
-from typing import Any, Optional
+import re
+from typing import Any, Optional, Union
 import aiomysql
 from aiomysql import Pool
+import asyncpg
 from opentelemetry import trace
 
 from app.models import models
+
+PoolType = Union[aiomysql.Pool, asyncpg.Pool]
 
 tracer = trace.get_tracer("app.db.connection")
 
@@ -33,7 +37,7 @@ class DBConnectionPool:
     """
 
     def __init__(self):
-        self._pools: dict[tuple[str, int, str, str, asyncio.AbstractEventLoop], Pool] = {}
+        self._pools: dict[tuple, PoolType] = {}
 
     @staticmethod
     def _current_loop() -> asyncio.AbstractEventLoop:
@@ -46,22 +50,25 @@ class DBConnectionPool:
         user: str,
         database: str,
         loop: asyncio.AbstractEventLoop,
-    ) -> tuple[str, int, str, str, asyncio.AbstractEventLoop]:
-        return (host, int(port), user, database, loop)
+        db_type: str = "mysql",
+    ) -> tuple:
+        return (host, int(port), user, database, loop, db_type)
 
-    async def _close_pool(self, key: tuple[str, int, str, str, asyncio.AbstractEventLoop]) -> None:
+    async def _close_pool(self, key: tuple) -> None:
         pool = self._pools.pop(key, None)
         if pool is None:
             return
         try:
-            pool.close()
-            await pool.wait_closed()
+            if isinstance(pool, asyncpg.Pool):
+                await pool.close()
+            else:
+                pool.close()
+                await pool.wait_closed()
         except Exception:
-            # Best-effort cleanup for stale or already-closed pools.
             pass
 
     async def _close_stale_loop_pools(self, loop: asyncio.AbstractEventLoop) -> None:
-        stale_keys = [key for key in self._pools.keys() if key[-1] is not loop]
+        stale_keys = [key for key in self._pools.keys() if key[4] is not loop]
         for key in stale_keys:
             await self._close_pool(key)
 
@@ -99,26 +106,38 @@ class DBConnectionPool:
         database: str,
         pool_size: int = 5,
         force_refresh: bool = False,
-    ) -> Pool:
+        db_type: str = "mysql",
+    ) -> PoolType:
         """Create or retrieve a connection pool."""
         loop = self._current_loop()
         await self._close_stale_loop_pools(loop)
-        key = self._pool_key(host, port, user, database, loop)
+        key = self._pool_key(host, port, user, database, loop, db_type)
 
         if force_refresh:
             await self._close_pool(key)
 
         if key not in self._pools:
-            self._pools[key] = await aiomysql.create_pool(
-                host=host,
-                port=port,
-                user=user,
-                password=password,
-                db=database,
-                minsize=1,
-                maxsize=pool_size,
-                autocommit=True,
-            )
+            if db_type == "postgresql":
+                self._pools[key] = await asyncpg.create_pool(
+                    host=host,
+                    port=port,
+                    user=user,
+                    password=password,
+                    database=database,
+                    min_size=1,
+                    max_size=pool_size,
+                )
+            else:
+                self._pools[key] = await aiomysql.create_pool(
+                    host=host,
+                    port=port,
+                    user=user,
+                    password=password,
+                    db=database,
+                    minsize=1,
+                    maxsize=pool_size,
+                    autocommit=True,
+                )
 
         return self._pools[key]
 
@@ -186,6 +205,47 @@ class DBConnectionPool:
         finally:
             conn.close()
 
+    @staticmethod
+    def _mysql_to_pg_placeholders(sql: str) -> tuple[str, bool]:
+        """Convert %s placeholders to $1, $2, ... for asyncpg."""
+        counter = 0
+
+        def _replace(match: re.Match) -> str:
+            nonlocal counter
+            counter += 1
+            return f"${counter}"
+
+        converted = re.sub(r"%s", _replace, sql)
+        return converted, counter > 0
+
+    async def _execute_query_pg(
+        self,
+        pool: asyncpg.Pool,
+        sql: str,
+        params: Optional[list],
+        span: Any,
+    ) -> dict[str, Any]:
+        """Execute a query using asyncpg."""
+        pg_sql, _ = self._mysql_to_pg_placeholders(sql)
+        async with pool.acquire() as conn:
+            if params:
+                rows = await conn.fetch(pg_sql, *params)
+            else:
+                rows = await conn.fetch(pg_sql)
+            if rows:
+                columns = list(rows[0].keys())
+                decoded_rows = [dict(r) for r in rows]
+            else:
+                columns = []
+                decoded_rows = []
+            row_count = len(decoded_rows)
+            span.set_attribute("db.row_count", row_count)
+            return {
+                "columns": columns,
+                "rows": decoded_rows,
+                "row_count": row_count,
+            }
+
     async def execute_query(
         self,
         datasource: models.DataSource,
@@ -210,15 +270,16 @@ class DBConnectionPool:
         user = datasource.user or ""
         password = datasource.password or ""
         database = datasource.database or ""
+        db_type = getattr(datasource, "db_type", "mysql") or "mysql"
         current_loop = self._current_loop()
-        pool_key = self._pool_key(host, port, user, database, current_loop)
+        pool_key = self._pool_key(host, port, user, database, current_loop, db_type)
 
         db_operation = _extract_db_operation(sql)
         with tracer.start_as_current_span(
             "db.execute_query",
             kind=trace.SpanKind.CLIENT,
             attributes={
-                "db.system": "mysql",
+                "db.system": db_type,
                 "db.operation": db_operation,
                 "db.statement": sql[:500],
                 "db.name": database,
@@ -228,8 +289,11 @@ class DBConnectionPool:
         ) as span:
             for attempt in range(2):
                 span.set_attribute("db.retry_attempt", attempt)
-                pool = await self._get_pool(host, port, user, password, database)
+                pool = await self._get_pool(host, port, user, password, database, db_type=db_type)
                 try:
+                    if db_type == "postgresql":
+                        return await self._execute_query_pg(pool, sql, params, span)
+
                     async with pool.acquire() as conn:
                         await self._ping_connection(conn)
                         async with conn.cursor(aiomysql.DictCursor) as cursor:
@@ -284,6 +348,7 @@ class DBConnectionPool:
         Returns:
             dict with execution plan details
         """
+        db_type = getattr(datasource, "db_type", "mysql") or "mysql"
         explain_sql = f"EXPLAIN {sql}"
         if database and database != (datasource.database or ""):
             host = datasource.host
@@ -292,23 +357,35 @@ class DBConnectionPool:
             password = datasource.password or ""
             with tracer.start_as_current_span(
                 "db.execute_explain",
-                attributes={"db.system": "mysql", "db.statement": sql[:500], "db.name": database},
+                attributes={"db.system": db_type, "db.statement": sql[:500], "db.name": database},
             ):
-                conn = await aiomysql.connect(
-                    host=host, port=port, user=user, password=password,
-                    db=database, autocommit=True,
-                )
-                try:
-                    async with conn.cursor(aiomysql.DictCursor) as cursor:
-                        await cursor.execute(explain_sql)
-                        rows = list(await cursor.fetchall())
-                        columns = [c[0] for c in cursor.description] if cursor.description else []
-                        return {"columns": columns, "rows": [self._decode_row(r) for r in rows], "row_count": len(rows)}
-                finally:
-                    conn.close()
+                if db_type == "postgresql":
+                    conn = await asyncpg.connect(
+                        host=host, port=port, user=user, password=password,
+                        database=database,
+                    )
+                    try:
+                        rows = await conn.fetch(explain_sql)
+                        columns = list(rows[0].keys()) if rows else []
+                        return {"columns": columns, "rows": [dict(r) for r in rows], "row_count": len(rows)}
+                    finally:
+                        await conn.close()
+                else:
+                    conn = await aiomysql.connect(
+                        host=host, port=port, user=user, password=password,
+                        db=database, autocommit=True,
+                    )
+                    try:
+                        async with conn.cursor(aiomysql.DictCursor) as cursor:
+                            await cursor.execute(explain_sql)
+                            rows = list(await cursor.fetchall())
+                            columns = [c[0] for c in cursor.description] if cursor.description else []
+                            return {"columns": columns, "rows": [self._decode_row(r) for r in rows], "row_count": len(rows)}
+                    finally:
+                        conn.close()
         with tracer.start_as_current_span(
             "db.execute_explain",
-            attributes={"db.system": "mysql", "db.statement": sql[:500]},
+            attributes={"db.system": db_type, "db.statement": sql[:500]},
         ):
             return await self.execute_query(datasource, explain_sql, role)
 
@@ -319,6 +396,7 @@ class DBConnectionPool:
         user: str,
         password: str,
         database: str,
+        db_type: str = "mysql",
     ) -> tuple[bool, str]:
         """
         Test database connection.
@@ -327,11 +405,15 @@ class DBConnectionPool:
             (success: bool, message: str)
         """
         try:
-            pool = await self._get_pool(host, port, user, password, database)
-            async with pool.acquire() as conn:
-                async with conn.cursor() as cursor:
-                    await cursor.execute("SELECT 1")
-                    await cursor.fetchone()
+            pool = await self._get_pool(host, port, user, password, database, db_type=db_type)
+            if db_type == "postgresql":
+                async with pool.acquire() as conn:
+                    await conn.fetchval("SELECT 1")
+            else:
+                async with pool.acquire() as conn:
+                    async with conn.cursor() as cursor:
+                        await cursor.execute("SELECT 1")
+                        await cursor.fetchone()
             return (True, "Connection successful")
         except Exception as e:
             return (False, str(e))

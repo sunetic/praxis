@@ -77,6 +77,7 @@ async def test_connection(datasource: schemas.DataSourceCreate):
                 datasource.user,
                 datasource.password,
                 datasource.database,
+                db_type=datasource.db_type,
             ),
             timeout=15,
         )
@@ -114,6 +115,7 @@ async def test_saved_connection(datasource_id: int, db: Session = Depends(get_db
                 datasource.user or "",
                 datasource.password or "",
                 datasource.database or "",
+                db_type=datasource.db_type or "mysql",
             ),
             timeout=15,
         )

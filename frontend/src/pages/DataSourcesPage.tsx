@@ -405,7 +405,7 @@ export function DataSourcesPage() {
         </TableCell>
         <TableCell>
           <Badge variant="outline" className="border-border">
-            {ds.db_type === "oceanbase" ? "OceanBase" : ds.db_type === "mysql" ? "MySQL" : ds.db_type}
+            {ds.db_type === "oceanbase" ? "OceanBase" : ds.db_type === "mysql" ? "MySQL" : ds.db_type === "postgresql" ? "PostgreSQL" : ds.db_type}
           </Badge>
         </TableCell>
         <TableCell className="text-right">
@@ -607,12 +607,16 @@ export function DataSourcesPage() {
 
               <div>
                 <label className="mb-1.5 block text-sm text-foreground">{t("ds.label.dbType")}</label>
-                <Select value={form.db_type} onValueChange={(v) => setForm({ ...form, db_type: v })}>
+                <Select value={form.db_type} onValueChange={(v) => {
+                  const defaultPort = v === "postgresql" ? 5432 : 3306
+                  setForm({ ...form, db_type: v, port: defaultPort })
+                }}>
                   <SelectTrigger className="w-full">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="mysql">MySQL</SelectItem>
+                    <SelectItem value="postgresql">PostgreSQL</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
