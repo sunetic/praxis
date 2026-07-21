@@ -993,7 +993,7 @@ export const chatApi = {
   listPendingActions: (conversationId: number) =>
     api.get<PendingAction[]>(`/chat/${conversationId}/actions/pending`).then(res => res.data),
   confirmPendingAction: (conversationId: number, token: string) =>
-    api.post<{success: boolean; token: string; status: string; result: any}>(
+    api.post<{success: boolean; token: string; status: string; result: any; should_resume?: boolean; error?: string; assistant_message?: string}>(
       `/chat/${conversationId}/actions/${token}/confirm`
     ).then(res => res.data),
   cancelPendingAction: (conversationId: number, token: string) =>

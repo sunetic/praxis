@@ -445,6 +445,41 @@ class ReasoningEngine:
                         break
 
                     if decision["action"] == "await_confirmation":
+                        pending_item = next(
+                            (
+                                item for item in execution_results
+                                if isinstance((item.get("result") or {}).get("data"), dict)
+                                and (item.get("result") or {})["data"].get("requires_confirmation")
+                            ),
+                            None,
+                        )
+                        if pending_item:
+                            args_raw = pending_item.get("arguments") or {}
+                            if isinstance(args_raw, str):
+                                try:
+                                    args: dict[str, Any] = json.loads(args_raw)
+                                except (json.JSONDecodeError, ValueError):
+                                    args = {}
+                            elif isinstance(args_raw, dict):
+                                args = args_raw
+                            else:
+                                args = {}
+                            result_data = (pending_item.get("result") or {}).get("data") or {}
+                            intent = str(args.get("intent") or "").strip()
+                            sql_preview = str(result_data.get("sql_preview") or args.get("sql") or "").strip()
+                            if sql_preview:
+                                preview_parts = []
+                                if intent:
+                                    preview_parts.append(intent)
+                                preview_parts.append(f"```sql\n{sql_preview}\n```")
+                                preview_text = "\n\n".join(preview_parts)
+                                yield _event(
+                                    type_="assistant",
+                                    phase=ReasoningPhase.RESPONDING,
+                                    data={"text": preview_text},
+                                    meta={"iteration": iteration, "run_id": run_id},
+                                )
+                                emitted_text += preview_text
                         transition_err = _check_transition(phase, ReasoningPhase.RESPONDING)
                         if transition_err:
                             raise RuntimeError(transition_err)

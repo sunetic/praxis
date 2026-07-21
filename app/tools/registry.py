@@ -118,8 +118,12 @@ def _build_sql_error_payload(exc: Exception, prefix: str) -> dict[str, Any]:
 class ExecuteSQLTool(BaseTool):
     name = "execute_sql"
     description = (
-        "Execute SQL and return the results. For mutating (non-read-only) SQL, the tool generates a confirmation card "
-        "instead of executing directly; the SQL is committed only after user confirmation. "
+        "Execute SQL and return the results. "
+        "For mutating SQL (INSERT/UPDATE/DELETE/DDL), a confirmation card is shown to the user "
+        "and the tool returns success=false with code='pending_confirmation' — meaning the SQL has NOT been "
+        "executed yet and is awaiting user approval. "
+        "IMPORTANT: when you receive pending_confirmation, do NOT claim the SQL succeeded or verify results. "
+        "Briefly acknowledge that the confirmation dialog has been shown and wait for the user to confirm or cancel. "
         "It is recommended to provide the intent field with a brief, user-readable description of the query purpose."
     )
     parameters = {
@@ -244,7 +248,7 @@ class ExecuteSQLTool(BaseTool):
                         ),
                     )
                     return ToolResult(
-                        success=True,
+                        success=False,
                         data={
                             "requires_confirmation": True,
                             "action_type": "execute_sql",
@@ -258,7 +262,10 @@ class ExecuteSQLTool(BaseTool):
                             "route_reason": routed.reason,
                             "cluster_key": routed.datasource.cluster_key,
                             "deduplicated_pending_action": True,
-                            "confirmation_message": "Detected a duplicate pending mutation; reusing the existing confirmation card.",
+                        },
+                        error={
+                            "code": "pending_confirmation",
+                            "message": "SQL has NOT been executed. A confirmation dialog has been shown to the user. Do not claim success — wait for the user to confirm or cancel.",
                         },
                     )
 
@@ -298,7 +305,7 @@ class ExecuteSQLTool(BaseTool):
                     ),
                 )
                 return ToolResult(
-                    success=True,
+                    success=False,
                     data={
                         "requires_confirmation": True,
                         "action_type": "execute_sql",
@@ -311,7 +318,10 @@ class ExecuteSQLTool(BaseTool):
                         "resolved_role": routed.resolved_role,
                         "route_reason": routed.reason,
                         "cluster_key": routed.datasource.cluster_key,
-                        "confirmation_message": "Mutating SQL detected; user confirmation is required before execution.",
+                    },
+                    error={
+                        "code": "pending_confirmation",
+                        "message": "SQL has NOT been executed. A confirmation dialog has been shown to the user. Do not claim success — wait for the user to confirm or cancel.",
                     },
                 )
 

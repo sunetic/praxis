@@ -297,7 +297,7 @@ export function useChatController({
   customSendFn,
   onStreamDone,
 }: ChatControllerParams): ChatControllerReturn {
-  const { locale } = useShellI18n()
+  const { locale, t } = useShellI18n()
   // ── Core state ──
   const [internalConversationId, setInternalConversationId] = useState<number | null>(null)
   const conversationId = managedConversation?.id ?? internalConversationId
@@ -628,9 +628,15 @@ export function useChatController({
     if (!conversationId || streaming || savingAgent || processingActionToken) return
     setProcessingActionToken(token)
     try {
-      await chatApi.confirmPendingAction(conversationId, token)
-      toast.success("Action confirmed")
-      await fetchMessagesImpl(conversationId, { finalizeStream: true })
+      const response = await chatApi.confirmPendingAction(conversationId, token)
+      if (response.should_resume) {
+        await fetchMessagesImpl(conversationId, { finalizeStream: true })
+        setProcessingActionToken(null)
+        await sendMessageImpl(t("chat.action.resumeAfterFailure"))
+      } else {
+        toast.success("Action confirmed")
+        await fetchMessagesImpl(conversationId, { finalizeStream: true })
+      }
     } catch (error: unknown) {
       const detail = extractApiErrorDetail(error)
       toast.error(detail || "Failed to confirm action. Please refresh and try again.")
@@ -661,11 +667,18 @@ export function useChatController({
     setProcessingActionToken("__batch_confirm__")
     const tokens = currentBatchPendingActions.map((item) => item.token)
     try {
+      let shouldResume = false
       for (const token of tokens) {
-        await chatApi.confirmPendingAction(conversationId, token)
+        const resp = await chatApi.confirmPendingAction(conversationId, token)
+        if (resp.should_resume) shouldResume = true
       }
-      toast.success(`Confirmed ${tokens.length} action(s) in this batch`)
       await fetchMessagesImpl(conversationId, { finalizeStream: true })
+      if (shouldResume) {
+        setProcessingActionToken(null)
+        await sendMessageImpl(t("chat.action.resumeAfterFailure"))
+      } else {
+        toast.success(`Confirmed ${tokens.length} action(s) in this batch`)
+      }
     } catch (error: unknown) {
       const detail = extractApiErrorDetail(error)
       toast.error(detail || "Failed to confirm batch. Please refresh and try again.")

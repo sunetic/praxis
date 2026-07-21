@@ -909,18 +909,33 @@ async def confirm_pending_action(conversation_id: int, token: str, db: Session =
             pending_msg, tc_idx = msg_result
             if isinstance(pending_msg.content_parts, list):
                 updated_parts = list(pending_msg.content_parts)
-                updated_parts[tc_idx] = {**updated_parts[tc_idx], "pending_action_status": "cancelled"}
+                updated_parts[tc_idx] = {
+                    **updated_parts[tc_idx],
+                    "pending_action_status": "cancelled",
+                    "result": error_result_payload,
+                }
                 pending_msg.content_parts = updated_parts
                 tool_use_parts = [p for p in updated_parts if isinstance(p, dict) and p.get("type") == "tool_use"]
                 if tool_use_parts:
                     pending_msg.tool_calls = [{k: v for k, v in p.items() if k != "type"} for p in tool_use_parts]
             else:
                 updated_tool_calls = list(pending_msg.tool_calls or [])
-                updated_tool_calls[tc_idx] = {**updated_tool_calls[tc_idx], "pending_action_status": "cancelled"}
+                updated_tool_calls[tc_idx] = {
+                    **updated_tool_calls[tc_idx],
+                    "pending_action_status": "cancelled",
+                    "result": error_result_payload,
+                }
                 pending_msg.tool_calls = updated_tool_calls
             db.add(pending_msg)
         db.commit()
-        raise HTTPException(status_code=400, detail=f"SQL execution error: {error_message}") from exc
+        return {
+            "success": False,
+            "token": token,
+            "status": "failed",
+            "error": error_message,
+            "assistant_message": assistant_message,
+            "should_resume": True,
+        }
 
 
 def _build_action_result_text(action: str, data: dict[str, Any]) -> str:

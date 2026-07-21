@@ -637,7 +637,11 @@ async def chat_stream(
                     pending_action_token = None
                     pending_action_status = None
                     if isinstance(result_data, dict) and result_data.get("requires_confirmation"):
-                        pending_action_token = result_data.get("pending_action_token") or result_data.get("token")
+                        pending_action_token = (
+                            result_data.get("action_token")
+                            or result_data.get("pending_action_token")
+                            or result_data.get("token")
+                        )
                         pending_action_status = "pending"
                     matched = next((p for p in pending_parts if p.get("type") == "tool_use" and p.get("id") == tc_id), None)
                     if matched:
