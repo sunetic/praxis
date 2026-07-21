@@ -24,6 +24,11 @@ def _resolve_kb_root(kb_id: int) -> Path:
         raise FileNotFoundError(f"Knowledge base directory not found: {base}")
     meta = read_kb_meta(kb_id)
     if meta:
+        local_path = meta.get("local_path")
+        if local_path:
+            lp = Path(local_path)
+            if lp.is_dir():
+                return lp.resolve()
         subdir = meta.get("subdirectory", "")
         if subdir:
             root = base / subdir

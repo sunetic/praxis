@@ -136,6 +136,9 @@ class PackInstaller:
         self._data_root = Path(settings.data_dir if hasattr(settings, "data_dir") else "data") / "knowledge"
 
     async def install(self, pack: dict[str, Any], db_session_factory: Any) -> int:
+        if pack.get("type") == "local":
+            return await self._install_local(pack, db_session_factory)
+
         pack_id = pack["id"]
         progress.set(pack_id, "downloading", progress_message="Checking git availability")
 
@@ -264,6 +267,97 @@ class PackInstaller:
             if progress.get(pack_id) and progress.get(pack_id, {}).get("status") != "installed":
                 progress.set(pack_id, "error", error_message=error_msg)
             logger.exception("pack_install_failed %s", fmt_kv(pack_id=pack_id))
+            raise
+        finally:
+            db.close()
+
+    async def _install_local(self, pack: dict[str, Any], db_session_factory: Any) -> int:
+        pack_id = pack["id"]
+        local_path = Path(pack["local_path"])
+
+        if not local_path.is_dir():
+            progress.set(pack_id, "error", error_message=f"Local path not found: {local_path}")
+            raise RuntimeError(f"Local path not found: {local_path}")
+
+        from app.models import models
+
+        db = db_session_factory()
+        kb = None
+        kb_dir: Path | None = None
+        try:
+            md_files = sorted(
+                p for p in local_path.rglob("*.md")
+                if p.name.lower() != "readme.md"
+            )
+            if not md_files:
+                raise RuntimeError("No .md files found in local path")
+
+            tags = pack.get("tags")
+            if isinstance(tags, list):
+                tags_value = tags
+            elif isinstance(tags, str):
+                tags_value = [t.strip() for t in tags.split(",") if t.strip()]
+            else:
+                tags_value = None
+
+            kb = models.KnowledgeBase(
+                name=pack["name"],
+                description=pack["description"],
+                tags=tags_value,
+                source="pack",
+                pack_id=pack_id,
+                version="bundled",
+                repo_subdirectory="",
+            )
+            db.add(kb)
+            db.commit()
+            db.refresh(kb)
+
+            kb_dir = self._data_root / str(kb.id)
+            kb_dir.mkdir(parents=True, exist_ok=True)
+
+            meta: dict[str, Any] = {
+                "pack_id": pack_id,
+                "db_type": pack.get("db_type"),
+                "version": "bundled",
+                "subdirectory": "",
+                "local_path": str(local_path),
+            }
+            (kb_dir / _KB_META_FILE).write_text(
+                json.dumps(meta, ensure_ascii=False), encoding="utf-8"
+            )
+
+            for md_path in md_files:
+                rel = md_path.relative_to(local_path)
+                doc = models.KnowledgeDocument(
+                    kb_id=kb.id,
+                    title=md_path.stem.replace("-", " ").replace("_", " "),
+                    filename=str(rel),
+                    content_path=str(md_path),
+                    size_bytes=md_path.stat().st_size,
+                )
+                db.add(doc)
+
+            db.commit()
+            logger.info(
+                "local_pack_install_complete %s",
+                fmt_kv(pack_id=pack_id, kb_id=kb.id, doc_count=len(md_files)),
+            )
+            progress.set(pack_id, "installed", kb_id=kb.id)
+            return kb.id
+        except Exception as e:
+            if kb and kb.id:
+                db.rollback()
+                try:
+                    db.delete(kb)
+                    db.commit()
+                except Exception:
+                    db.rollback()
+            if kb_dir and kb_dir.exists():
+                shutil.rmtree(kb_dir, ignore_errors=True)
+            error_msg = str(e)[:500]
+            progress.set(pack_id, "error", error_message=error_msg)
+            logger.exception("local_pack_install_failed %s", fmt_kv(pack_id=pack_id))
             raise
         finally:
             db.close()

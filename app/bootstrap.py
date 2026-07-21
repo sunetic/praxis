@@ -26,6 +26,11 @@ def _register_builtins() -> None:
             logger.info("builtins_bootstrap_done functions=%s agents=%s", len(registered_fns), len(registered_agents))
     except Exception as exc:
         logger.warning("builtins_bootstrap_failed error=%s", exc)
+    try:
+        from app.builtin_knowledge import register_builtin_knowledge_packs
+        register_builtin_knowledge_packs()
+    except Exception as exc:
+        logger.warning("builtin_knowledge_packs_bootstrap_failed error=%s", exc)
 
 
 def _register_scene_agents() -> None:
