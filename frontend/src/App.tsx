@@ -16,8 +16,16 @@ import { CapabilitiesPage } from "@/pages/CapabilitiesPage"
 import { KnowledgeListPage } from "@/pages/KnowledgeListPage"
 import { KnowledgeDetailPage } from "@/pages/KnowledgeDetailPage"
 import { SettingsPage } from "@/pages/SettingsPage"
+import { ServicesPage } from "@/pages/ServicesPage"
+import { PageListPage } from "@/pages/PageListPage"
+import { PageConsolePage } from "@/pages/PageConsolePage"
+import { PagePublishedPage } from "@/pages/PagePublishedPage"
+import { StatsAnalysisPage } from "@/pages/StatsAnalysisPage"
+import { SessionTransactionPage } from "@/pages/SessionTransactionPage"
+import { StatsAnalysisTemplatePage } from "@/pages/StatsAnalysisTemplatePage"
 import { OnboardingPage } from "@/pages/OnboardingPage"
 import { ShellI18nProvider } from "@/i18n/shellI18n"
+import { EditionProvider } from "@/context/EditionContext"
 import { onboardingApi } from "@/lib/api"
 
 function FunctionLegacyRedirect() {
@@ -50,6 +58,7 @@ function OnboardingGuard({ children }: { children: React.ReactNode }) {
 function App() {
   return (
     <ShellI18nProvider>
+      <EditionProvider>
       <BrowserRouter>
         <Routes>
           {/* Full-screen onboarding — outside AppLayout */}
@@ -82,6 +91,13 @@ function App() {
             <Route path="scheduler/:schedulerId" element={<SchedulerConsolePage />} />
             <Route path="channel" element={<ChannelConsolePage />} />
             <Route path="channel/:provider" element={<ChannelConsolePage />} />
+            <Route path="service" element={<ServicesPage />} />
+            <Route path="page" element={<PageListPage />} />
+            <Route path="page/workspace/:pageId" element={<PageConsolePage />} />
+            <Route path="page/:pageId" element={<PagePublishedPage />} />
+            <Route path="stats-analysis" element={<StatsAnalysisPage />} />
+            <Route path="stats-template" element={<StatsAnalysisTemplatePage />} />
+            <Route path="session-analysis" element={<SessionTransactionPage />} />
             <Route path="capabilities" element={<CapabilitiesPage />} />
             <Route path="settings" element={<SettingsPage />} />
             <Route path="*" element={<Navigate to="/chat" replace />} />
@@ -89,6 +105,7 @@ function App() {
         </Routes>
         <Toaster />
       </BrowserRouter>
+      </EditionProvider>
     </ShellI18nProvider>
   )
 }

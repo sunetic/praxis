@@ -141,7 +141,7 @@ class ExecuteSQLTool(BaseTool):
     }
 
     async def execute(self, sql: str, datasource_id: int, role: str = "user", **params: object) -> ToolResult:
-        from app.db.connection import get_db_pool
+        from app.db.pool_factory import get_pool_for_datasource
         from app.db.database import SessionLocal
         from app.models import models
         from app.services.datasource.sql_guard import (
@@ -164,7 +164,7 @@ class ExecuteSQLTool(BaseTool):
                 )
                 return ToolResult(success=False, error=str(e))
 
-            pool = get_db_pool()
+            pool = get_pool_for_datasource(routed.datasource)
             is_mutating = is_mutating_sql(sql)
             if is_mutating:
                 from app.api.settings import get_setting
@@ -365,7 +365,7 @@ class ExplainSQLTool(BaseTool):
     }
 
     async def execute(self, sql: str, datasource_id: int, role: str = "user", **params: object) -> ToolResult:
-        from app.db.connection import get_db_pool
+        from app.db.pool_factory import get_pool_for_datasource
         from app.db.database import SessionLocal
 
         db = SessionLocal()
@@ -380,7 +380,7 @@ class ExplainSQLTool(BaseTool):
                 )
                 return ToolResult(success=False, error=str(e))
 
-            pool = get_db_pool()
+            pool = get_pool_for_datasource(routed.datasource)
             result = await pool.execute_explain(
                 routed.datasource,
                 sql,
@@ -1073,6 +1073,46 @@ class SkillReferenceTool(BaseTool):
         return ToolResult(success=True, data={"skill_name": skill_name, "reference": reference})
 
 
+class RenderChartTool(BaseTool):
+    name = "render_chart"
+    description = (
+        "Render an interactive chart in the conversation. "
+        "Pass a valid ECharts option JSON object to generate a chart visualization. "
+        "Use this after querying data when results suit visual presentation "
+        "(trends, comparisons, distributions, etc.). "
+        "The option must be a valid ECharts option containing fields like xAxis, yAxis, series, etc."
+    )
+    parameters = {
+        "type": "object",
+        "properties": {
+            "option": {
+                "type": "object",
+                "description": (
+                    "ECharts option configuration object (JSON). "
+                    "Contains chart type, data, axes, and other configuration."
+                ),
+            },
+            "title": {
+                "type": "string",
+                "description": "Optional chart title displayed above the chart.",
+            },
+        },
+        "required": ["option"],
+    }
+
+    async def execute(self, option: object = None, title: str = "", **params: object) -> ToolResult:
+        del params
+        if not isinstance(option, dict):
+            return ToolResult(
+                success=False,
+                error={"code": "invalid_option", "message": "option must be a JSON object"},
+            )
+        data: dict = {"option": option}
+        if title:
+            data["title"] = title
+        return ToolResult(success=True, data=data)
+
+
 class KnowledgeSearchTool(BaseTool):
     name = "knowledge_search"
     description = (
@@ -1136,3 +1176,4 @@ registry.register(AgentSaveTool())
 registry.register(AgentRunTool())
 registry.register(SkillReferenceTool())
 registry.register(KnowledgeSearchTool())
+registry.register(RenderChartTool())

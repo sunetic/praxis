@@ -41,6 +41,7 @@ def get_setting(db: Session, key: str) -> Any:
 @router.get("")
 def list_settings(db: Session = Depends(get_db)) -> dict[str, Any]:
     result = _get_all(db)
+    result["praxis_edition"] = get_settings().praxis_edition
     logger.info("list_settings %s", fmt_kv(count=len(result)))
     return result
 

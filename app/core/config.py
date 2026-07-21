@@ -111,6 +111,8 @@ class Settings(BaseSettings):
 
     datasource_encryption_key: str = ""
 
+    praxis_edition: str = "community"
+
 
 @lru_cache
 def get_settings() -> Settings:

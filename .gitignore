@@ -92,3 +92,6 @@ data/state_store.db/
 data/stream_store/
 
 frontend/.vite/
+
+# Promotion drafts (local only)
+promotion/
