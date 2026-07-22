@@ -11,6 +11,11 @@ if [ "$pushing_tag" -eq 0 ]; then
   exit 0
 fi
 
+if ! command -v npm >/dev/null 2>&1; then
+  echo "[pre-push] npm not found, skipping frontend build check."
+  exit 0
+fi
+
 REPO_ROOT="$(git rev-parse --show-toplevel)"
 echo "[pre-push] Tag push detected — running frontend build check..."
 
