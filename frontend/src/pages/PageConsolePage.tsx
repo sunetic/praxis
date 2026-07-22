@@ -468,8 +468,6 @@ export function PageConsolePage() {
             enableSaveAsAgent={false}
             enableHandoff={false}
             enableBatchActions={false}
-            enableTenantBadge={false}
-            enableNlCommands={false}
             className="flex-1"
             headerAction={(
               <Button size="sm" onClick={handlePublish} disabled={publishing || chatController.streaming}>

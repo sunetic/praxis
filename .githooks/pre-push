@@ -1,0 +1,25 @@
+#!/bin/sh
+# Block pushes that include a tag if the frontend build fails.
+# Runs the same "tsc -b && vite build" used in the Docker CI pipeline.
+
+pushing_tag=0
+while read local_ref _local_sha _remote_ref _remote_sha; do
+  case "$local_ref" in refs/tags/*) pushing_tag=1; break;; esac
+done
+
+if [ "$pushing_tag" -eq 0 ]; then
+  exit 0
+fi
+
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+echo "[pre-push] Tag push detected — running frontend build check..."
+
+cd "$REPO_ROOT/frontend" || exit 1
+
+if ! npm run build; then
+  echo ""
+  echo "[pre-push] Frontend build FAILED. Fix the errors above, then re-tag and push."
+  exit 1
+fi
+
+echo "[pre-push] Build OK."
