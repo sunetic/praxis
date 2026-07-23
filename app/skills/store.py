@@ -7,9 +7,12 @@ from typing import Any
 
 import yaml
 
+from app.core.config import DEFAULT_DATA_DIR
 from app.core.logging import fmt_kv, get_logger
 
 logger = get_logger("skills.store")
+
+_DEFAULT_SKILLS_DIR = str(DEFAULT_DATA_DIR / "skills")
 
 
 VALID_VERSION_PATTERN = re.compile(r"^\d+\.\d+\.\d+$")
@@ -101,7 +104,7 @@ def _render_skill_file(skill: Skill) -> str:
 
 
 class SkillStore:
-    def __init__(self, skills_dir: str = "./skills"):
+    def __init__(self, skills_dir: str = _DEFAULT_SKILLS_DIR):
         self.skills_dir = os.path.abspath(skills_dir)
         self.skills: dict[str, Skill] = {}
         self.errors: list[dict[str, str]] = []

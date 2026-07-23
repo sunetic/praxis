@@ -175,10 +175,11 @@ class KnowledgePackResponse(BaseModel):
     description: str
     tags: list[str] = []
     db_type: Optional[str] = None
-    repo_url: str
-    branch: str
-    subdirectory: str
-    license: str
+    type: str = "git"
+    repo_url: str = ""
+    branch: str = ""
+    subdirectory: str = ""
+    license: str = ""
     source_url: Optional[str] = None
     estimated_doc_count: int = 0
     estimated_size_mb: float = 0.0
