@@ -11,8 +11,17 @@ if [ "$pushing_tag" -eq 0 ]; then
   exit 0
 fi
 
+# Load nvm if npm isn't already on PATH (git hooks don't inherit shell startup files)
 if ! command -v npm >/dev/null 2>&1; then
-  echo "[pre-push] npm not found, skipping frontend build check."
+  export NVM_DIR="${NVM_DIR:-$HOME/.nvm}"
+  # shellcheck disable=SC1090,SC1091
+  for nvm_sh in "$NVM_DIR/nvm.sh" "/usr/local/share/nvm/nvm.sh" "/opt/homebrew/opt/nvm/nvm.sh"; do
+    [ -s "$nvm_sh" ] && { . "$nvm_sh"; nvm use default >/dev/null 2>&1; break; }
+  done
+fi
+
+if ! command -v npm >/dev/null 2>&1; then
+  echo "[pre-push] npm not found — skipping frontend build check."
   exit 0
 fi
 
