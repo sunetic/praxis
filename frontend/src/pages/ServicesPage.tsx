@@ -138,8 +138,8 @@ export function ServicesPage() {
     setError(null)
     try {
       const [svcList, dsList] = await Promise.all([servicesApi.list(), datasourcesApi.list()])
-      setServices(svcList)
-      setDatasources(dsList)
+      setServices(Array.isArray(svcList) ? svcList : [])
+      setDatasources(Array.isArray(dsList) ? dsList : [])
     } catch (e) {
       setError(getErrorMessage(e, "加载失败"))
     } finally {

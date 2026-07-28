@@ -25,12 +25,19 @@ TESTBED_PASSWORD ?=
 TESTBED_PID_FILE ?= tmp/testbed.pid
 TESTBED_LOG_FILE ?= tmp/testbed.log
 
+UNAME_S := $(shell uname -s)
+ifeq ($(UNAME_S),Linux)
+UV_ENV := UV_PROJECT_ENVIRONMENT=.venv-linux
+else
+UV_ENV :=
+endif
+
 install:
-	uv sync
+	$(UV_ENV) uv sync
 
 dev:
-	uv sync
-	uv run python -m uvicorn app.main:app --reload --reload-dir app --port 8000
+	$(UV_ENV) uv sync
+	$(UV_ENV) uv run python -m uvicorn app.main:app --reload --reload-dir app --port 8000
 
 test:
 	uv run pytest

@@ -68,7 +68,7 @@ export function KnowledgeListPage() {
   const [packs, setPacks] = useState<KnowledgePack[]>([])
   const [packsLoading, setPacksLoading] = useState(false)
   const [installingPacks, setInstallingPacks] = useState<Set<string>>(new Set())
-  const [uninstallTarget, setUninstallTarget] = useState<KnowledgePack | null>(null)
+  const [uninstallTarget, setUninstallTarget] = useState<{ id: string; name: string } | null>(null)
   const [uninstalling, setUninstalling] = useState(false)
   const [switchingVersion, setSwitchingVersion] = useState<string | null>(null)
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
@@ -90,7 +90,7 @@ export function KnowledgeListPage() {
     setPacksLoading(true)
     try {
       const list = await knowledgePackApi.list()
-      setPacks(list)
+      setPacks(Array.isArray(list) ? list : [])
     } catch {
       // packs failing shouldn't block the page
     } finally {
@@ -328,8 +328,7 @@ export function KnowledgeListPage() {
               variant="outline"
               className="text-destructive hover:text-destructive"
               onClick={() => {
-                const pack = packs.find((p) => p.id === kb.pack_id)
-                if (pack) setUninstallTarget(pack)
+                if (kb.pack_id) setUninstallTarget({ id: kb.pack_id, name: kb.name })
               }}
             >
               <Trash2 className="size-3.5" />

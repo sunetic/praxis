@@ -3,7 +3,12 @@
     "id": "postgresql-tutorial",
     "name": "PostgreSQL Tutorial",
     "description": "Comprehensive PostgreSQL tutorial covering SQL syntax, data types, indexes, views, triggers, functions, and administration. Sourced from neon.com/postgresql.",
-    "tags": ["postgresql", "sql", "database", "tutorial"],
+    "tags": [
+      "postgresql",
+      "sql",
+      "database",
+      "tutorial"
+    ],
     "db_type": "postgresql",
     "repo_url": "https://github.com/neondatabase/website",
     "branch": "main",
@@ -17,7 +22,12 @@
     "id": "mysql-percona-docs",
     "name": "MySQL / Percona Server Documentation",
     "description": "Percona Server for MySQL documentation covering InnoDB internals, replication, performance tuning, security, backup, and MySQL administration.",
-    "tags": ["mysql", "sql", "database", "percona"],
+    "tags": [
+      "mysql",
+      "sql",
+      "database",
+      "percona"
+    ],
     "db_type": "mysql",
     "repo_url": "https://github.com/percona/psmysql-docs",
     "branch": "8.4",
@@ -28,5 +38,41 @@
     "estimated_size_mb": 2.5,
     "version_pattern": "^[0-9]+\\.[0-9]+$",
     "default_version": "8.4"
+  },
+  {
+    "id": "builtin-mysql-diagnosis",
+    "name": "MySQL Diagnosis Runbooks",
+    "description": "Built-in MySQL diagnostic runbooks covering connection health, InnoDB, locks, replication, and slow-query triage.",
+    "tags": [
+      "mysql",
+      "diagnosis"
+    ],
+    "db_type": "mysql",
+    "type": "local",
+    "local_path": "data/skills/mysql",
+    "repo_url": "",
+    "branch": "",
+    "subdirectory": "",
+    "license": "bundled",
+    "estimated_doc_count": 5,
+    "estimated_size_mb": 0.1
+  },
+  {
+    "id": "builtin-postgresql-diagnosis",
+    "name": "PostgreSQL Diagnosis Runbooks",
+    "description": "Built-in PostgreSQL diagnostic runbooks covering connection health, locks, replication, vacuum health, and slow-query triage.",
+    "tags": [
+      "postgresql",
+      "diagnosis"
+    ],
+    "db_type": "postgresql",
+    "type": "local",
+    "local_path": "data/skills/postgresql",
+    "repo_url": "",
+    "branch": "",
+    "subdirectory": "",
+    "license": "bundled",
+    "estimated_doc_count": 5,
+    "estimated_size_mb": 0.1
   }
 ]

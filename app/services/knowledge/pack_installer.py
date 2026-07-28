@@ -7,7 +7,7 @@ import shutil
 from pathlib import Path
 from typing import Any
 
-from app.core.config import get_settings
+from app.core.config import DEFAULT_DATA_DIR
 from app.core.logging import fmt_kv, get_logger
 
 logger = get_logger("knowledge.pack_installer")
@@ -132,8 +132,7 @@ async def _discover_versions(repo_url: str, version_pattern: str) -> list[dict[s
 
 class PackInstaller:
     def __init__(self) -> None:
-        settings = get_settings()
-        self._data_root = Path(settings.data_dir if hasattr(settings, "data_dir") else "data") / "knowledge"
+        self._data_root = DEFAULT_DATA_DIR / "knowledge"
 
     async def install(self, pack: dict[str, Any], db_session_factory: Any) -> int:
         if pack.get("type") == "local":
@@ -273,7 +272,8 @@ class PackInstaller:
 
     async def _install_local(self, pack: dict[str, Any], db_session_factory: Any) -> int:
         pack_id = pack["id"]
-        local_path = Path(pack["local_path"])
+        raw = pack["local_path"]
+        local_path = Path(raw) if Path(raw).is_absolute() else DEFAULT_DATA_DIR.parent / raw
 
         if not local_path.is_dir():
             progress.set(pack_id, "error", error_message=f"Local path not found: {local_path}")

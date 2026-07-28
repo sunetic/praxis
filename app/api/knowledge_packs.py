@@ -2,13 +2,12 @@ from __future__ import annotations
 
 import asyncio
 import json
-from pathlib import Path
 from typing import List
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
-from app.core.config import get_settings
+from app.core.config import DEFAULT_DATA_DIR
 from app.core.logging import fmt_kv, get_logger
 from app.db.database import SessionLocal, get_db
 from app.models import models
@@ -18,8 +17,7 @@ from app.services.knowledge.pack_installer import PackInstaller, progress, read_
 router = APIRouter(prefix="/knowledge-packs", tags=["KnowledgePacks"])
 logger = get_logger("api.knowledge_packs")
 
-settings = get_settings()
-_MANIFEST_PATH = Path(settings.data_dir if hasattr(settings, "data_dir") else "data") / "knowledge_packs.json"
+_MANIFEST_PATH = DEFAULT_DATA_DIR / "knowledge_packs.json"
 _installer = PackInstaller()
 _background_tasks: set[asyncio.Task] = set()
 
@@ -57,6 +55,15 @@ def list_packs(db: Session = Depends(get_db)):
             entry.status = prog["status"]
             entry.kb_id = prog.get("kb_id")
             entry.error_message = prog.get("error_message")
+            if prog["status"] == "installed" and prog.get("kb_id"):
+                kb_meta = read_kb_meta(_installer._data_root / str(prog["kb_id"]))
+                if kb_meta and kb_meta.get("versions"):
+                    entry.versions = [
+                        schemas.PackVersion(branch=v["branch"], label=v["label"])
+                        for v in kb_meta["versions"]
+                    ]
+                if kb_meta:
+                    entry.current_version = kb_meta.get("version")
         elif pack_id in installed_map:
             entry.status = "installed"
             kb = installed_map[pack_id]

@@ -6,7 +6,7 @@ from typing import Any, Optional
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 SKILL_VERSION_REGEX = re.compile(r"^\d+\.\d+\.\d+$")
-SKILL_DATABASES = {"oceanbase", "mysql", "general"}
+SKILL_DATABASES = {"oceanbase", "mysql", "postgresql", "general"}
 
 
 def _normalize_skill_source(value: str) -> str:
@@ -820,7 +820,7 @@ class SkillBase(BaseModel):
     @classmethod
     def validate_database(cls, value: str) -> str:
         if value not in SKILL_DATABASES:
-            raise ValueError("Skill database must be one of: oceanbase, mysql, general")
+            raise ValueError("Skill database must be one of: oceanbase, mysql, postgresql, general")
         return value
 
     @field_validator("prompt")
@@ -879,7 +879,7 @@ class SkillUpdate(BaseModel):
         if value is None:
             return value
         if value not in SKILL_DATABASES:
-            raise ValueError("Skill database must be one of: oceanbase, mysql, general")
+            raise ValueError("Skill database must be one of: oceanbase, mysql, postgresql, general")
         return value
 
     @field_validator("prompt")

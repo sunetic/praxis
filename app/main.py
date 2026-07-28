@@ -63,6 +63,11 @@ async def startup():
             logger.info("builtin_functions_bootstrap_done created=%s updated=%s", outcome.get("created", 0), outcome.get("updated", 0))
     except Exception as exc:
         logger.warning("builtin_functions_bootstrap_failed error=%s", exc)
+    try:
+        from app.builtin_knowledge import register_builtin_knowledge_packs
+        register_builtin_knowledge_packs()
+    except Exception as exc:
+        logger.warning("builtin_knowledge_packs_bootstrap_failed error=%s", exc)
     # EE: stats_analysis schedule bootstrap
     try:
         from app.api import stats_analysis

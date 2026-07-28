@@ -7,11 +7,12 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
+from app.core.config import DEFAULT_DATA_DIR
 from app.core.logging import fmt_kv, get_logger
 
 logger = get_logger("knowledge.search_tools")
 
-_DATA_ROOT = Path("data/knowledge")
+_DATA_ROOT = DEFAULT_DATA_DIR / "knowledge"
 _RG_TIMEOUT = 15
 _MAX_OUTPUT_BYTES = 30_000
 _MAX_READ_LINES = 200
