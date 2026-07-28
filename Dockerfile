@@ -45,8 +45,8 @@ COPY alembic/ ./alembic/
 COPY alembic.ini .
 COPY tools/ ./tools/
 
-# Skills data
-COPY data/skills/ ./data/skills/
+# Built-in skills (separate from /app/data so user volume mounts don't shadow them)
+COPY data/skills/ ./builtin_skills/
 
 # Copy frontend build output
 COPY --from=frontend-builder /frontend/dist ./frontend/dist

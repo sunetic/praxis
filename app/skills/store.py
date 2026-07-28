@@ -7,12 +7,13 @@ from typing import Any
 
 import yaml
 
-from app.core.config import DEFAULT_DATA_DIR
+from app.core.config import BUILTIN_SKILLS_DIR, DEFAULT_DATA_DIR
 from app.core.logging import fmt_kv, get_logger
 
 logger = get_logger("skills.store")
 
 _DEFAULT_SKILLS_DIR = str(DEFAULT_DATA_DIR / "skills")
+_DEFAULT_BUILTIN_SKILLS_DIR = str(BUILTIN_SKILLS_DIR)
 
 
 VALID_VERSION_PATTERN = re.compile(r"^\d+\.\d+\.\d+$")
@@ -104,8 +105,9 @@ def _render_skill_file(skill: Skill) -> str:
 
 
 class SkillStore:
-    def __init__(self, skills_dir: str = _DEFAULT_SKILLS_DIR):
+    def __init__(self, skills_dir: str = _DEFAULT_SKILLS_DIR, builtin_skills_dir: str = _DEFAULT_BUILTIN_SKILLS_DIR):
         self.skills_dir = os.path.abspath(skills_dir)
+        self.builtin_skills_dir = os.path.abspath(builtin_skills_dir)
         self.skills: dict[str, Skill] = {}
         self.errors: list[dict[str, str]] = []
 
@@ -151,6 +153,12 @@ class SkillStore:
         )
 
     def _resolve_skill_source(self, path: str, source_value: Any) -> str:
+        try:
+            Path(path).resolve().relative_to(Path(self.builtin_skills_dir).resolve())
+            return "built_in"
+        except ValueError:
+            pass
+
         if isinstance(source_value, str) and source_value.strip():
             normalized = source_value.strip().lower().replace("-", "_")
             if normalized in {"builtin", "built_in"}:
@@ -189,53 +197,35 @@ class SkillStore:
         self.skills = {}
         self.errors = []
         self._ensure_skills_dir()
-
         loaded: list[Skill] = []
         scanned_count = 0
-        for root, _, files in os.walk(self.skills_dir):
-            for file in files:
-                if not file.endswith(".md"):
-                    continue
-                if file.lower() == "readme.md":
-                    continue
-                scanned_count += 1
-                path = os.path.join(root, file)
-                try:
-                    skill = self._parse_skill_file(path)
-                except SkillValidationError as e:
-                    error = {"path": path, "error": str(e)}
-                    self.errors.append(error)
-                    logger.warning(
-                        "skill_parse_failed %s error=%s",
-                        fmt_kv(path=path),
-                        str(e),
-                    )
-                    continue
-                if skill.name in self.skills:
-                    conflict = self.skills[skill.name]
-                    logger.warning(
-                        "skill_name_conflict %s",
-                        fmt_kv(name=skill.name, kept=conflict.path, ignored=path),
-                    )
-                    self.errors.append(
-                        {
-                            "path": path,
-                            "error": f"Duplicate skill name '{skill.name}', ignored",
-                        }
-                    )
-                    continue
-                self.skills[skill.name] = skill
-                loaded.append(skill)
-
-        logger.info(
-            "skill_load_done %s",
-            fmt_kv(
-                skills_dir=self.skills_dir,
-                scanned=scanned_count,
-                loaded=len(loaded),
-                errors=len(self.errors),
-            ),
-        )
+        scan_dirs = []
+        if os.path.isdir(self.builtin_skills_dir):
+            scan_dirs.append(self.builtin_skills_dir)
+        scan_dirs.append(self.skills_dir)
+        for scan_dir in scan_dirs:
+            for root, _, files in os.walk(scan_dir):
+                for file in files:
+                    if not file.endswith(".md"):
+                        continue
+                    if file.lower() == "readme.md":
+                        continue
+                    scanned_count += 1
+                    path = os.path.join(root, file)
+                    try:
+                        skill = self._parse_skill_file(path)
+                    except SkillValidationError as e:
+                        self.errors.append({"path": path, "error": str(e)})
+                        logger.warning("skill_parse_failed %s error=%s", fmt_kv(path=path), str(e))
+                        continue
+                    if skill.name in self.skills:
+                        conflict = self.skills[skill.name]
+                        logger.warning("skill_name_conflict %s", fmt_kv(name=skill.name, kept=conflict.path, ignored=path))
+                        self.errors.append({"path": path, "error": f"Duplicate skill name '{skill.name}', ignored"})
+                        continue
+                    self.skills[skill.name] = skill
+                    loaded.append(skill)
+        logger.info("skill_load_done %s", fmt_kv(skills_dir=self.skills_dir, scanned=scanned_count, loaded=len(loaded), errors=len(self.errors)))
         return loaded
 
     def get(self, name: str) -> Skill | None:
