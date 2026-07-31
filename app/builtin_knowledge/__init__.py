@@ -52,11 +52,14 @@ def _seed_manifest(new_packs: list[dict[str, Any]]) -> list[str]:
         except Exception:
             existing = []
 
-    existing_ids = {p.get("id") for p in existing}
-    to_add = [p for p in new_packs if p.get("id") not in existing_ids]
-    if to_add:
-        _MANIFEST_PATH.write_text(
-            json.dumps(existing + to_add, ensure_ascii=False, indent=2),
-            encoding="utf-8",
-        )
-    return [p["id"] for p in to_add]
+    builtin_ids = {p["id"] for p in new_packs if p.get("id")}
+    # Always overwrite builtin entries so local_path stays current after upgrades
+    kept = [p for p in existing if p.get("id") not in builtin_ids]
+    new_ids = {p["id"] for p in existing if p.get("id") in builtin_ids}
+    merged = kept + new_packs
+    _MANIFEST_PATH.write_text(
+        json.dumps(merged, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    added = [p["id"] for p in new_packs if p.get("id") not in new_ids]
+    return added
