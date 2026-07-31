@@ -13,12 +13,12 @@ from app.services.function.runtime_contract import get_function_runtime_contract
 
 _TOKEN_RE = re.compile(r"[a-zA-Z0-9_]{2,}")
 _RUNTIME_CONTRACT = get_function_runtime_contract()
-_DB_SCHEMAS = (((_RUNTIME_CONTRACT.get("db_api") or {}).get("schemas")) or {})
+_DB_SCHEMAS = ((_RUNTIME_CONTRACT.get("db_api") or {}).get("schemas")) or {}
 _DB_ROLE_ENUM = set(((_RUNTIME_CONTRACT.get("db_api") or {}).get("role_enum")) or [])
-_PLATFORM_CONTRACT = (_RUNTIME_CONTRACT.get("platform_api") or {})
-_PLATFORM_LIST_FILTER_SCHEMAS = (_PLATFORM_CONTRACT.get("list_filter_schemas") or {})
-_PLATFORM_CRUD_PAYLOAD_SCHEMAS = (_PLATFORM_CONTRACT.get("crud_payload_schemas") or {})
-_PLATFORM_OPERATE_PAYLOAD_SCHEMAS = (_PLATFORM_CONTRACT.get("operate_payload_schemas") or {})
+_PLATFORM_CONTRACT = _RUNTIME_CONTRACT.get("platform_api") or {}
+_PLATFORM_LIST_FILTER_SCHEMAS = _PLATFORM_CONTRACT.get("list_filter_schemas") or {}
+_PLATFORM_CRUD_PAYLOAD_SCHEMAS = _PLATFORM_CONTRACT.get("crud_payload_schemas") or {}
+_PLATFORM_OPERATE_PAYLOAD_SCHEMAS = _PLATFORM_CONTRACT.get("operate_payload_schemas") or {}
 
 
 def _resolve_platform_schema_ref(ref: str) -> dict[str, Any]:
@@ -82,9 +82,15 @@ class FunctionCandidateRetriever:
             if release is None:
                 continue
             release_metadata = release.release_metadata or {}
-            profile_tokens = _tokenize(f"{function.name or ''} {function.slug or ''} {function.description or ''}")
+            profile_tokens = _tokenize(
+                f"{function.name or ''} {function.slug or ''} {function.description or ''}"
+            )
             metadata_keywords = release_metadata.get("keywords")
-            metadata_tokens = _tokenize(" ".join(metadata_keywords)) if isinstance(metadata_keywords, list) else set()
+            metadata_tokens = (
+                _tokenize(" ".join(metadata_keywords))
+                if isinstance(metadata_keywords, list)
+                else set()
+            )
             similarity = max(
                 _jaccard_similarity(requirement_tokens, profile_tokens),
                 _jaccard_similarity(requirement_tokens, metadata_tokens),
@@ -211,7 +217,14 @@ class FunctionStrategyDecider:
 class FunctionVerificationHarness:
     _DB_QUERY_METHODS = {"query", "query_by_id"}
     _DB_BY_ID_METHODS = {"query_by_id", "explain_by_id"}
-    _DB_OPERATION_METHODS = {"query", "explain", "query_by_id", "explain_by_id", "get_conn_by_id", "get_session_by_id"}
+    _DB_OPERATION_METHODS = {
+        "query",
+        "explain",
+        "query_by_id",
+        "explain_by_id",
+        "get_conn_by_id",
+        "get_session_by_id",
+    }
     _SCHEDULER_HISTORY_STATUS_ENUM = {"queued", "running", "retrying", "success", "failed"}
     _BUSINESS_SUCCESS_TOKENS = ("success", "成功", "通过", "返回", "命中", "输出", "ok")
     _BUSINESS_FAILURE_TOKENS = ("fail", "失败", "异常", "error", "invalid", "缺少", "拒绝", "阻断")
@@ -331,7 +344,9 @@ class FunctionVerificationHarness:
         for issue in capability_schema_issues:
             add_check("capability_schema_detail", False, issue)
 
-        business_verification_issues = self._detect_business_verification_issues(dependency_manifest)
+        business_verification_issues = self._detect_business_verification_issues(
+            dependency_manifest
+        )
         add_check(
             "business_verification_valid",
             not business_verification_issues,
@@ -358,7 +373,9 @@ class FunctionVerificationHarness:
             "capability_profile": capability_profile,
         }
 
-    def _extract_business_verification_checks(self, dependency_manifest: dict[str, Any] | None) -> list[str]:
+    def _extract_business_verification_checks(
+        self, dependency_manifest: dict[str, Any] | None
+    ) -> list[str]:
         if not isinstance(dependency_manifest, dict):
             return []
         business = dependency_manifest.get("business_verification")
@@ -373,18 +390,26 @@ class FunctionVerificationHarness:
                 return [str(item).strip() for item in checks if str(item).strip()]
         return []
 
-    def _detect_business_verification_issues(self, dependency_manifest: dict[str, Any] | None) -> list[str]:
+    def _detect_business_verification_issues(
+        self, dependency_manifest: dict[str, Any] | None
+    ) -> list[str]:
         checks = self._extract_business_verification_checks(dependency_manifest)
         if not checks:
             # Backward compatible: legacy/manual function drafts may not provide checks yet.
             return []
         issues: list[str] = []
         if len(checks) < 2:
-            issues.append("Business verification checklist requires at least 2 items (success + failure).")
+            issues.append(
+                "Business verification checklist requires at least 2 items (success + failure)."
+            )
             return issues
         normalized = [item.casefold() for item in checks]
-        has_success = any(any(token in item for token in self._BUSINESS_SUCCESS_TOKENS) for item in normalized)
-        has_failure = any(any(token in item for token in self._BUSINESS_FAILURE_TOKENS) for item in normalized)
+        has_success = any(
+            any(token in item for token in self._BUSINESS_SUCCESS_TOKENS) for item in normalized
+        )
+        has_failure = any(
+            any(token in item for token in self._BUSINESS_FAILURE_TOKENS) for item in normalized
+        )
         if not has_success:
             issues.append("Business verification checklist is missing a success path check.")
         if not has_failure:
@@ -410,10 +435,20 @@ class FunctionVerificationHarness:
                     db_methods.add(db_method)
                 platform_method = self._platform_helper_method(node)
                 if platform_method is not None:
-                    object_type = self._literal_string(self._keyword_or_positional(node, keyword="object_type", position=0)) or ""
+                    object_type = (
+                        self._literal_string(
+                            self._keyword_or_positional(node, keyword="object_type", position=0)
+                        )
+                        or ""
+                    )
                     action = ""
                     if platform_method in {"crud", "operate"}:
-                        action = self._literal_string(self._keyword_or_positional(node, keyword="action", position=1)) or ""
+                        action = (
+                            self._literal_string(
+                                self._keyword_or_positional(node, keyword="action", position=1)
+                            )
+                            or ""
+                        )
                     marker = (platform_method, object_type, action)
                     if marker not in platform_seen:
                         platform_seen.add(marker)
@@ -486,17 +521,25 @@ class FunctionVerificationHarness:
             if isinstance(node, ast.Assign) and self._is_db_query_call(node.value):
                 for target in node.targets:
                     for name in self._extract_assigned_names(target):
-                        assignment_states.setdefault(name, []).append((int(getattr(node, "lineno", 0) or 0), True))
+                        assignment_states.setdefault(name, []).append(
+                            (int(getattr(node, "lineno", 0) or 0), True)
+                        )
             elif isinstance(node, ast.Assign):
                 for target in node.targets:
                     for name in self._extract_assigned_names(target):
-                        assignment_states.setdefault(name, []).append((int(getattr(node, "lineno", 0) or 0), False))
+                        assignment_states.setdefault(name, []).append(
+                            (int(getattr(node, "lineno", 0) or 0), False)
+                        )
             elif isinstance(node, ast.AnnAssign) and self._is_db_query_call(node.value):
                 for name in self._extract_assigned_names(node.target):
-                    assignment_states.setdefault(name, []).append((int(getattr(node, "lineno", 0) or 0), True))
+                    assignment_states.setdefault(name, []).append(
+                        (int(getattr(node, "lineno", 0) or 0), True)
+                    )
             elif isinstance(node, ast.AnnAssign):
                 for name in self._extract_assigned_names(node.target):
-                    assignment_states.setdefault(name, []).append((int(getattr(node, "lineno", 0) or 0), False))
+                    assignment_states.setdefault(name, []).append(
+                        (int(getattr(node, "lineno", 0) or 0), False)
+                    )
 
         for node in ast.walk(syntax_tree):
             if isinstance(node, ast.For):
@@ -516,7 +559,9 @@ class FunctionVerificationHarness:
                     )
             elif isinstance(node, (ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp)):
                 for generator in node.generators:
-                    if isinstance(generator.iter, ast.Call) and self._is_db_query_call(generator.iter):
+                    if isinstance(generator.iter, ast.Call) and self._is_db_query_call(
+                        generator.iter
+                    ):
                         line = getattr(node, "lineno", "?")
                         issues.append(
                             f"Line {line}: comprehension directly iterates db.query(...) return value; use result.get('rows', []) first."
@@ -706,7 +751,9 @@ class FunctionVerificationHarness:
             return True
         return False
 
-    def _latest_assignment_is_db_query(self, assignments: list[tuple[int, bool]], *, before_line: int) -> bool:
+    def _latest_assignment_is_db_query(
+        self, assignments: list[tuple[int, bool]], *, before_line: int
+    ) -> bool:
         if not assignments:
             return False
         ordered = sorted(assignments, key=lambda item: item[0])
@@ -732,9 +779,7 @@ class FunctionVerificationHarness:
                         f"Line {line or '?'}: `db.{method}` accepts only one positional argument sql; all other arguments must use keywords."
                     )
             elif node.args:
-                issues.append(
-                    f"Line {line or '?'}: `db.{method}` only accepts keyword arguments."
-                )
+                issues.append(f"Line {line or '?'}: `db.{method}` only accepts keyword arguments.")
                 continue
             schema = _DB_SCHEMAS.get(method)
             allowed_keywords = set((((schema or {}).get("properties")) or {}).keys())
@@ -754,7 +799,11 @@ class FunctionVerificationHarness:
                 )
             for keyword in node.keywords:
                 if keyword.arg == "role":
-                    issues.extend(self._validate_literal_enum_value(keyword.value, _DB_ROLE_ENUM, f"`db.{method}.role`", line))
+                    issues.extend(
+                        self._validate_literal_enum_value(
+                            keyword.value, _DB_ROLE_ENUM, f"`db.{method}.role`", line
+                        )
+                    )
         return issues
 
     def _db_helper_method(self, node: ast.Call) -> str | None:
@@ -800,7 +849,9 @@ class FunctionVerificationHarness:
                 payload_node = self._keyword_or_positional(node, keyword="payload", position=3)
 
             object_type = self._literal_string(object_type_node)
-            if object_type is not None and object_type not in set(_PLATFORM_CONTRACT.get("object_types") or []):
+            if object_type is not None and object_type not in set(
+                _PLATFORM_CONTRACT.get("object_types") or []
+            ):
                 issues.append(
                     f"Line {line or '?'}: `platform.{method}` uses undeclared object_type: {object_type}."
                 )
@@ -822,18 +873,24 @@ class FunctionVerificationHarness:
 
             if method == "crud":
                 action = self._literal_string(action_node)
-                allowed_actions = set(((_PLATFORM_CONTRACT.get("action_enums") or {}).get("crud")) or [])
+                allowed_actions = set(
+                    ((_PLATFORM_CONTRACT.get("action_enums") or {}).get("crud")) or []
+                )
                 if action is not None and action not in allowed_actions:
                     issues.append(
                         f"Line {line or '?'}: `platform.crud` uses undeclared action: {action}."
                     )
                 if action in {"read", "update", "delete"} and object_id_node is None:
-                    issues.append(f"Line {line or '?'}: `platform.crud` is missing object_id for `{action}` action.")
+                    issues.append(
+                        f"Line {line or '?'}: `platform.crud` is missing object_id for `{action}` action."
+                    )
                 if object_type and action and isinstance(payload_node, ast.Dict):
                     issues.extend(
                         self._validate_platform_object_dict(
                             node=payload_node,
-                            allowed_schema=((_PLATFORM_CRUD_PAYLOAD_SCHEMAS.get(object_type) or {}).get(action)),
+                            allowed_schema=(
+                                (_PLATFORM_CRUD_PAYLOAD_SCHEMAS.get(object_type) or {}).get(action)
+                            ),
                             label=f"`platform.crud({object_type}.{action}).payload`",
                             line=line,
                         )
@@ -842,7 +899,9 @@ class FunctionVerificationHarness:
 
             if method == "operate":
                 action = self._literal_string(action_node)
-                allowed_actions = set(((_PLATFORM_CONTRACT.get("action_enums") or {}).get("operate")) or [])
+                allowed_actions = set(
+                    ((_PLATFORM_CONTRACT.get("action_enums") or {}).get("operate")) or []
+                )
                 if action is not None and action not in allowed_actions:
                     issues.append(
                         f"Line {line or '?'}: `platform.operate` uses undeclared action: {action}."
@@ -853,7 +912,11 @@ class FunctionVerificationHarness:
                     issues.extend(
                         self._validate_platform_object_dict(
                             node=payload_node,
-                            allowed_schema=((_PLATFORM_OPERATE_PAYLOAD_SCHEMAS.get(object_type) or {}).get(action)),
+                            allowed_schema=(
+                                (_PLATFORM_OPERATE_PAYLOAD_SCHEMAS.get(object_type) or {}).get(
+                                    action
+                                )
+                            ),
                             label=f"`platform.operate({object_type}.{action}).payload`",
                             line=line,
                         )
@@ -875,7 +938,9 @@ class FunctionVerificationHarness:
                 return method
         return None
 
-    def _keyword_or_positional(self, node: ast.Call, *, keyword: str, position: int) -> ast.AST | None:
+    def _keyword_or_positional(
+        self, node: ast.Call, *, keyword: str, position: int
+    ) -> ast.AST | None:
         for item in node.keywords:
             if item.arg == keyword:
                 return item.value
@@ -911,21 +976,35 @@ class FunctionVerificationHarness:
         if schema.get("additional_properties") is False:
             unknown = sorted(keys - set(properties.keys()))
             if unknown:
-                issues.append(f"Line {line or '?'}: {label} contains undeclared fields: {', '.join(unknown)}.")
-        constraints = schema.get("constraints") if isinstance(schema.get("constraints"), dict) else {}
-        required = constraints.get("required") if isinstance(constraints.get("required"), list) else []
+                issues.append(
+                    f"Line {line or '?'}: {label} contains undeclared fields: {', '.join(unknown)}."
+                )
+        constraints = (
+            schema.get("constraints") if isinstance(schema.get("constraints"), dict) else {}
+        )
+        required = (
+            constraints.get("required") if isinstance(constraints.get("required"), list) else []
+        )
         missing = sorted(str(name) for name in required if str(name) not in keys)
         if missing:
-            issues.append(f"Line {line or '?'}: {label} is missing required fields: {', '.join(missing)}.")
+            issues.append(
+                f"Line {line or '?'}: {label} is missing required fields: {', '.join(missing)}."
+            )
         if label.endswith(".payload`") and "at_least_one_of" in constraints:
             declared = set(str(item) for item in constraints.get("at_least_one_of") or [])
             if declared and not (keys & declared):
-                issues.append(f"Line {line or '?'}: {label} requires at least one of: {', '.join(sorted(declared))}.")
+                issues.append(
+                    f"Line {line or '?'}: {label} requires at least one of: {', '.join(sorted(declared))}."
+                )
         for key_node, value_node in zip(node.keys, node.values):
             if not isinstance(key_node, ast.Constant) or not isinstance(key_node.value, str):
                 continue
             child_schema = properties.get(str(key_node.value))
-            issues.extend(self._validate_literal_node_against_schema(value_node, child_schema, f"{label}.{key_node.value}", line))
+            issues.extend(
+                self._validate_literal_node_against_schema(
+                    value_node, child_schema, f"{label}.{key_node.value}", line
+                )
+            )
         return issues
 
     def _validate_literal_node_against_schema(
@@ -938,23 +1017,33 @@ class FunctionVerificationHarness:
         if not isinstance(schema, dict):
             return []
         if "$ref" in schema:
-            return self._validate_literal_node_against_schema(node, _resolve_platform_schema_ref(str(schema.get("$ref") or "")), label, line)
+            return self._validate_literal_node_against_schema(
+                node, _resolve_platform_schema_ref(str(schema.get("$ref") or "")), label, line
+            )
         if "one_of" in schema:
             options = schema.get("one_of")
             if isinstance(options, list):
                 for option in options:
-                    candidate = self._validate_literal_node_against_schema(node, option if isinstance(option, dict) else {}, label, line)
+                    candidate = self._validate_literal_node_against_schema(
+                        node, option if isinstance(option, dict) else {}, label, line
+                    )
                     if not candidate:
                         return []
                 return []
         schema_type = schema.get("type")
         if schema_type == "string":
             if isinstance(node, ast.Constant) and isinstance(node.value, str):
-                if isinstance(schema.get("enum"), list) and str(node.value) not in set(schema.get("enum") or []):
+                if isinstance(schema.get("enum"), list) and str(node.value) not in set(
+                    schema.get("enum") or []
+                ):
                     return [f"Line {line or '?'}: {label} contains undeclared value: {node.value}."]
             return []
         if schema_type == "integer":
-            if isinstance(node, ast.Constant) and isinstance(node.value, int) and not isinstance(node.value, bool):
+            if (
+                isinstance(node, ast.Constant)
+                and isinstance(node.value, int)
+                and not isinstance(node.value, bool)
+            ):
                 minimum = schema.get("minimum")
                 maximum = schema.get("maximum")
                 if isinstance(minimum, int) and int(node.value) < minimum:
@@ -963,7 +1052,11 @@ class FunctionVerificationHarness:
                     return [f"Line {line or '?'}: {label} must be <= {maximum}."]
             return []
         if schema_type == "number":
-            if isinstance(node, ast.Constant) and isinstance(node.value, (int, float)) and not isinstance(node.value, bool):
+            if (
+                isinstance(node, ast.Constant)
+                and isinstance(node.value, (int, float))
+                and not isinstance(node.value, bool)
+            ):
                 minimum = schema.get("minimum")
                 maximum = schema.get("maximum")
                 if isinstance(minimum, (int, float)) and float(node.value) < float(minimum):
@@ -975,13 +1068,19 @@ class FunctionVerificationHarness:
             item_schema = schema.get("items") if isinstance(schema.get("items"), dict) else {}
             issues: list[str] = []
             for item in node.elts:
-                issues.extend(self._validate_literal_node_against_schema(item, item_schema, label, line))
+                issues.extend(
+                    self._validate_literal_node_against_schema(item, item_schema, label, line)
+                )
             return issues
         if schema_type == "object" and isinstance(node, ast.Dict):
-            return self._validate_platform_object_dict(node=node, allowed_schema=schema, label=label, line=line)
+            return self._validate_platform_object_dict(
+                node=node, allowed_schema=schema, label=label, line=line
+            )
         return []
 
-    def _validate_literal_enum_value(self, node: ast.AST, allowed: set[str], label: str, line: int) -> list[str]:
+    def _validate_literal_enum_value(
+        self, node: ast.AST, allowed: set[str], label: str, line: int
+    ) -> list[str]:
         if isinstance(node, ast.Constant) and isinstance(node.value, str):
             normalized = str(node.value).strip()
             if normalized not in allowed:
@@ -997,7 +1096,9 @@ class FunctionVerificationHarness:
             if helper is None:
                 continue
             line = int(getattr(node, "lineno", 0) or 0)
-            allowed_keywords = {"where", "limit"} if helper == "list" else {"where", "policy", "dry_run"}
+            allowed_keywords = (
+                {"where", "limit"} if helper == "list" else {"where", "policy", "dry_run"}
+            )
             if node.args:
                 issues.append(
                     f"Line {line or '?'}: `scheduler_history.{helper}` only accepts keyword arguments; positional arguments are not allowed."

@@ -85,7 +85,6 @@ def _extract_latest_active_skills(events: list[models.ChatEvent], fallback: list
     return _normalize_string_list(fallback, limit=16)
 
 
-
 _META_TOOL_NAMES = {"agent_save"}  # lifecycle tools, not domain tools
 
 
@@ -100,13 +99,14 @@ def _extract_tool_call_trace(messages: list[models.Message], *, limit: int = 16)
             name = str(tc.get("name") or "").strip()
             if not name or name in _META_TOOL_NAMES:
                 continue
-            trace.append({
-                "name": name,
-                "input": tc.get("input") or {},
-                "result": tc.get("result"),
-            })
+            trace.append(
+                {
+                    "name": name,
+                    "input": tc.get("input") or {},
+                    "result": tc.get("result"),
+                }
+            )
     return trace[-limit:]
-
 
 
 def _derive_agent_name_from_seed(seed: str) -> str:
@@ -118,7 +118,6 @@ def _derive_agent_name_from_seed(seed: str) -> str:
     if short.lower().endswith("agent"):
         return short
     return f"{short} PraxisAgent"
-
 
 
 def _build_agent_draft_fallback(
@@ -150,7 +149,10 @@ def _build_agent_draft_fallback(
         f"{idx + 1}. {text[:220]}" for idx, text in enumerate(user_messages[-3:])
     ] or ["1. Handle database operations and troubleshooting requests"]
     workflow_lines = (
-        [f"{idx + 1}. Call `{name}` and proceed to the next step based on the result." for idx, name in enumerate(tool_names)]
+        [
+            f"{idx + 1}. Call `{name}` and proceed to the next step based on the result."
+            for idx, name in enumerate(tool_names)
+        ]
         if tool_names
         else [
             "1. Clarify the user's goal and constraints.",
@@ -184,7 +186,6 @@ def _build_agent_draft_fallback(
         "tools": tool_names,
         "skills": active_skills,
     }
-
 
 
 async def _build_agent_draft_from_conversation(
@@ -301,7 +302,6 @@ async def _build_agent_draft_from_conversation(
         return fallback
 
 
-
 async def _stream_save_agent_workflow(
     *,
     conversation_id: int,
@@ -327,7 +327,9 @@ async def _stream_save_agent_workflow(
         for tool in registry.get_openai_functions()
         if isinstance(tool, dict)
     }
-    available_tool_names = {name for name in available_tool_names if isinstance(name, str) and name.strip()}
+    available_tool_names = {
+        name for name in available_tool_names if isinstance(name, str) and name.strip()
+    }
     available_skill_names = {item.name for item in skill_store.load()}
     trace_id = str(uuid.uuid4())
 
@@ -347,7 +349,7 @@ async def _stream_save_agent_workflow(
             )
         )
         db.commit()
-        yield _event_to_vds({'type': 'save_agent_status', 'data': summarizing_payload})
+        yield _event_to_vds({"type": "save_agent_status", "data": summarizing_payload})
 
         draft = await _build_agent_draft_from_conversation(
             conversation=conversation,
@@ -373,7 +375,7 @@ async def _stream_save_agent_workflow(
             )
         )
         db.commit()
-        yield _event_to_vds({'type': 'save_agent_status', 'data': saving_payload})
+        yield _event_to_vds({"type": "save_agent_status", "data": saving_payload})
 
         db_agent = models.Agent(
             name=str(draft.get("name") or "Chat-distilled PraxisAgent").strip()[:48],
@@ -422,8 +424,8 @@ async def _stream_save_agent_workflow(
         db.commit()
         db.refresh(db_agent)
 
-        yield _event_to_vds({'type': 'save_agent_done', 'data': done_payload})
-        yield _event_to_vds({'type': 'done', 'data': {'trace_id': trace_id}})
+        yield _event_to_vds({"type": "save_agent_done", "data": done_payload})
+        yield _event_to_vds({"type": "done", "data": {"trace_id": trace_id}})
     except Exception as exc:
         db.rollback()
         logger.exception(
@@ -469,7 +471,6 @@ async def _stream_save_agent_workflow(
         )
 
 
-
 @router.post("/{conversation_id}/save-agent/stream")
 async def save_conversation_as_agent_stream(
     conversation_id: int,
@@ -493,4 +494,3 @@ async def save_conversation_as_agent_stream(
         ),
         media_type="text/plain; charset=utf-8",
     )
-

@@ -1,19 +1,15 @@
 from __future__ import annotations
 
-import os
-import tempfile
 from pathlib import Path
-from unittest import mock
 
 import pytest
 
 from app.services.knowledge.search_tools import (
     discover,
+    execute_tool,
     outline,
     read,
     search,
-    execute_tool,
-    _resolve_kb_root,
 )
 
 

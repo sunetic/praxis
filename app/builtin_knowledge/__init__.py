@@ -1,4 +1,5 @@
 """Built-in knowledge packs — mount point for bundled knowledge bases."""
+
 from __future__ import annotations
 
 import importlib

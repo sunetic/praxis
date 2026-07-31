@@ -8,7 +8,11 @@ from app.api import capabilities as capabilities_api
 from app.db.database import Base
 from app.models import models
 from app.services.agent.scheduled_runner import ScheduledAgentRunner
-from app.services.chat.capabilities import CapabilityBuildInput, build_capability_context, render_capability_context
+from app.services.chat.capabilities import (
+    CapabilityBuildInput,
+    build_capability_context,
+    render_capability_context,
+)
 from app.skills.store import Skill
 
 
@@ -34,7 +38,9 @@ def test_build_capability_context_treats_declared_tools_as_hints() -> None:
     assert "object_crud" in prompt
 
 
-def test_build_capability_context_includes_datasource_service_knowledge_skill_scene_and_scope() -> None:
+def test_build_capability_context_includes_datasource_service_knowledge_skill_scene_and_scope() -> (
+    None
+):
     datasource = SimpleNamespace(
         id=9,
         name="cluster-a-user",
@@ -63,7 +69,11 @@ def test_build_capability_context_includes_datasource_service_knowledge_skill_sc
             active_skills=[skill],
             scene_key="stats_analysis",
             scene_focus={"type": "issue", "id": 1},
-            scope_context={"scope_type": "builder", "scope_object_type": "page", "scope_object_id": "99"},
+            scope_context={
+                "scope_type": "builder",
+                "scope_object_type": "page",
+                "scope_object_id": "99",
+            },
         )
     )
     prompt = render_capability_context(context)
@@ -104,7 +114,11 @@ def test_list_capabilities_returns_structured_capabilities(monkeypatch) -> None:
     monkeypatch.setattr(
         capabilities_api.tool_registry,
         "list_tools",
-        lambda: [SimpleNamespace(name="execute_sql", description="run sql", parameters={"type": "object"})],
+        lambda: [
+            SimpleNamespace(
+                name="execute_sql", description="run sql", parameters={"type": "object"}
+            )
+        ],
     )
 
     result = capabilities_api.list_capabilities()
@@ -188,22 +202,31 @@ async def test_scheduled_runner_includes_shared_capability_prompt(tmp_path, monk
         # The ScheduledAgentRunner delegates to the ASGI chat stream endpoint.
         # We monkeypatch the endpoint to capture the system prompt it builds.
         from app.api import chat as chat_api_mod
-        from app.services.chat import stream_helpers as stream_helpers_mod
 
         captured_calls: list[dict] = []
 
         class _FakeStreamingChatService:
-            async def chat_with_tools(self, messages=None, tools=None, system_prompt=None, **kwargs):
-                captured_calls.append({
-                    "messages": messages,
-                    "tools": tools,
-                    "system_prompt": system_prompt,
-                })
+            async def chat_with_tools(
+                self, messages=None, tools=None, system_prompt=None, **kwargs
+            ):
+                captured_calls.append(
+                    {
+                        "messages": messages,
+                        "tools": tools,
+                        "system_prompt": system_prompt,
+                    }
+                )
                 yield {"type": "assistant", "phase": "responding", "data": {"text": "ok"}}
                 yield {"type": "done", "phase": "done", "data": {"text_emitted": True}}
 
         async def _fake_select_dynamic_skills(conversation, messages, latest_user_input):
-            return {"active_skills": ["ocp-api-guide"], "added": [], "removed": [], "reason": "test", "selector_ok": True}
+            return {
+                "active_skills": ["ocp-api-guide"],
+                "added": [],
+                "removed": [],
+                "reason": "test",
+                "selector_ok": True,
+            }
 
         async def _noop_save_messages(messages):
             pass
@@ -220,11 +243,14 @@ async def test_scheduled_runner_includes_shared_capability_prompt(tmp_path, monk
 
         import app.main as main_module
         from app.services.scheduler.runtime_state import set_scheduler_worker
+
         main_module.settings.scheduler_autostart = False
         set_scheduler_worker(None)
 
         runner = ScheduledAgentRunner(session_factory=factory)
-        result = await runner.invoke(agent=agent, prompt="检查最近一小时 CPU", datasource_id=datasource.id)
+        result = await runner.invoke(
+            agent=agent, prompt="检查最近一小时 CPU", datasource_id=datasource.id
+        )
 
         assert result.status == "success"
         assert captured_calls

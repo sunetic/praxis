@@ -1,7 +1,7 @@
 from pathlib import Path
 
-from fastapi import HTTPException
 import pytest
+from fastapi import HTTPException
 
 from app.api import skills as skills_api
 from app.schemas import schemas
@@ -55,7 +55,9 @@ def test_skills_api_redacts_built_in_prompt(monkeypatch: pytest.MonkeyPatch, tmp
     assert built_in.prompt == "[built-in skill prompt hidden]"
 
 
-def test_skills_api_blocks_builtin_update_and_delete(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+def test_skills_api_blocks_builtin_update_and_delete(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
     store = _seed_skill_store(tmp_path)
     monkeypatch.setattr(skills_api, "skill_store", store)
 

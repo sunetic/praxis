@@ -41,6 +41,7 @@ def db(db_session_factory):
 @pytest.fixture()
 def manifest_file(tmp_path: Path):
     import json
+
     manifest = [
         {
             "id": "test-pack-1",
@@ -77,8 +78,8 @@ def manifest_file(tmp_path: Path):
 
 @pytest.fixture()
 def client(db_session_factory, db, manifest_file, tmp_path):
-    from app.api import knowledge_packs as kp_module
     from app.api import knowledge as k_module
+    from app.api import knowledge_packs as kp_module
     from app.db import database as db_mod
     from app.main import app
 
@@ -181,6 +182,7 @@ class TestGetPackStatus:
 
     def test_downloading_pack_status(self, client: TestClient):
         from app.services.knowledge.pack_installer import progress
+
         progress.set("test-pack-1", "downloading", progress_message="Cloning")
         try:
             resp = client.get("/api/v1/knowledge-packs/test-pack-1/status")
@@ -311,7 +313,10 @@ class TestSwitchVersion:
 
     def test_switch_version_succeeds(self, client: TestClient, db):
         kb = models.KnowledgeBase(
-            name="Test Pack 1", source="pack", pack_id="test-pack-1", version="8.4",
+            name="Test Pack 1",
+            source="pack",
+            pack_id="test-pack-1",
+            version="8.4",
         )
         db.add(kb)
         db.commit()
@@ -331,7 +336,10 @@ class TestSwitchVersion:
 
     def test_invalid_version_returns_400(self, client: TestClient, db):
         kb = models.KnowledgeBase(
-            name="Test Pack 1", source="pack", pack_id="test-pack-1", version="8.4",
+            name="Test Pack 1",
+            source="pack",
+            pack_id="test-pack-1",
+            version="8.4",
         )
         db.add(kb)
         db.commit()
@@ -359,8 +367,12 @@ class TestListPacksVersionInfo:
 
     def test_installed_pack_shows_versions_from_meta(self, client: TestClient, db, tmp_path):
         import json
+
         kb = models.KnowledgeBase(
-            name="Test Pack 1", source="pack", pack_id="test-pack-1", version="8.0",
+            name="Test Pack 1",
+            source="pack",
+            pack_id="test-pack-1",
+            version="8.0",
         )
         db.add(kb)
         db.commit()
@@ -404,8 +416,10 @@ class TestDiscoverVersions:
         async def fake_exec(*args, **kwargs):
             class FakeProc:
                 returncode = 0
+
                 async def communicate(self):
                     return (ls_output.encode(), b"")
+
             return FakeProc()
 
         with patch("asyncio.create_subprocess_exec", side_effect=fake_exec):
@@ -437,8 +451,10 @@ class TestDiscoverVersions:
         async def fake_exec(*args, **kwargs):
             class FakeProc:
                 returncode = 128
+
                 async def communicate(self):
                     return (b"", b"fatal: could not resolve host")
+
             return FakeProc()
 
         with patch("asyncio.create_subprocess_exec", side_effect=fake_exec):
@@ -452,7 +468,10 @@ class TestDiscoverVersions:
 class TestSwitchVersionNetworkError:
     def test_network_error_returns_502(self, client: TestClient, db):
         kb = models.KnowledgeBase(
-            name="Test Pack 1", source="pack", pack_id="test-pack-1", version="8.4",
+            name="Test Pack 1",
+            source="pack",
+            pack_id="test-pack-1",
+            version="8.4",
         )
         db.add(kb)
         db.commit()
@@ -475,7 +494,8 @@ class TestSwitchVersionNetworkError:
 class TestKbMetaAndSearchTools:
     def test_read_kb_meta(self, tmp_path: Path):
         import json
-        from app.services.knowledge.search_tools import read_kb_meta, _DATA_ROOT
+
+        from app.services.knowledge.search_tools import _DATA_ROOT, read_kb_meta
 
         kb_dir = tmp_path / "1"
         kb_dir.mkdir()
@@ -484,6 +504,7 @@ class TestKbMetaAndSearchTools:
 
         original = _DATA_ROOT
         import app.services.knowledge.search_tools as st
+
         st._DATA_ROOT = tmp_path
         try:
             result = read_kb_meta(1)
@@ -501,6 +522,7 @@ class TestKbMetaAndSearchTools:
         kb_dir.mkdir()
 
         import app.services.knowledge.search_tools as st
+
         original = st._DATA_ROOT
         st._DATA_ROOT = tmp_path
         try:
@@ -510,14 +532,21 @@ class TestKbMetaAndSearchTools:
 
     def test_find_kb_by_db_type(self, tmp_path: Path):
         import json
+
         from app.services.knowledge.search_tools import find_kb_by_db_type
 
         kb_dir = tmp_path / "5"
         kb_dir.mkdir()
-        meta = {"subdirectory": "docs", "version": "8.4", "pack_id": "mysql-test", "db_type": "mysql"}
+        meta = {
+            "subdirectory": "docs",
+            "version": "8.4",
+            "pack_id": "mysql-test",
+            "db_type": "mysql",
+        }
         (kb_dir / ".kb_meta.json").write_text(json.dumps(meta), encoding="utf-8")
 
         import app.services.knowledge.search_tools as st
+
         original = st._DATA_ROOT
         st._DATA_ROOT = tmp_path
         try:
@@ -528,6 +557,7 @@ class TestKbMetaAndSearchTools:
 
     def test_resolve_kb_root_with_meta(self, tmp_path: Path):
         import json
+
         from app.services.knowledge.search_tools import _resolve_kb_root
 
         kb_dir = tmp_path / "3"
@@ -538,6 +568,7 @@ class TestKbMetaAndSearchTools:
         (kb_dir / ".kb_meta.json").write_text(json.dumps(meta), encoding="utf-8")
 
         import app.services.knowledge.search_tools as st
+
         original = st._DATA_ROOT
         st._DATA_ROOT = tmp_path
         try:
@@ -553,6 +584,7 @@ class TestKbMetaAndSearchTools:
         kb_dir.mkdir()
 
         import app.services.knowledge.search_tools as st
+
         original = st._DATA_ROOT
         st._DATA_ROOT = tmp_path
         try:

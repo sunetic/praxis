@@ -1,6 +1,7 @@
 """
 PostgreSQL async connection pool via asyncpg.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -15,10 +16,23 @@ tracer = trace.get_tracer("app.db.pg_connection")
 def _extract_db_operation(sql: str) -> str:
     stripped = sql.strip().lstrip("(")
     first_word = stripped.split(None, 1)[0].upper() if stripped else "UNKNOWN"
-    return first_word if first_word in {
-        "SELECT", "INSERT", "UPDATE", "DELETE", "EXPLAIN",
-        "CREATE", "ALTER", "DROP", "SHOW", "SET",
-    } else "OTHER"
+    return (
+        first_word
+        if first_word
+        in {
+            "SELECT",
+            "INSERT",
+            "UPDATE",
+            "DELETE",
+            "EXPLAIN",
+            "CREATE",
+            "ALTER",
+            "DROP",
+            "SHOW",
+            "SET",
+        }
+        else "OTHER"
+    )
 
 
 def _convert_params(sql: str, params: list) -> tuple[str, list]:

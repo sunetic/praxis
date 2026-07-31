@@ -15,7 +15,9 @@ def _make_function(*, code: str) -> models.Function:
     )
 
 
-def _runtime_result(*, status: str, error_message: str = "", output: Any = None) -> FunctionRuntimeResult:
+def _runtime_result(
+    *, status: str, error_message: str = "", output: Any = None
+) -> FunctionRuntimeResult:
     return FunctionRuntimeResult(
         run_id="test-run",
         status=status,
@@ -35,11 +37,13 @@ class _FakeRuntimeService:
     async def invoke(self, *args: Any, **kwargs: Any) -> FunctionRuntimeResult:
         function = args[0] if args else None
         payload = args[1] if len(args) > 1 else None
-        self.calls.append({
-            "function": function,
-            "payload": payload,
-            "kwargs": kwargs,
-        })
+        self.calls.append(
+            {
+                "function": function,
+                "payload": payload,
+                "kwargs": kwargs,
+            }
+        )
         if self._results:
             return self._results.pop(0)
         return _runtime_result(status="success", output={"ok": True})

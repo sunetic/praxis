@@ -4,8 +4,9 @@ import asyncio
 import json
 import re
 import uuid
+from collections.abc import Awaitable, Callable
 from datetime import datetime, timedelta
-from typing import Any, Awaitable, Callable, Literal
+from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
@@ -16,8 +17,8 @@ from app.core.logging import get_logger
 from app.db.connection import get_db_pool
 from app.db.database import SessionLocal, get_db
 from app.models import models
-from app.services.scheduler.runtime_state import get_scheduler_worker
 from app.services.llm import get_llm_client
+from app.services.scheduler.runtime_state import get_scheduler_worker
 
 router = APIRouter(prefix="/stats-analysis", tags=["StatsAnalysis"])
 logger = get_logger("app.api.stats_analysis")
@@ -26,6 +27,7 @@ logger = get_logger("app.api.stats_analysis")
 # ---------------------------------------------------------------------------
 # Response schemas
 # ---------------------------------------------------------------------------
+
 
 class StatsTaskSummary(BaseModel):
     total_tasks: int
@@ -126,11 +128,11 @@ class StatsHistogramResponse(BaseModel):
 
 
 class StatsTrendPoint(BaseModel):
-    date: str                        # YYYY-MM-DD
-    avg_duration_min: float          # 平均任务耗时（分钟）
-    max_duration_min: float          # 最大任务耗时（分钟）
-    failed_tables: int               # 当天失败表总数
-    total_tasks: int                 # 当天任务数
+    date: str  # YYYY-MM-DD
+    avg_duration_min: float  # 平均任务耗时（分钟）
+    max_duration_min: float  # 最大任务耗时（分钟）
+    failed_tables: int  # 当天失败表总数
+    total_tasks: int  # 当天任务数
 
 
 class StatsTrendResponse(BaseModel):
@@ -229,7 +231,14 @@ class StatsTenantConfigCheck(BaseModel):
     enabled_windows: int = 0
     total_windows: int = 7
     recent_task_count: int = 0
-    issue_type: Literal["auto_gather_disabled", "no_windows", "partial_windows", "no_recent_tasks", "unreachable", "healthy"]
+    issue_type: Literal[
+        "auto_gather_disabled",
+        "no_windows",
+        "partial_windows",
+        "no_recent_tasks",
+        "unreachable",
+        "healthy",
+    ]
     issue_label: str
     suggestion_sql: str
 
@@ -408,6 +417,7 @@ class StatsDrawerDetailResponse(BaseModel):
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _get_datasource(db: Session, datasource_id: int) -> models.DataSource:
     ds = db.query(models.DataSource).filter(models.DataSource.id == datasource_id).first()
@@ -597,9 +607,9 @@ def _merge_missing_facts(*groups: list[str]) -> list[str]:
 
 
 def _merge_evidence(
-    base: list["StatsDiagnosisEvidence"],
-    extra: list["StatsDiagnosisEvidence"],
-) -> list["StatsDiagnosisEvidence"]:
+    base: list[StatsDiagnosisEvidence],
+    extra: list[StatsDiagnosisEvidence],
+) -> list[StatsDiagnosisEvidence]:
     merged: list[StatsDiagnosisEvidence] = []
     seen: set[tuple[str, str, str | None]] = set()
     for item in [*base, *extra]:
@@ -711,11 +721,15 @@ def _collect_candidate_rows_from_issues(issues: list[StatsIssueItem]) -> list[di
                 "tags": tags,
             }
             continue
-        existing_tags: dict[str, dict[str, Any]] = {str(tag["tag_key"]): tag for tag in current["tags"]}
+        existing_tags: dict[str, dict[str, Any]] = {
+            str(tag["tag_key"]): tag for tag in current["tags"]
+        }
         for tag in tags:
             existing_tags[str(tag["tag_key"])] = tag
         current["tags"] = list(existing_tags.values())
-        if _SEVERITY_SCORE.get(issue.severity, 0) >= _SEVERITY_SCORE.get(str(current.get("severity") or "low"), 0):
+        if _SEVERITY_SCORE.get(issue.severity, 0) >= _SEVERITY_SCORE.get(
+            str(current.get("severity") or "low"), 0
+        ):
             current["latest_summary"] = issue.summary
             current["source"] = issue.kind
     return list(merged.values())
@@ -998,7 +1012,9 @@ def _ensure_stats_analysis_schedule(db: Session) -> models.Schedule:
 
     datasource_ids = _list_schedulable_datasource_ids(db)
     if not datasource_ids:
-        raise HTTPException(status_code=400, detail="No schedulable datasource found for stats_analysis")
+        raise HTTPException(
+            status_code=400, detail="No schedulable datasource found for stats_analysis"
+        )
     bootstrap_datasource_id = datasource_ids[0]
     schedule = models.Schedule(
         name=_STATS_ANALYSIS_SCHEDULE_NAME,
@@ -1033,7 +1049,9 @@ def _ensure_stats_analysis_schedule(db: Session) -> models.Schedule:
     return schedule
 
 
-def _build_collect_response_from_db(db: Session, datasource_id: int, *, fallback_collected: int = 0) -> StatsRiskCollectResponse:
+def _build_collect_response_from_db(
+    db: Session, datasource_id: int, *, fallback_collected: int = 0
+) -> StatsRiskCollectResponse:
     active_count = (
         db.query(models.StatsRiskCandidate)
         .filter(
@@ -1216,11 +1234,7 @@ def _run_candidate_analysis_task(run_id: str) -> None:
         if llm_result is None:
             status, result = _build_heuristic_result(issue, "deep")
         else:
-            status = (
-                "needs_clarification"
-                if llm_result.missing_facts
-                else "ready"
-            )
+            status = "needs_clarification" if llm_result.missing_facts else "ready"
             result = llm_result
 
         run.status = status
@@ -1296,7 +1310,9 @@ async def _execute_query_candidates(
     return None, []
 
 
-def _table_gather_history_candidates(ds: models.DataSource, *, safe_table: str) -> list[tuple[str, str]]:
+def _table_gather_history_candidates(
+    ds: models.DataSource, *, safe_table: str
+) -> list[tuple[str, str]]:
     sys_candidate = (
         "table_gather_history_sys",
         f"""
@@ -1324,10 +1340,16 @@ ORDER BY start_time DESC
 LIMIT 10
 """,
     )
-    return [sys_candidate, tenant_candidate] if _is_sys_datasource(ds) else [tenant_candidate, sys_candidate]
+    return (
+        [sys_candidate, tenant_candidate]
+        if _is_sys_datasource(ds)
+        else [tenant_candidate, sys_candidate]
+    )
 
 
-def _find_sys_datasource_for_cluster(db: Session, ds: models.DataSource) -> models.DataSource | None:
+def _find_sys_datasource_for_cluster(
+    db: Session, ds: models.DataSource
+) -> models.DataSource | None:
     """Find the sys datasource in the same cluster, for cross-tenant ret_code queries."""
     if _is_sys_datasource(ds):
         return ds
@@ -1391,12 +1413,15 @@ async def _check_tenant_configs(
 
         # 2. Check scheduler windows
         try:
-            result = await pool.execute_query(tds, """
+            result = await pool.execute_query(
+                tds,
+                """
 SELECT COUNT(*) AS total, SUM(CASE WHEN enabled IN ('TRUE','1','true') THEN 1 ELSE 0 END) AS enabled_cnt
 FROM oceanbase.DBA_SCHEDULER_JOBS
 WHERE job_name IN ('MONDAY_WINDOW','TUESDAY_WINDOW','WEDNESDAY_WINDOW',
   'THURSDAY_WINDOW','FRIDAY_WINDOW','SATURDAY_WINDOW','SUNDAY_WINDOW')
-""")
+""",
+            )
             rows = _rows_to_plain_dicts(result)
             if rows:
                 enabled_windows = int(rows[0].get("enabled_cnt") or 0)
@@ -1406,12 +1431,16 @@ WHERE job_name IN ('MONDAY_WINDOW','TUESDAY_WINDOW','WEDNESDAY_WINDOW',
 
         # 3. Check recent AUTO GATHER task count
         try:
-            result = await pool.execute_query(tds, """
+            result = await pool.execute_query(
+                tds,
+                """
 SELECT COUNT(*) AS cnt
 FROM oceanbase.DBA_OB_TASK_OPT_STAT_GATHER_HISTORY
 WHERE type = 'AUTO GATHER'
   AND start_time > DATE_SUB(NOW(), INTERVAL %s DAY)
-""", params=[lookback_days])
+""",
+                params=[lookback_days],
+            )
             rows = _rows_to_plain_dicts(result)
             if rows:
                 recent_task_count = int(rows[0].get("cnt") or 0)
@@ -1421,92 +1450,104 @@ WHERE type = 'AUTO GATHER'
 
         # If all 3 queries failed, the tenant is unreachable
         if query_failures >= 3:
-            checks.append(StatsTenantConfigCheck(
-                tenant_name=tenant_label,
-                datasource_id=tds.id,
-                issue_type="unreachable",
-                issue_label="租户不可达",
-                suggestion_sql="-- 请检查该租户的数据源连接配置和网络可达性",
-            ))
+            checks.append(
+                StatsTenantConfigCheck(
+                    tenant_name=tenant_label,
+                    datasource_id=tds.id,
+                    issue_type="unreachable",
+                    issue_label="租户不可达",
+                    suggestion_sql="-- 请检查该租户的数据源连接配置和网络可达性",
+                )
+            )
             continue
 
         # Determine issue (priority: disabled > no windows > no tasks)
         if auto_gather_enabled is False:
-            checks.append(StatsTenantConfigCheck(
-                tenant_name=tenant_label,
-                datasource_id=tds.id,
-                auto_gather_enabled=False,
-                enabled_windows=enabled_windows,
-                recent_task_count=recent_task_count,
-                issue_type="auto_gather_disabled",
-                issue_label="自动采集未启用",
-                suggestion_sql="ALTER SYSTEM SET _enable_auto_stat_gather = true;",
-            ))
+            checks.append(
+                StatsTenantConfigCheck(
+                    tenant_name=tenant_label,
+                    datasource_id=tds.id,
+                    auto_gather_enabled=False,
+                    enabled_windows=enabled_windows,
+                    recent_task_count=recent_task_count,
+                    issue_type="auto_gather_disabled",
+                    issue_label="自动采集未启用",
+                    suggestion_sql="ALTER SYSTEM SET _enable_auto_stat_gather = true;",
+                )
+            )
         elif enabled_windows == 0:
-            checks.append(StatsTenantConfigCheck(
-                tenant_name=tenant_label,
-                datasource_id=tds.id,
-                auto_gather_enabled=auto_gather_enabled,
-                enabled_windows=0,
-                recent_task_count=recent_task_count,
-                issue_type="no_windows",
-                issue_label="调度窗口全部关闭",
-                suggestion_sql=(
-                    "-- 启用所有调度窗口（逐条执行）\n"
-                    "CALL DBMS_SCHEDULER.ENABLE('MONDAY_WINDOW');\n"
-                    "CALL DBMS_SCHEDULER.ENABLE('TUESDAY_WINDOW');\n"
-                    "CALL DBMS_SCHEDULER.ENABLE('WEDNESDAY_WINDOW');\n"
-                    "CALL DBMS_SCHEDULER.ENABLE('THURSDAY_WINDOW');\n"
-                    "CALL DBMS_SCHEDULER.ENABLE('FRIDAY_WINDOW');\n"
-                    "CALL DBMS_SCHEDULER.ENABLE('SATURDAY_WINDOW');\n"
-                    "CALL DBMS_SCHEDULER.ENABLE('SUNDAY_WINDOW');"
-                ),
-            ))
+            checks.append(
+                StatsTenantConfigCheck(
+                    tenant_name=tenant_label,
+                    datasource_id=tds.id,
+                    auto_gather_enabled=auto_gather_enabled,
+                    enabled_windows=0,
+                    recent_task_count=recent_task_count,
+                    issue_type="no_windows",
+                    issue_label="调度窗口全部关闭",
+                    suggestion_sql=(
+                        "-- 启用所有调度窗口（逐条执行）\n"
+                        "CALL DBMS_SCHEDULER.ENABLE('MONDAY_WINDOW');\n"
+                        "CALL DBMS_SCHEDULER.ENABLE('TUESDAY_WINDOW');\n"
+                        "CALL DBMS_SCHEDULER.ENABLE('WEDNESDAY_WINDOW');\n"
+                        "CALL DBMS_SCHEDULER.ENABLE('THURSDAY_WINDOW');\n"
+                        "CALL DBMS_SCHEDULER.ENABLE('FRIDAY_WINDOW');\n"
+                        "CALL DBMS_SCHEDULER.ENABLE('SATURDAY_WINDOW');\n"
+                        "CALL DBMS_SCHEDULER.ENABLE('SUNDAY_WINDOW');"
+                    ),
+                )
+            )
         elif enabled_windows < 7:
-            checks.append(StatsTenantConfigCheck(
-                tenant_name=tenant_label,
-                datasource_id=tds.id,
-                auto_gather_enabled=auto_gather_enabled,
-                enabled_windows=enabled_windows,
-                recent_task_count=recent_task_count,
-                issue_type="partial_windows",
-                issue_label=f"调度窗口部分启用（{enabled_windows}/7）",
-                suggestion_sql=(
-                    "-- 补齐未启用的调度窗口（逐条执行）\n"
-                    "CALL DBMS_SCHEDULER.ENABLE('MONDAY_WINDOW');\n"
-                    "CALL DBMS_SCHEDULER.ENABLE('TUESDAY_WINDOW');\n"
-                    "CALL DBMS_SCHEDULER.ENABLE('WEDNESDAY_WINDOW');\n"
-                    "CALL DBMS_SCHEDULER.ENABLE('THURSDAY_WINDOW');\n"
-                    "CALL DBMS_SCHEDULER.ENABLE('FRIDAY_WINDOW');\n"
-                    "CALL DBMS_SCHEDULER.ENABLE('SATURDAY_WINDOW');\n"
-                    "CALL DBMS_SCHEDULER.ENABLE('SUNDAY_WINDOW');"
-                ),
-            ))
+            checks.append(
+                StatsTenantConfigCheck(
+                    tenant_name=tenant_label,
+                    datasource_id=tds.id,
+                    auto_gather_enabled=auto_gather_enabled,
+                    enabled_windows=enabled_windows,
+                    recent_task_count=recent_task_count,
+                    issue_type="partial_windows",
+                    issue_label=f"调度窗口部分启用（{enabled_windows}/7）",
+                    suggestion_sql=(
+                        "-- 补齐未启用的调度窗口（逐条执行）\n"
+                        "CALL DBMS_SCHEDULER.ENABLE('MONDAY_WINDOW');\n"
+                        "CALL DBMS_SCHEDULER.ENABLE('TUESDAY_WINDOW');\n"
+                        "CALL DBMS_SCHEDULER.ENABLE('WEDNESDAY_WINDOW');\n"
+                        "CALL DBMS_SCHEDULER.ENABLE('THURSDAY_WINDOW');\n"
+                        "CALL DBMS_SCHEDULER.ENABLE('FRIDAY_WINDOW');\n"
+                        "CALL DBMS_SCHEDULER.ENABLE('SATURDAY_WINDOW');\n"
+                        "CALL DBMS_SCHEDULER.ENABLE('SUNDAY_WINDOW');"
+                    ),
+                )
+            )
         elif recent_task_count == 0 and auto_gather_enabled is not False:
-            checks.append(StatsTenantConfigCheck(
-                tenant_name=tenant_label,
-                datasource_id=tds.id,
-                auto_gather_enabled=auto_gather_enabled,
-                enabled_windows=enabled_windows,
-                recent_task_count=0,
-                issue_type="no_recent_tasks",
-                issue_label=f"近 {lookback_days} 天无自动采集任务",
-                suggestion_sql=(
-                    "-- 手动触发一次全表统计信息收集\n"
-                    "CALL DBMS_STATS.GATHER_SCHEMA_STATS(NULL, degree=>4);"
-                ),
-            ))
+            checks.append(
+                StatsTenantConfigCheck(
+                    tenant_name=tenant_label,
+                    datasource_id=tds.id,
+                    auto_gather_enabled=auto_gather_enabled,
+                    enabled_windows=enabled_windows,
+                    recent_task_count=0,
+                    issue_type="no_recent_tasks",
+                    issue_label=f"近 {lookback_days} 天无自动采集任务",
+                    suggestion_sql=(
+                        "-- 手动触发一次全表统计信息收集\n"
+                        "CALL DBMS_STATS.GATHER_SCHEMA_STATS(NULL, degree=>4);"
+                    ),
+                )
+            )
         else:
-            checks.append(StatsTenantConfigCheck(
-                tenant_name=tenant_label,
-                datasource_id=tds.id,
-                auto_gather_enabled=auto_gather_enabled,
-                enabled_windows=enabled_windows,
-                recent_task_count=recent_task_count,
-                issue_type="healthy",
-                issue_label="配置正常",
-                suggestion_sql="",
-            ))
+            checks.append(
+                StatsTenantConfigCheck(
+                    tenant_name=tenant_label,
+                    datasource_id=tds.id,
+                    auto_gather_enabled=auto_gather_enabled,
+                    enabled_windows=enabled_windows,
+                    recent_task_count=recent_task_count,
+                    issue_type="healthy",
+                    issue_label="配置正常",
+                    suggestion_sql="",
+                )
+            )
 
     return checks
 
@@ -1530,7 +1571,9 @@ async def _fetch_table_gather_history_rows(
             return source, rows, []
 
     # Fallback to current datasource candidates
-    source, rows = await _execute_query_candidates(ds, _table_gather_history_candidates(ds, safe_table=safe_table))
+    source, rows = await _execute_query_candidates(
+        ds, _table_gather_history_candidates(ds, safe_table=safe_table)
+    )
     if not rows:
         return source, [], ["table_gather_history"]
     return source, rows, []
@@ -1611,7 +1654,9 @@ def _build_drawer_fields(items: list[tuple[str, Any, str | None]]) -> list[Stats
     return fields
 
 
-async def _fetch_scheduler_run_detail(ds: models.DataSource) -> tuple[list[StatsDiagnosisEvidence], list[str]]:
+async def _fetch_scheduler_run_detail(
+    ds: models.DataSource,
+) -> tuple[list[StatsDiagnosisEvidence], list[str]]:
     source, rows = await _execute_query_candidates(
         ds,
         [
@@ -1640,7 +1685,7 @@ LIMIT 3
         ],
     )
     if not rows:
-      return [], ["scheduler_run_detail"]
+        return [], ["scheduler_run_detail"]
 
     latest = rows[0]
     evidence = [
@@ -1671,7 +1716,9 @@ async def _fetch_table_gather_history(
         return [], {}, missing
 
     latest = rows[0]
-    durations = [int(row.get("gather_seconds") or 0) for row in rows if row.get("gather_seconds") is not None]
+    durations = [
+        int(row.get("gather_seconds") or 0) for row in rows if row.get("gather_seconds") is not None
+    ]
     status = _safe_text(latest.get("status") or latest.get("ret_code"), "UNKNOWN")
     facts = {
         "history_latest_status": status,
@@ -1742,7 +1789,9 @@ LIMIT 5
     }
     evidence = [
         StatsDiagnosisEvidence(label="高 NDV 列数", value=_safe_text(len(rows)), source=source),
-        StatsDiagnosisEvidence(label="缺直方图高 NDV 列", value=_safe_text(histogram_missing), source=source),
+        StatsDiagnosisEvidence(
+            label="缺直方图高 NDV 列", value=_safe_text(histogram_missing), source=source
+        ),
     ]
     return evidence, facts, []
 
@@ -1857,10 +1906,16 @@ def _build_heuristic_result(
         missing_facts.append("row_change_delta")
 
     verdict, reasoning = _detect_verdict(issue)
-    if issue.kind == "failed_table" and int(facts.get("history_max_gather_seconds", "0") or "0") >= 1800:
+    if (
+        issue.kind == "failed_table"
+        and int(facts.get("history_max_gather_seconds", "0") or "0") >= 1800
+    ):
         verdict = "large_table_timeout"
         reasoning = "历史收集持续超过 30 分钟，更像大表收集超时。"
-    if issue.kind in {"stale_stats", "dml_change"} and int(facts.get("column_stats_histogram_missing", "0") or "0") > 0:
+    if (
+        issue.kind in {"stale_stats", "dml_change"}
+        and int(facts.get("column_stats_histogram_missing", "0") or "0") > 0
+    ):
         verdict = "missing_histogram"
         reasoning = "关键高 NDV 列存在缺直方图特征，统计信息质量存在明显缺口。"
 
@@ -1922,7 +1977,9 @@ async def _call_llm_for_diagnosis(
     missing_facts: list[str] | None = None,
     on_delta: Callable[[str], Awaitable[None]] | None = None,
 ) -> StatsDiagnosisResult | None:
-    issue_payload = _normalize_json_value(issue.model_dump() if hasattr(issue, "model_dump") else issue.dict())
+    issue_payload = _normalize_json_value(
+        issue.model_dump() if hasattr(issue, "model_dump") else issue.dict()
+    )
     issue_payload["facts"] = {
         **(issue_payload.get("facts") or {}),
         **_normalize_json_value(extra_facts or {}),
@@ -2001,11 +2058,17 @@ async def _call_llm_for_diagnosis(
         return StatsDiagnosisResult(
             headline=_safe_text(payload.get("headline"), issue.title),
             verdict=_safe_text(payload.get("verdict"), "unknown"),
-            reasoning=_safe_text(payload.get("reasoning"), "LLM 未返回完整推理，已回退到最小说明。"),
+            reasoning=_safe_text(
+                payload.get("reasoning"), "LLM 未返回完整推理，已回退到最小说明。"
+            ),
             evidence=evidence,
             next_actions=actions,
-            missing_facts=[_safe_text(v) for v in (payload.get("missing_facts") or []) if _safe_text(v)],
-            diagnosis_path=[_safe_text(v) for v in (payload.get("diagnosis_path") or []) if _safe_text(v)],
+            missing_facts=[
+                _safe_text(v) for v in (payload.get("missing_facts") or []) if _safe_text(v)
+            ],
+            diagnosis_path=[
+                _safe_text(v) for v in (payload.get("diagnosis_path") or []) if _safe_text(v)
+            ],
             risks=[_safe_text(v) for v in (payload.get("risks") or []) if _safe_text(v)],
         )
     except Exception as exc:
@@ -2016,7 +2079,8 @@ async def _call_llm_for_diagnosis(
 async def _update_task(
     task_id: str,
     *,
-    status: Literal["pending", "running", "ready", "degraded", "needs_clarification", "error"] | None = None,
+    status: Literal["pending", "running", "ready", "degraded", "needs_clarification", "error"]
+    | None = None,
     result: StatsDiagnosisResult | None = None,
 ) -> None:
     async with _DIAG_TASKS_LOCK:
@@ -2036,7 +2100,9 @@ async def _run_diagnosis_task(
     mode: Literal["summary", "deep"],
 ) -> None:
     await _update_task(task_id, status="running")
-    logger.info("stats_diagnosis_task_start task_id=%s mode=%s issue=%s", task_id, mode, issue.issue_id)
+    logger.info(
+        "stats_diagnosis_task_start task_id=%s mode=%s issue=%s", task_id, mode, issue.issue_id
+    )
     try:
         extra_facts: dict[str, Any] = {}
         extra_evidence: list[StatsDiagnosisEvidence] = []
@@ -2055,14 +2121,20 @@ async def _run_diagnosis_task(
         )
         if llm_result is not None:
             llm_result.evidence = _merge_evidence(llm_result.evidence, extra_evidence)
-            llm_result.missing_facts = _merge_missing_facts(llm_result.missing_facts, upstream_missing_facts)
+            llm_result.missing_facts = _merge_missing_facts(
+                llm_result.missing_facts, upstream_missing_facts
+            )
             status: Literal["ready", "degraded", "needs_clarification"] = (
-                "needs_clarification" if llm_result.missing_facts and mode == "deep"
-                else "degraded" if llm_result.missing_facts
+                "needs_clarification"
+                if llm_result.missing_facts and mode == "deep"
+                else "degraded"
+                if llm_result.missing_facts
                 else "ready"
             )
             await _update_task(task_id, status=status, result=llm_result)
-            logger.info("stats_diagnosis_task_success task_id=%s mode=%s status=%s", task_id, mode, status)
+            logger.info(
+                "stats_diagnosis_task_success task_id=%s mode=%s status=%s", task_id, mode, status
+            )
             return
 
         fallback_status, fallback_result = _build_heuristic_result(
@@ -2073,9 +2145,16 @@ async def _run_diagnosis_task(
             upstream_missing_facts=upstream_missing_facts,
         )
         await _update_task(task_id, status=fallback_status, result=fallback_result)
-        logger.info("stats_diagnosis_task_fallback task_id=%s mode=%s status=%s", task_id, mode, fallback_status)
+        logger.info(
+            "stats_diagnosis_task_fallback task_id=%s mode=%s status=%s",
+            task_id,
+            mode,
+            fallback_status,
+        )
     except Exception as exc:
-        logger.exception("stats_diagnosis_task_failed task_id=%s issue=%s error=%s", task_id, issue.issue_id, exc)
+        logger.exception(
+            "stats_diagnosis_task_failed task_id=%s issue=%s error=%s", task_id, issue.issue_id, exc
+        )
         _, fallback_result = _build_heuristic_result(issue, mode)
         fallback_result.reasoning = f"{fallback_result.reasoning} 诊断任务异常：{exc}"
         await _update_task(task_id, status="error", result=fallback_result)
@@ -2091,7 +2170,9 @@ def _build_workbench_cards(
     stale_days: int,
 ) -> list[StatsWorkbenchCard]:
     windows = overview.scheduler_windows
-    windows_healthy = bool(windows) and all(w.enabled and (w.failure_count or 0) == 0 for w in windows)
+    windows_healthy = bool(windows) and all(
+        w.enabled and (w.failure_count or 0) == 0 for w in windows
+    )
     windows_any_issue = any((not w.enabled) or (w.failure_count or 0) > 0 for w in windows)
     window_status: Literal["healthy", "warning", "critical"] = "healthy"
     if windows and windows_any_issue:
@@ -2148,7 +2229,10 @@ def _build_issue_queue(
         windows_by_datasource.setdefault(key, []).append(window)
 
     if windows:
-        for (window_datasource_id, window_cluster_key), scoped_windows in windows_by_datasource.items():
+        for (
+            window_datasource_id,
+            window_cluster_key,
+        ), scoped_windows in windows_by_datasource.items():
             if any((not w.enabled) or (w.failure_count or 0) > 0 for w in scoped_windows):
                 issues.append(
                     StatsIssueItem(
@@ -2162,7 +2246,9 @@ def _build_issue_queue(
                         facts={
                             "window_total": len(scoped_windows),
                             "window_enabled": len([w for w in scoped_windows if w.enabled]),
-                            "window_failed": len([w for w in scoped_windows if (w.failure_count or 0) > 0]),
+                            "window_failed": len(
+                                [w for w in scoped_windows if (w.failure_count or 0) > 0]
+                            ),
                         },
                     )
                 )
@@ -2271,18 +2357,21 @@ async def _build_drawer_detail_response(
 ) -> StatsDrawerDetailResponse:
     facts = issue.facts or {}
     datasource_tenant_name = _datasource_tenant_name(ds)
-    subtitle = " / ".join(
-        [
-            part
-            for part in [
-                ds.cluster_key or None,
-                issue.tenant_name or datasource_tenant_name,
-                issue.database_name,
-                issue.table_name,
+    subtitle = (
+        " / ".join(
+            [
+                part
+                for part in [
+                    ds.cluster_key or None,
+                    issue.tenant_name or datasource_tenant_name,
+                    issue.database_name,
+                    issue.table_name,
+                ]
+                if part
             ]
-            if part
-        ]
-    ) or None
+        )
+        or None
+    )
 
     base_sections = [
         StatsDrawerDetailSection(
@@ -2305,7 +2394,9 @@ async def _build_drawer_detail_response(
     )
     task_context, task_missing = await _fetch_task_history_context(
         ds,
-        task_ids=[str(row.get("task_id")) for row in history_rows_raw if row.get("task_id") is not None],
+        task_ids=[
+            str(row.get("task_id")) for row in history_rows_raw if row.get("task_id") is not None
+        ],
     )
 
     history_rows: list[StatsDrawerHistoryRow] = []
@@ -2315,12 +2406,24 @@ async def _build_drawer_detail_response(
         history_rows.append(
             StatsDrawerHistoryRow(
                 task_id=task_id or None,
-                owner=str(row.get("owner")).strip() if row.get("owner") is not None and str(row.get("owner")).strip() else None,
-                table_name=str(row.get("table_name")).strip() if row.get("table_name") is not None and str(row.get("table_name")).strip() else None,
-                status=str(row.get("status")).strip() if row.get("status") is not None and str(row.get("status")).strip() else None,
-                ret_code=str(row.get("ret_code")).strip() if row.get("ret_code") is not None and str(row.get("ret_code")).strip() else None,
-                start_time=str(row.get("start_time")).strip() if row.get("start_time") is not None and str(row.get("start_time")).strip() else None,
-                end_time=str(row.get("end_time")).strip() if row.get("end_time") is not None and str(row.get("end_time")).strip() else None,
+                owner=str(row.get("owner")).strip()
+                if row.get("owner") is not None and str(row.get("owner")).strip()
+                else None,
+                table_name=str(row.get("table_name")).strip()
+                if row.get("table_name") is not None and str(row.get("table_name")).strip()
+                else None,
+                status=str(row.get("status")).strip()
+                if row.get("status") is not None and str(row.get("status")).strip()
+                else None,
+                ret_code=str(row.get("ret_code")).strip()
+                if row.get("ret_code") is not None and str(row.get("ret_code")).strip()
+                else None,
+                start_time=str(row.get("start_time")).strip()
+                if row.get("start_time") is not None and str(row.get("start_time")).strip()
+                else None,
+                end_time=str(row.get("end_time")).strip()
+                if row.get("end_time") is not None and str(row.get("end_time")).strip()
+                else None,
                 gather_seconds=_int(row, "gather_seconds"),
                 memory_used=_int(row, "memory_used"),
                 trigger_type=_infer_trigger_type(task_row.get("type")),
@@ -2334,7 +2437,12 @@ async def _build_drawer_detail_response(
     latest_history = history_rows[0] if history_rows else None
     # Find the latest FAILED row for error info (ret_code != 0 for SYS, status != SUCCESS for tenant)
     latest_failed = next(
-        (r for r in history_rows if (r.ret_code and str(r.ret_code) not in ("0", "None", "")) or (r.status and r.status != "SUCCESS")),
+        (
+            r
+            for r in history_rows
+            if (r.ret_code and str(r.ret_code) not in ("0", "None", ""))
+            or (r.status and r.status != "SUCCESS")
+        ),
         None,
     )
     latest_error_reason = _safe_text(facts.get("error_reason"), "")
@@ -2348,15 +2456,42 @@ async def _build_drawer_detail_response(
 
     task_fields: list[tuple[str, Any, str | None]] = [
         ("触发方式", latest_history.trigger_type if latest_history else None, history_source),
-        ("开始时间", latest_history.start_time if latest_history else facts.get("task_start_time"), history_source),
-        ("结束时间", latest_history.end_time if latest_history else facts.get("task_end_time"), history_source),
-        ("耗时(秒)", latest_history.gather_seconds if latest_history else facts.get("gather_seconds"), history_source),
-        ("内存使用(bytes)", latest_history.memory_used if latest_history else facts.get("memory_used"), history_source),
+        (
+            "开始时间",
+            latest_history.start_time if latest_history else facts.get("task_start_time"),
+            history_source,
+        ),
+        (
+            "结束时间",
+            latest_history.end_time if latest_history else facts.get("task_end_time"),
+            history_source,
+        ),
+        (
+            "耗时(秒)",
+            latest_history.gather_seconds if latest_history else facts.get("gather_seconds"),
+            history_source,
+        ),
+        (
+            "内存使用(bytes)",
+            latest_history.memory_used if latest_history else facts.get("memory_used"),
+            history_source,
+        ),
     ]
     if latest_history and latest_history.task_table_count is not None:
-        task_fields.append(("任务表数", f"{latest_history.task_table_count} (失败 {latest_history.task_failed_count or 0})", history_source))
+        task_fields.append(
+            (
+                "任务表数",
+                f"{latest_history.task_table_count} (失败 {latest_history.task_failed_count or 0})",
+                history_source,
+            )
+        )
     if latest_props:
-        prop_labels = {"GRANULARITY": "采集粒度", "METHOD_OPT": "采集方法", "DEGREE": "并行度", "ESTIMATE_PERCENT": "采样率"}
+        prop_labels = {
+            "GRANULARITY": "采集粒度",
+            "METHOD_OPT": "采集方法",
+            "DEGREE": "并行度",
+            "ESTIMATE_PERCENT": "采样率",
+        }
         for key, label in prop_labels.items():
             if key in latest_props:
                 task_fields.append((label, latest_props[key], history_source))
@@ -2367,7 +2502,9 @@ async def _build_drawer_detail_response(
         fields=_build_drawer_fields(task_fields),
     )
 
-    failed_status = (latest_failed.status if latest_failed and latest_failed.status else None) or facts.get("status")
+    failed_status = (
+        latest_failed.status if latest_failed and latest_failed.status else None
+    ) or facts.get("status")
     failed_time = latest_failed.start_time if latest_failed else facts.get("task_start_time")
 
     failure_section = StatsDrawerDetailSection(
@@ -2402,7 +2539,11 @@ async def _build_drawer_detail_response(
         fields=_build_drawer_fields([("标签", " / ".join(tags), "risk_candidate")]),
     )
 
-    sections = [section for section in [*base_sections, task_section, failure_section, tag_section] if section.fields]
+    sections = [
+        section
+        for section in [*base_sections, task_section, failure_section, tag_section]
+        if section.fields
+    ]
     missing_facts = _merge_missing_facts(history_missing, task_missing)
 
     chat_context = {
@@ -2445,6 +2586,7 @@ async def _build_drawer_detail_response(
 # Endpoints
 # ---------------------------------------------------------------------------
 
+
 @router.get("/workbench", response_model=StatsWorkbenchResponse)
 async def get_stats_workbench(
     datasource_id: int | None = Query(None, ge=1),
@@ -2461,8 +2603,12 @@ async def get_stats_workbench(
             cluster_key=cluster_key or "all",
             overview=StatsOverviewResponse(
                 task_summary=StatsTaskSummary(
-                    total_tasks=0, success_tasks=0, failed_tasks=0,
-                    failed_task_ratio_pct=0.0, total_tables_planned=0, total_tables_failed=0,
+                    total_tasks=0,
+                    success_tasks=0,
+                    failed_tasks=0,
+                    failed_task_ratio_pct=0.0,
+                    total_tables_planned=0,
+                    total_tables_failed=0,
                 ),
                 scheduler_windows=[],
             ),
@@ -2472,11 +2618,17 @@ async def get_stats_workbench(
             tenant_config_checks=[],
         )
 
-    effective_cluster = _safe_text(cluster_key, "") if cluster_key else _safe_text(targets[0].cluster_key, "")
+    effective_cluster = (
+        _safe_text(cluster_key, "") if cluster_key else _safe_text(targets[0].cluster_key, "")
+    )
 
     logger.info(
         "stats_workbench_start datasource_id=%s cluster_key=%s targets=%d lookback=%s stale=%s",
-        datasource_id, cluster_key, len(targets), lookback_days, stale_days,
+        datasource_id,
+        cluster_key,
+        len(targets),
+        lookback_days,
+        stale_days,
     )
 
     per_target = await asyncio.gather(
@@ -2512,7 +2664,9 @@ async def get_stats_workbench(
         merged_stale_items.extend(stale.items)
         merged_dml_items.extend(dml.items)
 
-    failed_task_ratio_pct = round((100 * merged_failed_tasks / merged_total_tasks), 2) if merged_total_tasks else 0.0
+    failed_task_ratio_pct = (
+        round((100 * merged_failed_tasks / merged_total_tasks), 2) if merged_total_tasks else 0.0
+    )
     overview = StatsOverviewResponse(
         task_summary=StatsTaskSummary(
             total_tasks=merged_total_tasks,
@@ -2548,13 +2702,19 @@ async def get_stats_workbench(
     if cluster_key:
         cluster_keys_to_scan = [cluster_key]
     elif datasource_id:
-        cluster_keys_to_scan = list({_safe_text(ds.cluster_key, "") for ds in targets if ds.cluster_key})
+        cluster_keys_to_scan = list(
+            {_safe_text(ds.cluster_key, "") for ds in targets if ds.cluster_key}
+        )
     else:
-        cluster_keys_to_scan = list({_safe_text(ds.cluster_key, "") for ds in targets if ds.cluster_key})
+        cluster_keys_to_scan = list(
+            {_safe_text(ds.cluster_key, "") for ds in targets if ds.cluster_key}
+        )
     tenant_config_checks: list[StatsTenantConfigCheck] = []
     for ck in cluster_keys_to_scan:
         try:
-            tenant_config_checks.extend(await _check_tenant_configs(db, ck, lookback_days, datasource_id=datasource_id))
+            tenant_config_checks.extend(
+                await _check_tenant_configs(db, ck, lookback_days, datasource_id=datasource_id)
+            )
         except Exception as exc:
             logger.warning("stats_workbench tenant_config_checks failed cluster=%s: %s", ck, exc)
 
@@ -2570,7 +2730,9 @@ async def get_stats_workbench(
 
 
 @router.post("/risk-candidates/collect", response_model=StatsRiskCollectResponse)
-async def collect_stats_risk_candidates(payload: StatsRiskCollectRequest, db: Session = Depends(get_db)):
+async def collect_stats_risk_candidates(
+    payload: StatsRiskCollectRequest, db: Session = Depends(get_db)
+):
     _get_datasource(db, payload.datasource_id)
     schedule = _ensure_stats_analysis_schedule(db)
     schedule.input_payload = {
@@ -2589,6 +2751,7 @@ async def collect_stats_risk_candidates(payload: StatsRiskCollectRequest, db: Se
         run_id = await worker.run_now(schedule.id, trace_id=trace_id)
     else:
         from sqlalchemy.orm import sessionmaker
+
         from app.services.function.runtime import FunctionRuntimeService
         from app.services.scheduler.worker import SchedulerWorker
 
@@ -2718,7 +2881,10 @@ async def list_stats_risk_collection_runs(
         batch_items = payload_obj.get("items")
         if not isinstance(batch_items, list):
             continue
-        if not any(isinstance(item, dict) and item.get("datasource_id") == datasource_id for item in batch_items):
+        if not any(
+            isinstance(item, dict) and item.get("datasource_id") == datasource_id
+            for item in batch_items
+        ):
             continue
         items.append(
             StatsRiskCollectionRunItem(
@@ -2794,7 +2960,9 @@ async def get_stats_drawer_detail(
     return response
 
 
-@router.post("/risk-candidates/{candidate_id}/analysis", response_model=StatsRiskAnalyzeSubmitResponse)
+@router.post(
+    "/risk-candidates/{candidate_id}/analysis", response_model=StatsRiskAnalyzeSubmitResponse
+)
 async def submit_stats_risk_analysis(
     candidate_id: int,
     datasource_id: int = Query(..., ge=1),
@@ -2831,7 +2999,12 @@ async def submit_stats_risk_analysis(
         db.add(run)
         db.commit()
     status = run.status
-    logger.info("stats_risk_analysis_submit run_id=%s datasource_id=%s candidate_id=%s", run_id, datasource_id, candidate_id)
+    logger.info(
+        "stats_risk_analysis_submit run_id=%s datasource_id=%s candidate_id=%s",
+        run_id,
+        datasource_id,
+        candidate_id,
+    )
     return StatsRiskAnalyzeSubmitResponse(run_id=run_id, status=status)
 
 
@@ -2875,15 +3048,27 @@ async def stream_stats_risk_analysis(
             )
             db.add(run)
             db.commit()
-            yield _to_sse({"type": "phase", "data": {"phase": "submitted", "run_id": run_id, "status": "pending"}})
+            yield _to_sse(
+                {
+                    "type": "phase",
+                    "data": {"phase": "submitted", "run_id": run_id, "status": "pending"},
+                }
+            )
 
             run.status = "running"
             run.started_at = datetime.utcnow()
             db.commit()
-            yield _to_sse({"type": "phase", "data": {"phase": "collecting_context", "run_id": run_id, "status": "running"}})
+            yield _to_sse(
+                {
+                    "type": "phase",
+                    "data": {"phase": "collecting_context", "run_id": run_id, "status": "running"},
+                }
+            )
 
             issue = _build_issue_from_candidate(candidate)
-            extra_facts, extra_evidence, upstream_missing_facts = await _collect_deep_issue_context(datasource_id, issue)
+            extra_facts, extra_evidence, upstream_missing_facts = await _collect_deep_issue_context(
+                datasource_id, issue
+            )
             yield _to_sse(
                 {
                     "type": "phase",
@@ -2916,7 +3101,7 @@ async def stream_stats_risk_analysis(
                     break
                 try:
                     chunk = await asyncio.wait_for(stream_queue.get(), timeout=0.2)
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     continue
                 if chunk:
                     yield _to_sse({"type": "delta", "data": {"run_id": run_id, "chunk": chunk}})
@@ -2932,7 +3117,9 @@ async def stream_stats_risk_analysis(
                 )
             else:
                 llm_result.evidence = _merge_evidence(llm_result.evidence, extra_evidence)
-                llm_result.missing_facts = _merge_missing_facts(llm_result.missing_facts, upstream_missing_facts)
+                llm_result.missing_facts = _merge_missing_facts(
+                    llm_result.missing_facts, upstream_missing_facts
+                )
                 status = "needs_clarification" if llm_result.missing_facts else "ready"
                 result = llm_result
 
@@ -2983,7 +3170,11 @@ async def stream_stats_risk_analysis(
 
 @router.get("/risk-candidates/analysis/{run_id}", response_model=StatsRiskAnalyzeStatusResponse)
 async def get_stats_risk_analysis(run_id: str, db: Session = Depends(get_db)):
-    run = db.query(models.StatsRiskAnalysisRun).filter(models.StatsRiskAnalysisRun.run_id == run_id).first()
+    run = (
+        db.query(models.StatsRiskAnalysisRun)
+        .filter(models.StatsRiskAnalysisRun.run_id == run_id)
+        .first()
+    )
     if run is None:
         raise HTTPException(status_code=404, detail="Risk analysis run not found")
     payload = run.result_payload or {}
@@ -3040,14 +3231,22 @@ async def stream_stats_diagnosis(payload: StatsDiagnosisRequest):
             yield _to_sse(
                 {
                     "type": "phase",
-                    "data": {"phase": "collecting_context", "task_id": task_id, "status": "running"},
+                    "data": {
+                        "phase": "collecting_context",
+                        "task_id": task_id,
+                        "status": "running",
+                    },
                 }
             )
             extra_facts: dict[str, Any] = {}
             extra_evidence: list[StatsDiagnosisEvidence] = []
             upstream_missing_facts: list[str] = []
             if payload.mode == "deep":
-                extra_facts, extra_evidence, upstream_missing_facts = await _collect_deep_issue_context(
+                (
+                    extra_facts,
+                    extra_evidence,
+                    upstream_missing_facts,
+                ) = await _collect_deep_issue_context(
                     payload.datasource_id,
                     payload.issue,
                 )
@@ -3077,7 +3276,7 @@ async def stream_stats_diagnosis(payload: StatsDiagnosisRequest):
                     break
                 try:
                     chunk = await asyncio.wait_for(queue.get(), timeout=0.2)
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     continue
                 if chunk:
                     yield _to_sse({"type": "delta", "data": {"task_id": task_id, "chunk": chunk}})
@@ -3085,18 +3284,25 @@ async def stream_stats_diagnosis(payload: StatsDiagnosisRequest):
             llm_result = await llm_task
             if llm_result is not None:
                 llm_result.evidence = _merge_evidence(llm_result.evidence, extra_evidence)
-                llm_result.missing_facts = _merge_missing_facts(llm_result.missing_facts, upstream_missing_facts)
+                llm_result.missing_facts = _merge_missing_facts(
+                    llm_result.missing_facts, upstream_missing_facts
+                )
                 status: Literal["ready", "degraded", "needs_clarification"] = (
                     "needs_clarification"
                     if llm_result.missing_facts and payload.mode == "deep"
-                    else "degraded" if llm_result.missing_facts
+                    else "degraded"
+                    if llm_result.missing_facts
                     else "ready"
                 )
                 await _update_task(task_id, status=status, result=llm_result)
                 yield _to_sse(
                     {
                         "type": "done",
-                        "data": {"task_id": task_id, "status": status, "result": llm_result.model_dump()},
+                        "data": {
+                            "task_id": task_id,
+                            "status": status,
+                            "result": llm_result.model_dump(),
+                        },
                     }
                 )
                 return
@@ -3112,7 +3318,11 @@ async def stream_stats_diagnosis(payload: StatsDiagnosisRequest):
             yield _to_sse(
                 {
                     "type": "done",
-                    "data": {"task_id": task_id, "status": fallback_status, "result": fallback_result.model_dump()},
+                    "data": {
+                        "task_id": task_id,
+                        "status": fallback_status,
+                        "result": fallback_result.model_dump(),
+                    },
                 }
             )
         except Exception as exc:
@@ -3198,7 +3408,7 @@ WHERE type = 'AUTO GATHER'
     )
 
     # --- scheduler windows ---
-    sql_windows = f"""
+    sql_windows = """
 SELECT
   job_name,
   enabled,
@@ -3403,7 +3613,9 @@ LIMIT 200
 
     items = [
         StatsDmlChangeItem(
-            tenant_name=datasource_tenant_name or _str(r, "tenant_name") or _str(r, "database_name"),
+            tenant_name=datasource_tenant_name
+            or _str(r, "tenant_name")
+            or _str(r, "database_name"),
             database_name=_str(r, "database_name"),
             table_name=_str(r, "table_name"),
             row_change_delta=_int(r, "row_change_delta"),
@@ -3518,21 +3730,23 @@ GROUP BY DATE(task_opt.start_time)
             tr = table_rows.get(dt, {})
             total_tables = _int(tr, "total_tables") or 0
             failed_tables = _int(tr, "failed_tables") or 0
-            all_items.append(StatsCollectionDaySummary(
-                date=dt,
-                task_type=_str(r, "task_types") or "UNKNOWN",
-                total_tasks=_int(r, "total_tasks") or 0,
-                success_tasks=_int(r, "success_tasks") or 0,
-                failed_tasks=_int(r, "failed_tasks") or 0,
-                total_tables=total_tables,
-                success_tables=max(total_tables - failed_tables, 0),
-                failed_tables=failed_tables,
-                avg_duration_min=_float(r, "avg_duration_min") or 0.0,
-                max_duration_min=_float(r, "max_duration_min") or 0.0,
-                cluster_key=ds_cluster if multi_tenant else None,
-                tenant_name=ds_tenant if multi_tenant else None,
-                datasource_id=ds.id,
-            ))
+            all_items.append(
+                StatsCollectionDaySummary(
+                    date=dt,
+                    task_type=_str(r, "task_types") or "UNKNOWN",
+                    total_tasks=_int(r, "total_tasks") or 0,
+                    success_tasks=_int(r, "success_tasks") or 0,
+                    failed_tasks=_int(r, "failed_tasks") or 0,
+                    total_tables=total_tables,
+                    success_tables=max(total_tables - failed_tables, 0),
+                    failed_tables=failed_tables,
+                    avg_duration_min=_float(r, "avg_duration_min") or 0.0,
+                    max_duration_min=_float(r, "max_duration_min") or 0.0,
+                    cluster_key=ds_cluster if multi_tenant else None,
+                    tenant_name=ds_tenant if multi_tenant else None,
+                    datasource_id=ds.id,
+                )
+            )
     all_items.sort(key=lambda x: x.date, reverse=True)
     return StatsCollectionDailySummaryResponse(datasource_id=datasource_id, items=all_items)
 
@@ -3588,19 +3802,21 @@ LIMIT 200
             logger.warning("daily failed tables query failed ds=%s date=%s: %s", ds.id, date, exc)
             continue
         for r in rows:
-            all_items.append(StatsDailyFailedTableItem(
-                owner=ds_tenant or _str(r, "owner"),
-                table_name=_str(r, "table_name"),
-                failure_count=_int(r, "failure_count") or 1,
-                latest_status=_str(r, "latest_status"),
-                latest_error=_str(r, "latest_error"),
-                latest_gather_seconds=_int(r, "latest_gather_seconds"),
-                latest_task_start_time=_str(r, "latest_task_start_time"),
-                cluster_key=ds_cluster if multi_tenant else None,
-                tenant_name=ds_tenant if multi_tenant else None,
-                datasource_id=ds.id,
-            ))
-    all_items.sort(key=lambda x: (x.failure_count or 0), reverse=True)
+            all_items.append(
+                StatsDailyFailedTableItem(
+                    owner=ds_tenant or _str(r, "owner"),
+                    table_name=_str(r, "table_name"),
+                    failure_count=_int(r, "failure_count") or 1,
+                    latest_status=_str(r, "latest_status"),
+                    latest_error=_str(r, "latest_error"),
+                    latest_gather_seconds=_int(r, "latest_gather_seconds"),
+                    latest_task_start_time=_str(r, "latest_task_start_time"),
+                    cluster_key=ds_cluster if multi_tenant else None,
+                    tenant_name=ds_tenant if multi_tenant else None,
+                    datasource_id=ds.id,
+                )
+            )
+    all_items.sort(key=lambda x: x.failure_count or 0, reverse=True)
     return StatsDailyFailedTablesResponse(datasource_id=datasource_id, date=date, items=all_items)
 
 
@@ -3618,7 +3834,14 @@ async def get_daily_tasks(
     """某天的采集任务列表。支持分页、筛选、多租户聚合。"""
     targets = _resolve_datasources(db, datasource_id, cluster_key)
     if not targets:
-        return StatsDailyTasksResponse(datasource_id=datasource_id, date=date, items=[], total=0, page=page, page_size=page_size)
+        return StatsDailyTasksResponse(
+            datasource_id=datasource_id,
+            date=date,
+            items=[],
+            total=0,
+            page=page,
+            page_size=page_size,
+        )
     pool = get_db_pool()
     multi_tenant = len(targets) > 1
 
@@ -3657,26 +3880,32 @@ LIMIT 500
             logger.warning("daily tasks query failed ds=%s date=%s: %s", ds.id, date, exc)
             continue
         for r in rows:
-            all_items.append(StatsDailyTaskItem(
-                task_id=_str(r, "task_id"),
-                task_type=_str(r, "task_type"),
-                status=_str(r, "status"),
-                start_time=_str(r, "start_time"),
-                end_time=_str(r, "end_time"),
-                duration_seconds=_int(r, "duration_seconds"),
-                table_count=_int(r, "table_count"),
-                failed_count=_int(r, "failed_count"),
-                cluster_key=ds_cluster if multi_tenant else None,
-                tenant_name=ds_tenant if multi_tenant else None,
-                datasource_id=ds.id,
-            ))
+            all_items.append(
+                StatsDailyTaskItem(
+                    task_id=_str(r, "task_id"),
+                    task_type=_str(r, "task_type"),
+                    status=_str(r, "status"),
+                    start_time=_str(r, "start_time"),
+                    end_time=_str(r, "end_time"),
+                    duration_seconds=_int(r, "duration_seconds"),
+                    table_count=_int(r, "table_count"),
+                    failed_count=_int(r, "failed_count"),
+                    cluster_key=ds_cluster if multi_tenant else None,
+                    tenant_name=ds_tenant if multi_tenant else None,
+                    datasource_id=ds.id,
+                )
+            )
     all_items.sort(key=lambda x: x.start_time or "")
     total = len(all_items)
     offset = (page - 1) * page_size
     page_items = all_items[offset : offset + page_size]
     return StatsDailyTasksResponse(
-        datasource_id=datasource_id, date=date, items=page_items,
-        total=total, page=page, page_size=page_size,
+        datasource_id=datasource_id,
+        date=date,
+        items=page_items,
+        total=total,
+        page=page,
+        page_size=page_size,
     )
 
 

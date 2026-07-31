@@ -105,8 +105,14 @@ class CollectorRuntimeService:
             failures = 0
             for source_ds in source_datasources:
                 try:
-                    logger.info("collector using datasource id=%s role=%s", source_ds.id, source_ds.tenant_role or "user")
-                    item_result = await self._collect_for_datasource(source_ds, target_ds, mode=mode)
+                    logger.info(
+                        "collector using datasource id=%s role=%s",
+                        source_ds.id,
+                        source_ds.tenant_role or "user",
+                    )
+                    item_result = await self._collect_for_datasource(
+                        source_ds, target_ds, mode=mode
+                    )
                     items.append(
                         {
                             "datasource_id": source_ds.id,
@@ -132,8 +138,16 @@ class CollectorRuntimeService:
                 "failed": failures,
                 "items": items,
             }
-            status = "success" if failures < len(source_datasources) else ("failed" if source_datasources else "success")
-            error_message = None if status == "success" else f"collector {mode} batch failed for all datasources"
+            status = (
+                "success"
+                if failures < len(source_datasources)
+                else ("failed" if source_datasources else "success")
+            )
+            error_message = (
+                None
+                if status == "success"
+                else f"collector {mode} batch failed for all datasources"
+            )
             summary = json.dumps(output, ensure_ascii=False, default=str)[:1000]
             return ScheduleRuntimeResult(
                 run_id=run_id,

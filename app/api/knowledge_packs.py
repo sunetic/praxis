@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-from typing import List
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
@@ -35,13 +34,11 @@ def _find_pack(pack_id: str) -> dict:
     raise HTTPException(status_code=404, detail=f"Knowledge pack '{pack_id}' not found in manifest")
 
 
-@router.get("", response_model=List[schemas.KnowledgePackResponse])
+@router.get("", response_model=list[schemas.KnowledgePackResponse])
 def list_packs(db: Session = Depends(get_db)):
     manifest = _load_manifest()
     installed_kbs = (
-        db.query(models.KnowledgeBase)
-        .filter(models.KnowledgeBase.source == "pack")
-        .all()
+        db.query(models.KnowledgeBase).filter(models.KnowledgeBase.source == "pack").all()
     )
     installed_map = {kb.pack_id: kb for kb in installed_kbs if kb.pack_id}
 
@@ -82,7 +79,11 @@ def list_packs(db: Session = Depends(get_db)):
     return results
 
 
-@router.post("/{pack_id}/install", response_model=schemas.KnowledgePackInstallStatus, status_code=status.HTTP_202_ACCEPTED)
+@router.post(
+    "/{pack_id}/install",
+    response_model=schemas.KnowledgePackInstallStatus,
+    status_code=status.HTTP_202_ACCEPTED,
+)
 async def install_pack(pack_id: str, db: Session = Depends(get_db)):
     pack = _find_pack(pack_id)
 
@@ -92,7 +93,9 @@ async def install_pack(pack_id: str, db: Session = Depends(get_db)):
         .first()
     )
     if existing:
-        raise HTTPException(status_code=409, detail=f"Pack '{pack_id}' is already installed (kb_id={existing.id})")
+        raise HTTPException(
+            status_code=409, detail=f"Pack '{pack_id}' is already installed (kb_id={existing.id})"
+        )
 
     current = progress.get(pack_id)
     if current and current["status"] == "downloading":
@@ -137,7 +140,9 @@ def get_pack_status(pack_id: str, db: Session = Depends(get_db)):
     )
     if existing:
         return schemas.KnowledgePackInstallStatus(
-            pack_id=pack_id, status="installed", kb_id=existing.id,
+            pack_id=pack_id,
+            status="installed",
+            kb_id=existing.id,
         )
 
     return schemas.KnowledgePackInstallStatus(pack_id=pack_id, status="available")

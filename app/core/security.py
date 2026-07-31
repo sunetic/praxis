@@ -18,6 +18,7 @@ def get_datasource_encryption_key() -> bytes:
         return _DERIVED_KEY
 
     from app.core.config import get_settings
+
     settings = get_settings()
 
     explicit = settings.datasource_encryption_key.strip()
@@ -28,6 +29,7 @@ def get_datasource_encryption_key() -> bytes:
 
     if settings.secret_key == "dev-secret-key":
         import logging
+
         logging.getLogger("app.core.security").warning(
             "secret_key is the default dev value; datasource passwords are encrypted with a weak key. "
             "Set SECRET_KEY or DATASOURCE_ENCRYPTION_KEY in .env for production."

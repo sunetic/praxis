@@ -1,5 +1,5 @@
-from app.services.chat.stream_helpers import _extract_scene_agent_payload
 from app.services.chat.scene_agents import SceneAgentRegistry
+from app.services.chat.stream_helpers import _extract_scene_agent_payload
 
 
 def test_extract_scene_agent_payload_prefers_scene_agent() -> None:

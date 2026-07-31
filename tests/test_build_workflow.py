@@ -4,13 +4,13 @@ refinement, implementation plan, implementation, self-test.
 Covers: CodingEngineApplyResult.result_status, _build_prompt workflow
 content, and ExternalCliAdapter result_status parsing.
 """
-from pathlib import Path
+
 import subprocess
+from pathlib import Path
 
 import pytest
 
 from app.services.platform.coding_engine import CodingEngineApplyResult
-
 
 # ── CodingEngineApplyResult.result_status ──
 
@@ -108,6 +108,7 @@ def test_build_prompt_omits_allowed_files_when_empty():
 
 def test_parse_cli_json_extracts_result_status():
     import json
+
     from app.services.external_cli_adapter import _parse_cli_json
 
     raw = json.dumps({"result_status": "too_complex", "result": "Split this"})
@@ -118,6 +119,7 @@ def test_parse_cli_json_extracts_result_status():
 
 def test_parse_cli_json_handles_missing_result_status():
     import json
+
     from app.services.external_cli_adapter import _parse_cli_json
 
     raw = json.dumps({"result": "Function built successfully"})
@@ -150,9 +152,10 @@ def test_parse_cli_json_extracts_last_object_after_progress_and_ansi():
 def test_summarize_engine_output_line_filters_prompt_echo():
     from app.services.external_cli_adapter import _summarize_engine_output_line
 
-    assert _summarize_engine_output_line(
-        "Follow this workflow strictly: (1) COMPLEXITY ASSESSMENT"
-    ) is None
+    assert (
+        _summarize_engine_output_line("Follow this workflow strictly: (1) COMPLEXITY ASSESSMENT")
+        is None
+    )
 
 
 def test_summarize_engine_output_line_extracts_structured_message():
@@ -169,7 +172,9 @@ def test_summarize_engine_output_line_normalizes_command_output():
     assert summary == "执行命令: pytest tests/test_build_workflow.py"
 
 
-def test_external_cli_timeout_reports_last_engine_summary(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+def test_external_cli_timeout_reports_last_engine_summary(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
     from app.services.external_cli_adapter import ExternalCliAdapter
 
     adapter = ExternalCliAdapter(command="cfuse", context_writer=None, timeout_seconds=30)
@@ -249,5 +254,3 @@ def test_function_context_writer_writes_to_workspace(tmp_path: Path):
 
 
 # ── PageContextWriter ──
-
-

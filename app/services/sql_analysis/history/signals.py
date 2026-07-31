@@ -58,7 +58,10 @@ def build_monitor_signals(
                 "evidence": f"avg_elapsed_time_us={execution.get('avg_elapsed_time_us')}",
             }
         )
-    if category == schemas.SqlMonitorCategory.REGRESSED_SQL or "regressed_sql" in matched_categories:
+    if (
+        category == schemas.SqlMonitorCategory.REGRESSED_SQL
+        or "regressed_sql" in matched_categories
+    ):
         signals.append(
             {
                 "key": "regressed_sql",

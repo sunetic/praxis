@@ -51,8 +51,7 @@ class FunctionContextWriter:
 
         sections.append("# Function Build Context\n")
         sections.append(
-            "You are building a Praxis Function.\n"
-            "Follow the rules and contract below strictly.\n"
+            "You are building a Praxis Function.\nFollow the rules and contract below strictly.\n"
         )
 
         # ── Runtime Contract ──
@@ -124,7 +123,11 @@ class FunctionContextWriter:
                 sections.append(f"Default datasource_id: `{datasource_id}`\n")
             tables = datasource_schema.get("tables", {})
             for table_name, columns in tables.items():
-                col_list = ", ".join(str(c) for c in columns) if isinstance(columns, list) else str(columns)
+                col_list = (
+                    ", ".join(str(c) for c in columns)
+                    if isinstance(columns, list)
+                    else str(columns)
+                )
                 sections.append(f"- **{table_name}**: {col_list}")
             sections.append("")
 

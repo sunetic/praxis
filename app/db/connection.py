@@ -8,15 +8,15 @@ connection pooling, and query execution.
 import asyncio
 import inspect
 import re
-from typing import Any, Optional, Union
+from typing import Any
+
 import aiomysql
-from aiomysql import Pool
 import asyncpg
 from opentelemetry import trace
 
 from app.models import models
 
-PoolType = Union[aiomysql.Pool, asyncpg.Pool]
+PoolType = aiomysql.Pool | asyncpg.Pool
 
 tracer = trace.get_tracer("app.db.connection")
 
@@ -24,10 +24,24 @@ tracer = trace.get_tracer("app.db.connection")
 def _extract_db_operation(sql: str) -> str:
     stripped = sql.strip().lstrip("(")
     first_word = stripped.split(None, 1)[0].upper() if stripped else "UNKNOWN"
-    return first_word if first_word in {
-        "SELECT", "INSERT", "UPDATE", "DELETE", "EXPLAIN",
-        "CREATE", "ALTER", "DROP", "SHOW", "SET", "USE",
-    } else "OTHER"
+    return (
+        first_word
+        if first_word
+        in {
+            "SELECT",
+            "INSERT",
+            "UPDATE",
+            "DELETE",
+            "EXPLAIN",
+            "CREATE",
+            "ALTER",
+            "DROP",
+            "SHOW",
+            "SET",
+            "USE",
+        }
+        else "OTHER"
+    )
 
 
 class DBConnectionPool:
@@ -166,7 +180,9 @@ class DBConnectionPool:
 
     @classmethod
     def _decode_latin1_row(cls, row: dict) -> dict:
-        return {cls._reencode_latin1_value(k): cls._reencode_latin1_value(v) for k, v in row.items()}
+        return {
+            cls._reencode_latin1_value(k): cls._reencode_latin1_value(v) for k, v in row.items()
+        }
 
     async def _execute_binary_safe(
         self,
@@ -176,7 +192,7 @@ class DBConnectionPool:
         password: str,
         database: str,
         sql: str,
-        params: Optional[list],
+        params: list | None,
     ) -> dict[str, Any]:
         """Re-execute a query with use_unicode=False to handle invalid UTF-8 data."""
         conn = await aiomysql.connect(
@@ -196,10 +212,11 @@ class DBConnectionPool:
                 else:
                     await cursor.execute(sql, params)
                 rows = list(await cursor.fetchall())
-                columns = [
-                    self._reencode_latin1_value(c[0])
-                    for c in cursor.description
-                ] if cursor.description else []
+                columns = (
+                    [self._reencode_latin1_value(c[0]) for c in cursor.description]
+                    if cursor.description
+                    else []
+                )
                 decoded_rows = [self._decode_latin1_row(row) for row in rows]
                 return {"rows": decoded_rows, "columns": columns}
         finally:
@@ -222,7 +239,7 @@ class DBConnectionPool:
         self,
         pool: asyncpg.Pool,
         sql: str,
-        params: Optional[list],
+        params: list | None,
         span: Any,
     ) -> dict[str, Any]:
         """Execute a query using asyncpg."""
@@ -251,7 +268,7 @@ class DBConnectionPool:
         datasource: models.DataSource,
         sql: str,
         role: str = "user",
-        params: Optional[list] = None,
+        params: list | None = None,
     ) -> dict[str, Any]:
         """
         Execute a SQL query.
@@ -303,20 +320,31 @@ class DBConnectionPool:
                                 else:
                                     await cursor.execute(sql, params)
                                 rows = await cursor.fetchall()
-                                columns = [
-                                    self._safe_decode(c[0])
-                                    for c in cursor.description
-                                ] if cursor.description else []
+                                columns = (
+                                    [self._safe_decode(c[0]) for c in cursor.description]
+                                    if cursor.description
+                                    else []
+                                )
                             except UnicodeDecodeError:
                                 span.add_event("unicode_decode_fallback")
                                 fallback = await self._execute_binary_safe(
-                                    host, port, user, password, database, sql, params,
+                                    host,
+                                    port,
+                                    user,
+                                    password,
+                                    database,
+                                    sql,
+                                    params,
                                 )
                                 rows = fallback["rows"]
                                 columns = fallback["columns"]
                             decoded_rows = [self._decode_row(row) for row in rows]
                             cursor_rowcount = getattr(cursor, "rowcount", None)
-                            row_count = int(cursor_rowcount) if isinstance(cursor_rowcount, int) and cursor_rowcount >= 0 else len(decoded_rows)
+                            row_count = (
+                                int(cursor_rowcount)
+                                if isinstance(cursor_rowcount, int) and cursor_rowcount >= 0
+                                else len(decoded_rows)
+                            )
 
                             span.set_attribute("db.row_count", row_count)
                             return {
@@ -361,26 +389,43 @@ class DBConnectionPool:
             ):
                 if db_type == "postgresql":
                     conn = await asyncpg.connect(
-                        host=host, port=port, user=user, password=password,
+                        host=host,
+                        port=port,
+                        user=user,
+                        password=password,
                         database=database,
                     )
                     try:
                         rows = await conn.fetch(explain_sql)
                         columns = list(rows[0].keys()) if rows else []
-                        return {"columns": columns, "rows": [dict(r) for r in rows], "row_count": len(rows)}
+                        return {
+                            "columns": columns,
+                            "rows": [dict(r) for r in rows],
+                            "row_count": len(rows),
+                        }
                     finally:
                         await conn.close()
                 else:
                     conn = await aiomysql.connect(
-                        host=host, port=port, user=user, password=password,
-                        db=database, autocommit=True,
+                        host=host,
+                        port=port,
+                        user=user,
+                        password=password,
+                        db=database,
+                        autocommit=True,
                     )
                     try:
                         async with conn.cursor(aiomysql.DictCursor) as cursor:
                             await cursor.execute(explain_sql)
                             rows = list(await cursor.fetchall())
-                            columns = [c[0] for c in cursor.description] if cursor.description else []
-                            return {"columns": columns, "rows": [self._decode_row(r) for r in rows], "row_count": len(rows)}
+                            columns = (
+                                [c[0] for c in cursor.description] if cursor.description else []
+                            )
+                            return {
+                                "columns": columns,
+                                "rows": [self._decode_row(r) for r in rows],
+                                "row_count": len(rows),
+                            }
                     finally:
                         conn.close()
         with tracer.start_as_current_span(

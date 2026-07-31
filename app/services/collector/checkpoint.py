@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from app.db.connection import DBConnectionPool
 from app.models.models import DataSource
@@ -38,7 +38,7 @@ async def update(
     status: str = "idle",
     error_msg: str | None = None,
 ) -> None:
-    now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+    now = datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
     parts = ["status = %s", "updated_at = %s"]
     params: list = [status, now]
     if last_value is not None:

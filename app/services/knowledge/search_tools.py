@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import json
 import re
 import subprocess
@@ -66,7 +65,7 @@ def find_kb_by_db_type(db_type: str) -> int | None:
 
 def _extract_frontmatter_title(path: Path) -> str:
     try:
-        with open(path, "r", encoding="utf-8", errors="replace") as f:
+        with open(path, encoding="utf-8", errors="replace") as f:
             in_frontmatter = False
             for line in f:
                 stripped = line.strip()
@@ -84,6 +83,7 @@ def _extract_frontmatter_title(path: Path) -> str:
 
 # ── kb_discover ──────────────────────────────────────────────────────────
 
+
 def discover(kb_id: int, query: str, max_results: int = 20) -> list[dict[str, Any]]:
     root = _resolve_kb_root(kb_id)
     keywords = [w.lower() for w in re.split(r"[\s,|]+", query) if w.strip()]
@@ -99,12 +99,14 @@ def discover(kb_id: int, query: str, max_results: int = 20) -> list[dict[str, An
         searchable = f"{rel} {title}".lower()
         score = sum(1 for kw in keywords if kw in searchable)
         if score > 0:
-            results.append({
-                "path": rel,
-                "title": title or md_path.stem,
-                "size_bytes": md_path.stat().st_size,
-                "_score": score,
-            })
+            results.append(
+                {
+                    "path": rel,
+                    "title": title or md_path.stem,
+                    "size_bytes": md_path.stat().st_size,
+                    "_score": score,
+                }
+            )
 
     results.sort(key=lambda x: (-x["_score"], x["path"]))
     for item in results:
@@ -113,6 +115,7 @@ def discover(kb_id: int, query: str, max_results: int = 20) -> list[dict[str, An
 
 
 # ── kb_search ────────────────────────────────────────────────────────────
+
 
 def search(
     kb_id: int,
@@ -158,7 +161,10 @@ def search(
         rg_args = _fallback_grep_args(query, root, paths, context_lines, case_sensitive)
         try:
             proc = subprocess.run(
-                rg_args, capture_output=True, text=True, timeout=_RG_TIMEOUT,
+                rg_args,
+                capture_output=True,
+                text=True,
+                timeout=_RG_TIMEOUT,
             )
         except (subprocess.TimeoutExpired, FileNotFoundError):
             return []
@@ -188,7 +194,9 @@ def _fallback_grep_args(
 
 
 def _parse_rg_json_output(
-    stdout: str, root: Path, max_results: int,
+    stdout: str,
+    root: Path,
+    max_results: int,
 ) -> list[dict[str, Any]]:
     import json as _json
 
@@ -218,7 +226,11 @@ def _parse_rg_json_output(
                 rel = abs_path
             line_number = data.get("line_number", 0)
             lines = data.get("lines", {})
-            match_text = lines.get("text", "").rstrip("\n") if isinstance(lines, dict) else str(lines).rstrip("\n")
+            match_text = (
+                lines.get("text", "").rstrip("\n")
+                if isinstance(lines, dict)
+                else str(lines).rstrip("\n")
+            )
 
             current_match = {
                 "file": rel,
@@ -230,7 +242,11 @@ def _parse_rg_json_output(
         elif msg_type == "context":
             data = obj.get("data", {})
             lines = data.get("lines", {})
-            ctx_text = lines.get("text", "").rstrip("\n") if isinstance(lines, dict) else str(lines).rstrip("\n")
+            ctx_text = (
+                lines.get("text", "").rstrip("\n")
+                if isinstance(lines, dict)
+                else str(lines).rstrip("\n")
+            )
             current_context_lines.append(ctx_text)
 
     if current_match and len(results) < max_results:
@@ -242,8 +258,12 @@ def _parse_rg_json_output(
 
 # ── kb_read ──────────────────────────────────────────────────────────────
 
+
 def read(
-    kb_id: int, path: str, start_line: int = 1, end_line: int = 100,
+    kb_id: int,
+    path: str,
+    start_line: int = 1,
+    end_line: int = 100,
 ) -> dict[str, Any]:
     root = _resolve_kb_root(kb_id)
     target = (root / path).resolve()
@@ -257,7 +277,7 @@ def read(
 
     lines: list[str] = []
     total_lines = 0
-    with open(target, "r", encoding="utf-8", errors="replace") as f:
+    with open(target, encoding="utf-8", errors="replace") as f:
         for i, line in enumerate(f, 1):
             total_lines = i
             if start_line <= i <= end_line:
@@ -286,7 +306,7 @@ def outline(kb_id: int, path: str) -> list[dict[str, Any]]:
 
     headings: list[dict[str, Any]] = []
     in_code_block = False
-    with open(target, "r", encoding="utf-8", errors="replace") as f:
+    with open(target, encoding="utf-8", errors="replace") as f:
         for line_num, line in enumerate(f, 1):
             stripped = line.strip()
             if stripped.startswith("```"):
@@ -296,11 +316,13 @@ def outline(kb_id: int, path: str) -> list[dict[str, Any]]:
                 continue
             m = _HEADING_RE.match(stripped)
             if m:
-                headings.append({
-                    "level": len(m.group(1)),
-                    "title": m.group(2).strip(),
-                    "line": line_num,
-                })
+                headings.append(
+                    {
+                        "level": len(m.group(1)),
+                        "title": m.group(2).strip(),
+                        "line": line_num,
+                    }
+                )
     return headings
 
 

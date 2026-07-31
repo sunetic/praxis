@@ -22,7 +22,11 @@ from app.core.logging import fmt_kv, get_logger
 from app.db.connection import get_db_pool
 from app.db.database import SessionLocal
 from app.models import models
-from app.services.datasource.router import DataSourceRoutingError, normalize_role, resolve_datasource_by_role
+from app.services.datasource.router import (
+    DataSourceRoutingError,
+    normalize_role,
+    resolve_datasource_by_role,
+)
 from app.services.function.runtime_contract import get_function_runtime_contract
 from app.services.lifecycle import FunctionLifecycleService, LifecycleValidationError
 
@@ -80,12 +84,12 @@ class RuntimePlatformAccessError(ValueError):
 
 
 _RUNTIME_CONTRACT = get_function_runtime_contract()
-_DB_METHOD_SCHEMAS = dict((((_RUNTIME_CONTRACT.get("db_api") or {}).get("schemas") or {})))
-_PLATFORM_CONTRACT = (_RUNTIME_CONTRACT.get("platform_api") or {})
-_PLATFORM_LIST_FILTER_SCHEMAS = dict((_PLATFORM_CONTRACT.get("list_filter_schemas") or {}))
-_PLATFORM_CRUD_PAYLOAD_SCHEMAS = dict((_PLATFORM_CONTRACT.get("crud_payload_schemas") or {}))
-_PLATFORM_OPERATE_PAYLOAD_SCHEMAS = dict((_PLATFORM_CONTRACT.get("operate_payload_schemas") or {}))
-_DB_ROLE_ENUM = set((((_RUNTIME_CONTRACT.get("db_api") or {}).get("role_enum")) or []))
+_DB_METHOD_SCHEMAS = dict((_RUNTIME_CONTRACT.get("db_api") or {}).get("schemas") or {})
+_PLATFORM_CONTRACT = _RUNTIME_CONTRACT.get("platform_api") or {}
+_PLATFORM_LIST_FILTER_SCHEMAS = dict(_PLATFORM_CONTRACT.get("list_filter_schemas") or {})
+_PLATFORM_CRUD_PAYLOAD_SCHEMAS = dict(_PLATFORM_CONTRACT.get("crud_payload_schemas") or {})
+_PLATFORM_OPERATE_PAYLOAD_SCHEMAS = dict(_PLATFORM_CONTRACT.get("operate_payload_schemas") or {})
+_DB_ROLE_ENUM = set(((_RUNTIME_CONTRACT.get("db_api") or {}).get("role_enum")) or [])
 
 
 def _resolve_runtime_schema_ref(ref: str) -> dict[str, Any]:
@@ -123,23 +127,35 @@ def _validate_runtime_value(
             branch_errors: list[str] = []
             for branch in branches:
                 try:
-                    _validate_runtime_value(schema=branch, value=value, path=path, error_cls=error_cls)
+                    _validate_runtime_value(
+                        schema=branch, value=value, path=path, error_cls=error_cls
+                    )
                     return
                 except Exception as exc:  # pragma: no cover - branch detail only
                     branch_errors.append(str(exc))
-            raise error_cls(branch_errors[0] if branch_errors else f"{path} does not match any allowed schema")
+            raise error_cls(
+                branch_errors[0] if branch_errors else f"{path} does not match any allowed schema"
+            )
     schema_type = resolved.get("type")
     if schema_type == "object":
         if not isinstance(value, dict):
             raise error_cls(f"{path} must be an object")
-        properties = resolved.get("properties") if isinstance(resolved.get("properties"), dict) else {}
+        properties = (
+            resolved.get("properties") if isinstance(resolved.get("properties"), dict) else {}
+        )
         additional_properties = resolved.get("additional_properties", True)
         if additional_properties is False:
             unknown = sorted(set(value.keys()) - set(properties.keys()))
             if unknown:
-                raise error_cls(f"{path} contains undeclared fields: {', '.join(str(item) for item in unknown)}")
-        constraints = resolved.get("constraints") if isinstance(resolved.get("constraints"), dict) else {}
-        required = constraints.get("required") if isinstance(constraints.get("required"), list) else []
+                raise error_cls(
+                    f"{path} contains undeclared fields: {', '.join(str(item) for item in unknown)}"
+                )
+        constraints = (
+            resolved.get("constraints") if isinstance(resolved.get("constraints"), dict) else {}
+        )
+        required = (
+            constraints.get("required") if isinstance(constraints.get("required"), list) else []
+        )
         missing = [str(name) for name in required if value.get(str(name)) is None]
         if missing:
             raise error_cls(f"{path} is missing required fields: {', '.join(missing)}")
@@ -331,7 +347,9 @@ class _RuntimeDatasourceBroker:
                 .first()
             )
             if item is None:
-                raise RuntimeDatasourceAccessError(f"Datasource '{datasource_id}' not found or inactive")
+                raise RuntimeDatasourceAccessError(
+                    f"Datasource '{datasource_id}' not found or inactive"
+                )
             return item
         finally:
             db.close()
@@ -340,7 +358,7 @@ class _RuntimeDatasourceBroker:
 class _RuntimeDatasourceConnection:
     def __init__(
         self,
-        capability: "_RuntimeDatabaseCapability",
+        capability: _RuntimeDatabaseCapability,
         *,
         datasource_id: int,
     ):
@@ -530,7 +548,9 @@ class _RuntimeDatabaseCapability:
             raise RuntimeDatasourceAccessError("SQL must not be empty")
         if normalized.startswith(("select", "with", "explain", "show", "describe", "desc")):
             return
-        raise RuntimeDatasourceAccessError("Write SQL is forbidden in plan mode; confirm and use apply mode to execute")
+        raise RuntimeDatasourceAccessError(
+            "Write SQL is forbidden in plan mode; confirm and use apply mode to execute"
+        )
 
 
 class _RuntimePlatformCapability:
@@ -694,14 +714,20 @@ class _RuntimePlatformCapability:
         ):
             return
         if action in self._MUTATING_CRUD_ACTIONS:
-            raise RuntimePlatformAccessError("Control plane write operations are forbidden in plan mode; confirm and use apply mode to execute")
+            raise RuntimePlatformAccessError(
+                "Control plane write operations are forbidden in plan mode; confirm and use apply mode to execute"
+            )
 
     def _ensure_operate_allowed(self) -> None:
         if self._execution_mode != "plan":
             return
-        raise RuntimePlatformAccessError("Control plane operate actions are forbidden in plan mode; confirm and use apply mode to execute")
+        raise RuntimePlatformAccessError(
+            "Control plane operate actions are forbidden in plan mode; confirm and use apply mode to execute"
+        )
 
-    def _validate_platform_filters(self, *, object_type: str, filters: dict[str, Any] | None) -> None:
+    def _validate_platform_filters(
+        self, *, object_type: str, filters: dict[str, Any] | None
+    ) -> None:
         if filters is None:
             return
         schema = _PLATFORM_LIST_FILTER_SCHEMAS.get(str(object_type or "").strip().lower())
@@ -738,7 +764,9 @@ class _RuntimePlatformCapability:
             and not isinstance(object_id, int)
             and not (object_type == "scheduler_history" and action in {"list", "delete"})
         ):
-            raise RuntimePlatformAccessError(f"platform.crud[{object_type}.{action}] is missing object_id")
+            raise RuntimePlatformAccessError(
+                f"platform.crud[{object_type}.{action}] is missing object_id"
+            )
 
     def _validate_platform_operate_payload(
         self,
@@ -772,7 +800,7 @@ class FunctionBase:
         context: dict[str, Any],
         db: _RuntimeDatabaseCapability,
         platform: _RuntimePlatformCapability | None = None,
-        scheduler_history: "_RuntimeSchedulerHistoryCapability" | None = None,
+        scheduler_history: _RuntimeSchedulerHistoryCapability | None = None,
     ):
         self.payload = payload
         self.context = context
@@ -786,7 +814,9 @@ class FunctionBase:
     def get_session_by_id(self, datasource_id: int) -> Session:
         return self.db.get_session_by_id(datasource_id=datasource_id)
 
-    def run(self, payload: dict[str, Any], context: dict[str, Any]) -> Any:  # pragma: no cover - interface only
+    def run(
+        self, payload: dict[str, Any], context: dict[str, Any]
+    ) -> Any:  # pragma: no cover - interface only
         raise NotImplementedError
 
 
@@ -801,7 +831,9 @@ def _build_db_capability(
     default_datasource_id = context.get("datasource_id")
     broker = _RuntimeDatasourceBroker(
         control_db_url=services.get("control_db_url"),
-        default_datasource_id=default_datasource_id if isinstance(default_datasource_id, int) else None,
+        default_datasource_id=default_datasource_id
+        if isinstance(default_datasource_id, int)
+        else None,
     )
     execution_mode = str(context.get("execution_mode") or "apply")
     return _RuntimeDatabaseCapability(broker, execution_mode=execution_mode)
@@ -837,7 +869,9 @@ class _RuntimeSchedulerHistoryCapability:
         payload: dict[str, Any] = {"limit": int(limit)}
         if where is not None:
             payload["where"] = self._normalize_where(where)
-        result = self._platform.crud(object_type="scheduler_history", action="list", payload=payload)
+        result = self._platform.crud(
+            object_type="scheduler_history", action="list", payload=payload
+        )
         rows = result.get("items") if isinstance(result, dict) else []
         return [item for item in rows if isinstance(item, dict)]
 
@@ -849,13 +883,17 @@ class _RuntimeSchedulerHistoryCapability:
         dry_run: bool = False,
     ) -> dict[str, Any]:
         if self._execution_mode == "plan" and not dry_run:
-            raise RuntimePlatformAccessError("scheduler_history.delete only allows dry_run=True in plan mode")
+            raise RuntimePlatformAccessError(
+                "scheduler_history.delete only allows dry_run=True in plan mode"
+            )
         payload: dict[str, Any] = {"dry_run": bool(dry_run)}
         if where is not None:
             payload["where"] = self._normalize_where(where)
         if policy is not None:
             payload["policy"] = self._normalize_policy(policy)
-        return self._platform.crud(object_type="scheduler_history", action="delete", payload=payload)
+        return self._platform.crud(
+            object_type="scheduler_history", action="delete", payload=payload
+        )
 
     def _normalize_where(self, where: dict[str, Any]) -> dict[str, Any]:
         if not isinstance(where, dict):
@@ -866,8 +904,12 @@ class _RuntimeSchedulerHistoryCapability:
         if "statuses" in where and where.get("statuses") is not None:
             statuses = where["statuses"]
             if not isinstance(statuses, list):
-                raise RuntimePlatformAccessError("scheduler_history.where.statuses must be a string array")
-            normalized_statuses = [str(item or "").strip().lower() for item in statuses if str(item or "").strip()]
+                raise RuntimePlatformAccessError(
+                    "scheduler_history.where.statuses must be a string array"
+                )
+            normalized_statuses = [
+                str(item or "").strip().lower() for item in statuses if str(item or "").strip()
+            ]
             unknown = [item for item in normalized_statuses if item not in self.STATUS_ENUM]
             if unknown:
                 raise RuntimePlatformAccessError(
@@ -948,7 +990,11 @@ def _get_runtime_session_factory(sqlalchemy_url: str) -> sessionmaker[Session]:
 def _pick_function_class(namespace: dict[str, Any]) -> type[FunctionBase] | None:
     candidate: type[FunctionBase] | None = None
     for value in namespace.values():
-        if isinstance(value, type) and issubclass(value, FunctionBase) and value is not FunctionBase:
+        if (
+            isinstance(value, type)
+            and issubclass(value, FunctionBase)
+            and value is not FunctionBase
+        ):
             candidate = value
     return candidate
 
@@ -1047,7 +1093,9 @@ class FunctionRuntimeService:
             "datasource_id": datasource_id,
             "scope": normalized_scope,
         }
-        execution_mode = normalized_scope.get("execution_mode") if isinstance(normalized_scope, dict) else None
+        execution_mode = (
+            normalized_scope.get("execution_mode") if isinstance(normalized_scope, dict) else None
+        )
         if isinstance(execution_mode, str) and execution_mode.strip():
             bound_context["execution_mode"] = execution_mode.strip().lower()
         return payload, bound_context
@@ -1081,13 +1129,17 @@ class FunctionRuntimeService:
             code_snapshot = str(function_ref.draft_code or "").strip()
             if not code_snapshot:
                 db.close()
-                raise LifecycleValidationError("Function draft is empty; build the function before test run")
+                raise LifecycleValidationError(
+                    "Function draft is empty; build the function before test run"
+                )
             runtime_release_id: int | None = None
         else:
             self._lifecycle.ensure_released_target(function_ref)
             if function_ref.current_release is None or function_ref.current_release.id is None:
                 db.close()
-                raise LifecycleValidationError("Function release must be persisted before runtime invocation")
+                raise LifecycleValidationError(
+                    "Function release must be persisted before runtime invocation"
+                )
             code_snapshot = function_ref.current_release.code_snapshot
             runtime_release_id = function_ref.current_release.id
 
@@ -1236,7 +1288,7 @@ class FunctionRuntimeService:
         )
         try:
             return await asyncio.wait_for(asyncio.shield(future), timeout=timeout_seconds)
-        except asyncio.TimeoutError as exc:
+        except TimeoutError as exc:
             future.cancel()
             raise TimeoutError("Function execution timed out") from exc
         except asyncio.CancelledError:
@@ -1255,7 +1307,10 @@ class FunctionRuntimeService:
     def _classify_error_code(self, exc: Exception, error_class: RuntimeErrorClass) -> str | None:
         detail = str(exc or "").strip().lower()
         if isinstance(exc, LifecycleValidationError):
-            if "no released version for production path" in detail or "release must be persisted" in detail:
+            if (
+                "no released version for production path" in detail
+                or "release must be persisted" in detail
+            ):
                 return RuntimeErrorCode.RELEASE_REQUIRED.value
             return RuntimeErrorCode.VALIDATION_ERROR.value
         if isinstance(exc, RuntimeDatasourceRequiredError):

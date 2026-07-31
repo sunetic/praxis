@@ -3,7 +3,6 @@ from __future__ import annotations
 import json
 from typing import Any
 
-
 _FUNCTION_RUNTIME_CONTRACT: dict[str, Any] = {
     "contract_version": "function-runtime-v3",
     "entrypoints": {
@@ -131,7 +130,14 @@ _FUNCTION_RUNTIME_CONTRACT: dict[str, Any] = {
     "platform_api": {
         "main_helper": "platform",
         "class_helper": "self.platform",
-        "object_types": ["page", "function", "scheduler", "datasource", "scheduler_history", "channel"],
+        "object_types": [
+            "page",
+            "function",
+            "scheduler",
+            "datasource",
+            "scheduler_history",
+            "channel",
+        ],
         "methods": [
             "list(object_type, filters=?, limit=?)",
             "get(object_type, object_id)",
@@ -165,7 +171,17 @@ _FUNCTION_RUNTIME_CONTRACT: dict[str, Any] = {
                 "type": "object",
                 "additional_properties": False,
                 "properties": {
-                    "object_type": {"type": "string", "enum": ["page", "function", "scheduler", "datasource", "scheduler_history", "channel"]},
+                    "object_type": {
+                        "type": "string",
+                        "enum": [
+                            "page",
+                            "function",
+                            "scheduler",
+                            "datasource",
+                            "scheduler_history",
+                            "channel",
+                        ],
+                    },
                     "filters": {"type": "object"},
                     "limit": {"type": "integer", "minimum": 1, "maximum": 1000, "default": 100},
                 },
@@ -175,7 +191,17 @@ _FUNCTION_RUNTIME_CONTRACT: dict[str, Any] = {
                 "type": "object",
                 "additional_properties": False,
                 "properties": {
-                    "object_type": {"type": "string", "enum": ["page", "function", "scheduler", "datasource", "scheduler_history", "channel"]},
+                    "object_type": {
+                        "type": "string",
+                        "enum": [
+                            "page",
+                            "function",
+                            "scheduler",
+                            "datasource",
+                            "scheduler_history",
+                            "channel",
+                        ],
+                    },
                     "object_id": {"type": "integer", "minimum": 1},
                 },
                 "constraints": {"required": ["object_type", "object_id"]},
@@ -184,8 +210,21 @@ _FUNCTION_RUNTIME_CONTRACT: dict[str, Any] = {
                 "type": "object",
                 "additional_properties": False,
                 "properties": {
-                    "object_type": {"type": "string", "enum": ["page", "function", "scheduler", "datasource", "scheduler_history", "channel"]},
-                    "action": {"type": "string", "enum": ["create", "read", "update", "delete", "list"]},
+                    "object_type": {
+                        "type": "string",
+                        "enum": [
+                            "page",
+                            "function",
+                            "scheduler",
+                            "datasource",
+                            "scheduler_history",
+                            "channel",
+                        ],
+                    },
+                    "action": {
+                        "type": "string",
+                        "enum": ["create", "read", "update", "delete", "list"],
+                    },
                     "object_id": {"type": "integer", "minimum": 1},
                     "payload": {"type": "object"},
                 },
@@ -195,7 +234,10 @@ _FUNCTION_RUNTIME_CONTRACT: dict[str, Any] = {
                 "type": "object",
                 "additional_properties": False,
                 "properties": {
-                    "object_type": {"type": "string", "enum": ["page", "function", "scheduler", "datasource", "channel"]},
+                    "object_type": {
+                        "type": "string",
+                        "enum": ["page", "function", "scheduler", "datasource", "channel"],
+                    },
                     "action": {
                         "type": "string",
                         "enum": [
@@ -225,7 +267,10 @@ _FUNCTION_RUNTIME_CONTRACT: dict[str, Any] = {
                 "type": "object",
                 "additional_properties": False,
                 "properties": {
-                    "status": {"type": "string", "enum": ["draft", "previewing", "published", "archived"]},
+                    "status": {
+                        "type": "string",
+                        "enum": ["draft", "previewing", "published", "archived"],
+                    },
                 },
             },
             "function": {
@@ -256,7 +301,10 @@ _FUNCTION_RUNTIME_CONTRACT: dict[str, Any] = {
                 "type": "object",
                 "additional_properties": False,
                 "properties": {
-                    "provider": {"type": "string", "enum": ["dingtalk", "feishu", "wechat", "slack", "telegram"]},
+                    "provider": {
+                        "type": "string",
+                        "enum": ["dingtalk", "feishu", "wechat", "slack", "telegram"],
+                    },
                     "status": {"type": "string", "enum": ["active", "inactive"]},
                 },
             },
@@ -312,13 +360,25 @@ _FUNCTION_RUNTIME_CONTRACT: dict[str, Any] = {
                     "additional_properties": False,
                     "properties": {
                         "name": {"type": "string", "min_length": 1},
-                        "target_type": {"type": "string", "enum": ["function", "agent"], "default": "function"},
+                        "target_type": {
+                            "type": "string",
+                            "enum": ["function", "agent"],
+                            "default": "function",
+                        },
                         "target_id": {"type": "integer", "minimum": 1},
-                        "schedule_type": {"type": "string", "enum": ["cron", "interval"], "default": "cron"},
+                        "schedule_type": {
+                            "type": "string",
+                            "enum": ["cron", "interval"],
+                            "default": "cron",
+                        },
                         "cron_expression": {"type": "string", "min_length": 1},
                         "interval_seconds": {"type": "integer", "minimum": 1},
                         "timezone": {"type": "string", "min_length": 1, "default": "UTC"},
-                        "status": {"type": "string", "enum": ["active", "paused"], "default": "active"},
+                        "status": {
+                            "type": "string",
+                            "enum": ["active", "paused"],
+                            "default": "active",
+                        },
                         "input_payload": {"one_of": [{"type": "object"}, {"type": "null"}]},
                         "input_prompt": {"one_of": [{"type": "string"}, {"type": "null"}]},
                         "max_retries": {"type": "integer", "minimum": 0, "default": 0},
@@ -355,15 +415,25 @@ _FUNCTION_RUNTIME_CONTRACT: dict[str, Any] = {
                         "port": {"type": "integer", "minimum": 1, "maximum": 65535},
                         "db_type": {"type": "string", "min_length": 1, "default": "mysql"},
                         "cluster_key": {"type": "string", "min_length": 1},
-                        "tenant_role": {"type": "string", "enum": ["user", "sys"], "default": "user"},
+                        "tenant_role": {
+                            "type": "string",
+                            "enum": ["user", "sys"],
+                            "default": "user",
+                        },
                         "tenant_identifier": {"one_of": [{"type": "string"}, {"type": "null"}]},
                         "attributes": {"one_of": [{"type": "object"}, {"type": "null"}]},
                         "user": {"type": "string", "min_length": 1},
                         "password": {"type": "string", "min_length": 1},
                         "database": {"type": "string", "min_length": 1},
-                        "status": {"type": "string", "enum": ["active", "inactive"], "default": "active"},
+                        "status": {
+                            "type": "string",
+                            "enum": ["active", "inactive"],
+                            "default": "active",
+                        },
                     },
-                    "constraints": {"required": ["name", "host", "port", "user", "password", "database"]},
+                    "constraints": {
+                        "required": ["name", "host", "port", "user", "password", "database"]
+                    },
                 },
                 "update": {
                     "type": "object",
@@ -390,9 +460,17 @@ _FUNCTION_RUNTIME_CONTRACT: dict[str, Any] = {
                     "additional_properties": False,
                     "properties": {
                         "name": {"type": "string", "min_length": 1},
-                        "provider": {"type": "string", "enum": ["dingtalk", "feishu", "wechat"], "default": "dingtalk"},
+                        "provider": {
+                            "type": "string",
+                            "enum": ["dingtalk", "feishu", "wechat"],
+                            "default": "dingtalk",
+                        },
                         "description": {"one_of": [{"type": "string"}, {"type": "null"}]},
-                        "status": {"type": "string", "enum": ["active", "inactive"], "default": "active"},
+                        "status": {
+                            "type": "string",
+                            "enum": ["active", "inactive"],
+                            "default": "active",
+                        },
                         "config": {"type": "object"},
                         "webhook_url": {"type": "string", "min_length": 1},
                         "security": {"type": "object"},
@@ -405,7 +483,10 @@ _FUNCTION_RUNTIME_CONTRACT: dict[str, Any] = {
                     "additional_properties": False,
                     "properties": {
                         "name": {"type": "string", "min_length": 1},
-                        "provider": {"type": "string", "enum": ["dingtalk", "feishu", "wechat", "slack", "telegram"]},
+                        "provider": {
+                            "type": "string",
+                            "enum": ["dingtalk", "feishu", "wechat", "slack", "telegram"],
+                        },
                         "description": {"one_of": [{"type": "string"}, {"type": "null"}]},
                         "status": {"type": "string", "enum": ["active", "inactive"]},
                         "config": {"type": "object"},
@@ -497,7 +578,9 @@ _FUNCTION_RUNTIME_CONTRACT: dict[str, Any] = {
                 "list-runs": {
                     "type": "object",
                     "additional_properties": False,
-                    "properties": {"limit": {"type": "integer", "minimum": 1, "maximum": 500, "default": 20}},
+                    "properties": {
+                        "limit": {"type": "integer", "minimum": 1, "maximum": 500, "default": 20}
+                    },
                 },
             },
             "datasource": {},
@@ -508,7 +591,10 @@ _FUNCTION_RUNTIME_CONTRACT: dict[str, Any] = {
                     "properties": {
                         "message": {"type": "object"},
                         "template": {"type": "object"},
-                        "message_type": {"type": "string", "enum": ["text", "markdown", "actionCard", "feedCard"]},
+                        "message_type": {
+                            "type": "string",
+                            "enum": ["text", "markdown", "actionCard", "feedCard"],
+                        },
                         "title": {"type": "string", "min_length": 1},
                         "content": {"type": "string", "min_length": 1},
                         "dry_run": {"type": "boolean", "default": False},
@@ -533,7 +619,10 @@ _FUNCTION_RUNTIME_CONTRACT: dict[str, Any] = {
                     "schedule_id": {"type": "integer", "minimum": 1},
                     "statuses": {
                         "type": "array",
-                        "items": {"type": "string", "enum": ["queued", "running", "retrying", "success", "failed"]},
+                        "items": {
+                            "type": "string",
+                            "enum": ["queued", "running", "retrying", "success", "failed"],
+                        },
                         "min_items": 1,
                     },
                 },
@@ -567,7 +656,12 @@ _FUNCTION_RUNTIME_CONTRACT: dict[str, Any] = {
                 },
                 "constraints": {
                     "required": ["policy"],
-                    "delete_scope_requires_any_of": ["where.schedule_id", "where.statuses", "policy.retention_seconds", "policy.keep_latest"],
+                    "delete_scope_requires_any_of": [
+                        "where.schedule_id",
+                        "where.statuses",
+                        "policy.retention_seconds",
+                        "policy.keep_latest",
+                    ],
                 },
             },
         },

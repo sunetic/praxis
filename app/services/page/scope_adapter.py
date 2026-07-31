@@ -5,9 +5,9 @@ from typing import Any
 from app.models import models
 from app.services.agent.core import BuildAttemptContext
 from app.services.agent.scope_adapter_base import BuildApplyAdapter, _ContinuationIntentAdapter
-from app.services.platform.coding_engine import CodingEngineApplyResult
 from app.services.llm import LLMClient
 from app.services.page.chart_contract import get_page_chart_contract_block
+from app.services.platform.coding_engine import CodingEngineApplyResult
 from app.services.platform.workspace_store import WorkspaceStore
 
 
@@ -15,7 +15,9 @@ class PageBuildScopeAdapter(_ContinuationIntentAdapter, BuildApplyAdapter):
     def __init__(self, llm_client: LLMClient | None = None) -> None:
         super().__init__(llm_client=llm_client)
 
-    def resolve_primary_requirement(self, *, prompt: str, history: list[BuildAttemptContext]) -> str:
+    def resolve_primary_requirement(
+        self, *, prompt: str, history: list[BuildAttemptContext]
+    ) -> str:
         return self._resolve_primary_requirement_with_llm(prompt=prompt, history=history)
 
     def guardrails(self) -> str:
@@ -48,4 +50,6 @@ class PageBuildScopeAdapter(_ContinuationIntentAdapter, BuildApplyAdapter):
     ) -> CodingEngineApplyResult:
         if not isinstance(target, models.Page):
             raise TypeError("PageBuildScopeAdapter requires models.Page target")
-        return workspace_store.apply_page_goal(page=target, goal=goal, existing_functions=existing_functions)
+        return workspace_store.apply_page_goal(
+            page=target, goal=goal, existing_functions=existing_functions
+        )

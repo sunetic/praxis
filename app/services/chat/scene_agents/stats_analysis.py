@@ -4,6 +4,7 @@ import json
 
 from app.services.chat.agent import ChatCoreAgent
 from app.services.platform.prompt_loader import PromptLoader
+
 from .base import SceneAgentPayload
 
 
@@ -21,7 +22,9 @@ class StatsAnalysisAgent(ChatCoreAgent):
     def build_prompt_block(self, payload: SceneAgentPayload) -> str:
         focus = payload.focus_object if isinstance(payload.focus_object, dict) else {}
         context = payload.context if isinstance(payload.context, dict) else {}
-        datasource = context.get("datasource") if isinstance(context.get("datasource"), dict) else {}
+        datasource = (
+            context.get("datasource") if isinstance(context.get("datasource"), dict) else {}
+        )
         has_locked_datasource = isinstance(datasource.get("id"), int) and datasource.get("id") > 0
         has_locked_table = bool(str(focus.get("table_name") or "").strip())
         has_locked_object = has_locked_datasource and has_locked_table

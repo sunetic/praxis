@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from .contract import CapabilityContext, CapabilitySummary
 
-
 _SECTION_TITLES = {
     "tools": "Available Platform Tools",
     "tool_hints": "Contextual Tool Hints",
@@ -26,7 +25,16 @@ def _render_summary(item: CapabilitySummary) -> str:
 
 def render_capability_context(context: CapabilityContext) -> str:
     blocks: list[str] = []
-    for section_key in ["tools", "tool_hints", "datasource", "services", "knowledge", "skills", "scene", "scope"]:
+    for section_key in [
+        "tools",
+        "tool_hints",
+        "datasource",
+        "services",
+        "knowledge",
+        "skills",
+        "scene",
+        "scope",
+    ]:
         items = context.sections.get(section_key) or []
         if not items:
             continue

@@ -7,8 +7,8 @@ import threading
 from typing import Any, Protocol
 
 from app.services.agent.core import BuildAttemptContext
-from app.services.platform.coding_engine import CodingEngineApplyResult
 from app.services.llm import LLMClient, get_llm_client
+from app.services.platform.coding_engine import CodingEngineApplyResult
 from app.services.platform.workspace_store import WorkspaceStore
 
 
@@ -19,15 +19,16 @@ class BuildApplyAdapter(Protocol):
         workspace_store: WorkspaceStore,
         target: Any,
         goal: str,
-    ) -> CodingEngineApplyResult:
-        ...
+    ) -> CodingEngineApplyResult: ...
 
 
 class _ContinuationIntentAdapter:
     def __init__(self, llm_client: LLMClient | None = None) -> None:
         self.llm = llm_client or get_llm_client()
 
-    def _resolve_primary_requirement_with_llm(self, *, prompt: str, history: list[BuildAttemptContext]) -> str:
+    def _resolve_primary_requirement_with_llm(
+        self, *, prompt: str, history: list[BuildAttemptContext]
+    ) -> str:
         if not history:
             return prompt
         latest_requirement = next((item.prompt for item in history if item.prompt), "")
@@ -37,7 +38,9 @@ class _ContinuationIntentAdapter:
             return prompt
         return latest_requirement
 
-    def _should_continue_previous_requirement(self, *, prompt: str, history: list[BuildAttemptContext]) -> bool:
+    def _should_continue_previous_requirement(
+        self, *, prompt: str, history: list[BuildAttemptContext]
+    ) -> bool:
         normalized_prompt = str(prompt or "").strip()
         if not normalized_prompt:
             return False
@@ -92,7 +95,9 @@ class _ContinuationIntentAdapter:
             break
         if response is None:
             raise ValueError("LLM returned empty response")
-        content = (((response.get("choices") or [{}])[0].get("message") or {}).get("content") or "").strip()
+        content = (
+            ((response.get("choices") or [{}])[0].get("message") or {}).get("content") or ""
+        ).strip()
         if not content:
             raise ValueError("LLM did not return JSON")
         return content

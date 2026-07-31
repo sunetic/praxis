@@ -7,6 +7,7 @@ Full lifecycle test covering the chain:
   4. Create a schedule targeting the agent
   5. Trigger run-now on the schedule
 """
+
 from __future__ import annotations
 
 import json
@@ -19,17 +20,16 @@ from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from app.api import chat as chat_api
 from app.api import schedules as schedules_api
 from app.db import database as db_module
 from app.db.database import Base
 from app.models import models
 from app.services.scheduler.result import ScheduleRuntimeResult
 
-
 # ---------------------------------------------------------------------------
 # Fake LLM
 # ---------------------------------------------------------------------------
+
 
 class _FakeLLM:
     """Minimal mock that handles both streaming chat and non-streaming calls."""
@@ -48,22 +48,28 @@ class _FakeLLM:
         if not stream:
             if "extracting the optimal execution path" in system_text:
                 yield {
-                    "choices": [{
-                        "message": {
-                            "content": json.dumps({
-                                "name": "E2E Test Agent",
-                                "description": "Agent created from e2e conversation",
-                                "prompt": "You are an e2e test agent. Follow the user instructions.",
-                                "tools": [],
-                                "skills": [],
-                            }),
-                        },
-                    }],
+                    "choices": [
+                        {
+                            "message": {
+                                "content": json.dumps(
+                                    {
+                                        "name": "E2E Test Agent",
+                                        "description": "Agent created from e2e conversation",
+                                        "prompt": "You are an e2e test agent. Follow the user instructions.",
+                                        "tools": [],
+                                        "skills": [],
+                                    }
+                                ),
+                            },
+                        }
+                    ],
                 }
                 return
 
             if "strict skill selector" in system_text:
-                yield {"choices": [{"message": {"content": '{"add":[],"remove":[],"reason":"e2e"}'}}]}
+                yield {
+                    "choices": [{"message": {"content": '{"add":[],"remove":[],"reason":"e2e"}'}}]
+                }
                 return
             if "Action Fabric pre-router planner" in system_text:
                 yield {"choices": [{"message": {"content": '{"actions":[]}'}}]}
@@ -80,6 +86,7 @@ class _FakeLLM:
 # Fake scheduled agent runner
 # ---------------------------------------------------------------------------
 
+
 class _FakeAgentRunner:
     """Replaces ScheduledAgentRunner so we don't need in-process ASGI."""
 
@@ -95,12 +102,14 @@ class _FakeAgentRunner:
         timeout_seconds: float = 300.0,
         datasource_id: int | None = None,
     ) -> ScheduleRuntimeResult:
-        self.calls.append({
-            "agent_id": agent.id,
-            "prompt": prompt,
-            "trace_id": trace_id,
-            "datasource_id": datasource_id,
-        })
+        self.calls.append(
+            {
+                "agent_id": agent.id,
+                "prompt": prompt,
+                "trace_id": trace_id,
+                "datasource_id": datasource_id,
+            }
+        )
         return ScheduleRuntimeResult(
             run_id="fake-agent-run-1",
             status="success",
@@ -115,6 +124,7 @@ class _FakeAgentRunner:
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture()
 def env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
@@ -167,6 +177,7 @@ def env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _parse_vds_lines(response) -> list[str]:
     lines = []
     for raw in response.iter_lines():
@@ -217,6 +228,7 @@ def _save_agent_stream(client: TestClient, conversation_id: int) -> tuple[int, s
 # ---------------------------------------------------------------------------
 # Test
 # ---------------------------------------------------------------------------
+
 
 def test_e2e_chat_save_agent_run_schedule(env, monkeypatch: pytest.MonkeyPatch):
     client, session_local, fake_runner = env
@@ -321,7 +333,9 @@ def test_e2e_chat_save_agent_run_schedule(env, monkeypatch: pytest.MonkeyPatch):
             try:
                 sched = db.query(models.Schedule).filter(models.Schedule.id == schedule_id).first()
                 if sched and str(sched.target_type) == "agent":
-                    agent_record = db.query(models.Agent).filter(models.Agent.id == sched.target_id).first()
+                    agent_record = (
+                        db.query(models.Agent).filter(models.Agent.id == sched.target_id).first()
+                    )
                     if agent_record:
                         result = await self._runner.invoke(
                             agent=agent_record,
@@ -345,7 +359,8 @@ def test_e2e_chat_save_agent_run_schedule(env, monkeypatch: pytest.MonkeyPatch):
             return f"fallback-{schedule_id}", None
 
     monkeypatch.setattr(
-        schedules_api, "get_scheduler_worker",
+        schedules_api,
+        "get_scheduler_worker",
         lambda: _FakeWorker(fake_runner),
     )
 

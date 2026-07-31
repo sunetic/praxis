@@ -1,10 +1,9 @@
 import pytest
-from copy import deepcopy
 
 from app.services.agent.context_compressor import (
     ContextCompressor,
-    estimate_tokens,
     estimate_messages_tokens,
+    estimate_tokens,
 )
 
 
@@ -101,11 +100,7 @@ async def test_compress_extractive_when_no_llm():
 async def test_compress_with_fake_llm():
     class FakeSummarizerLLM:
         async def chat(self, messages, tools=None, stream=False, temperature=None):
-            yield {
-                "choices": [
-                    {"message": {"content": "- Key finding A\n- Decision B made"}}
-                ]
-            }
+            yield {"choices": [{"message": {"content": "- Key finding A\n- Decision B made"}}]}
 
     compressor = ContextCompressor(
         threshold_tokens=50,

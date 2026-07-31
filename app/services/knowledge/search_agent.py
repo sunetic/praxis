@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 from typing import Any
 
 from app.core.logging import fmt_kv, get_logger
@@ -49,9 +48,7 @@ class KnowledgeSearchAgent:
                     await self._ensure_version(resolved_kb_id, version)
                 kb_ids = [resolved_kb_id]
             else:
-                return self._build_result(
-                    f"No knowledge base found for db_type='{db_type}'.", []
-                )
+                return self._build_result(f"No knowledge base found for db_type='{db_type}'.", [])
 
         if not knowledge_bases:
             knowledge_bases = self._default_kb_list(kb_ids)
@@ -85,10 +82,12 @@ class KnowledgeSearchAgent:
                 data = event.get("data", {})
                 result = data.get("result", {})
                 if isinstance(result, dict) and result.get("success"):
-                    tool_results.append({
-                        "tool": data.get("name", ""),
-                        "data": result.get("data"),
-                    })
+                    tool_results.append(
+                        {
+                            "tool": data.get("name", ""),
+                            "data": result.get("data"),
+                        }
+                    )
 
         logger.info(
             "knowledge_search_complete %s",
@@ -103,6 +102,7 @@ class KnowledgeSearchAgent:
 
     def _default_kb_list(self, kb_ids: list[int] | None) -> list[dict[str, Any]]:
         from pathlib import Path
+
         data_root = Path("data/knowledge")
         if not data_root.is_dir():
             return []
@@ -142,10 +142,11 @@ class KnowledgeSearchAgent:
         if not pack_id:
             return
 
-        from app.services.knowledge.pack_installer import PackInstaller
-        from app.db.database import SessionLocal
         import json as _json
         from pathlib import Path
+
+        from app.db.database import SessionLocal
+        from app.services.knowledge.pack_installer import PackInstaller
 
         manifest_path = Path("data") / "knowledge_packs.json"
         if not manifest_path.is_file():
@@ -179,19 +180,23 @@ class KnowledgeSearchAgent:
             if tr["tool"] == "kb_search" and isinstance(data, list):
                 for item in data:
                     if isinstance(item, dict) and "file" in item:
-                        snippets.append({
-                            "file": item["file"],
-                            "line": item.get("line", 0),
-                            "content": item.get("context") or item.get("match", ""),
-                        })
+                        snippets.append(
+                            {
+                                "file": item["file"],
+                                "line": item.get("line", 0),
+                                "content": item.get("context") or item.get("match", ""),
+                            }
+                        )
             elif tr["tool"] == "kb_read" and isinstance(data, dict):
                 content = data.get("content", "")
                 if content:
-                    snippets.append({
-                        "file": "(read)",
-                        "line": data.get("start_line", 0),
-                        "content": content[:2000],
-                    })
+                    snippets.append(
+                        {
+                            "file": "(read)",
+                            "line": data.get("start_line", 0),
+                            "content": content[:2000],
+                        }
+                    )
 
         found = "none"
         if snippets:
@@ -201,5 +206,7 @@ class KnowledgeSearchAgent:
             "found": found,
             "snippets": snippets[:20],
             "summary": final_text[:3000] if final_text else "",
-            "suggestion": None if found == "complete" else "Try refining the query or adding more documents to the knowledge base.",
+            "suggestion": None
+            if found == "complete"
+            else "Try refining the query or adding more documents to the knowledge base.",
         }

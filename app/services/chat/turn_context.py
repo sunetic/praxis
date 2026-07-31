@@ -1,10 +1,12 @@
 """Shared agent turn context builder used by both Chat and Scheduler."""
+
 from __future__ import annotations
 
 import json
 from dataclasses import dataclass
 from typing import Any
 
+from jinja2.exceptions import TemplateNotFound
 from sqlalchemy.orm import Session
 
 from app.models import models
@@ -19,7 +21,6 @@ from app.services.chat.scene_agents import SceneAgentPayload
 from app.services.chat.tool_binding import inject_service_tools
 from app.services.platform.prompt_loader import PromptLoader
 from app.services.response_style import build_response_style_prompt
-from jinja2.exceptions import TemplateNotFound
 from app.skills.store import skill_store
 from app.tools.registry import registry
 
@@ -82,19 +83,23 @@ def _build_pending_confirmation_block(pending_actions: list[models.PendingAction
 def _build_handoff_context_block(handoff_payload: dict[str, Any] | None) -> str:
     if not isinstance(handoff_payload, dict):
         return ""
-    source = handoff_payload.get("source") if isinstance(handoff_payload.get("source"), dict) else {}
+    source = (
+        handoff_payload.get("source") if isinstance(handoff_payload.get("source"), dict) else {}
+    )
     source_label = (
-        str(source.get("label") or "").strip()
-        or str(source.get("page") or "").strip()
-        or "unknown"
+        str(source.get("label") or "").strip() or str(source.get("page") or "").strip() or "unknown"
     )
     source_entry = str(source.get("entry") or "").strip() or "unknown"
     facts = handoff_payload.get("facts") if isinstance(handoff_payload.get("facts"), list) else []
-    context = handoff_payload.get("context") if isinstance(handoff_payload.get("context"), dict) else {}
+    context = (
+        handoff_payload.get("context") if isinstance(handoff_payload.get("context"), dict) else {}
+    )
     datasource = context.get("datasource") if isinstance(context.get("datasource"), dict) else {}
     focus = context.get("focus") if isinstance(context.get("focus"), dict) else {}
     signals = context.get("signals") if isinstance(context.get("signals"), list) else []
-    current_plan = context.get("current_plan") if isinstance(context.get("current_plan"), dict) else {}
+    current_plan = (
+        context.get("current_plan") if isinstance(context.get("current_plan"), dict) else {}
+    )
 
     datasource_line = ""
     if datasource:
@@ -134,10 +139,22 @@ def _build_handoff_context_block(handoff_payload: dict[str, Any] | None) -> str:
             line += f" | evidence={evidence}"
         signal_lines.append(line)
 
-    investigation_steps = context.get("investigation_steps") if isinstance(context.get("investigation_steps"), list) else []
-    trimmed_steps = [str(item or "").strip() for item in investigation_steps[:6] if str(item or "").strip()]
+    investigation_steps = (
+        context.get("investigation_steps")
+        if isinstance(context.get("investigation_steps"), list)
+        else []
+    )
+    trimmed_steps = [
+        str(item or "").strip() for item in investigation_steps[:6] if str(item or "").strip()
+    ]
 
-    normalized_facts = [item for item in facts[:6] if isinstance(item, dict) and str(item.get("label") or "").strip() and str(item.get("value") or "").strip()]
+    normalized_facts = [
+        item
+        for item in facts[:6]
+        if isinstance(item, dict)
+        and str(item.get("label") or "").strip()
+        and str(item.get("value") or "").strip()
+    ]
     return PromptLoader.render(
         "chat/prompts/handoff_context.tpl",
         source_label=source_label,
@@ -202,8 +219,12 @@ def _build_scene_block(
         return PromptLoader.render(
             "chat/prompts/scene_agents/default.tpl",
             key=str(scene_fallback_payload.get("key") or "").strip(),
-            context_json=json.dumps(scene_fallback_payload.get("context") or {}, ensure_ascii=False),
-            focus_object_json=json.dumps(scene_fallback_payload.get("focus_object") or {}, ensure_ascii=False),
+            context_json=json.dumps(
+                scene_fallback_payload.get("context") or {}, ensure_ascii=False
+            ),
+            focus_object_json=json.dumps(
+                scene_fallback_payload.get("focus_object") or {}, ensure_ascii=False
+            ),
         )
     return ""
 
@@ -237,7 +258,9 @@ def build_agent_turn_context(
 
     selected_datasource = None
     if datasource_id is not None:
-        selected_datasource = db.query(models.DataSource).filter(models.DataSource.id == datasource_id).first()
+        selected_datasource = (
+            db.query(models.DataSource).filter(models.DataSource.id == datasource_id).first()
+        )
 
     tools = _filter_tools_by_agent(agent)
     tools = _bind_default_datasource_to_tools(tools, datasource_id)
@@ -246,12 +269,19 @@ def build_agent_turn_context(
     if declared_tool_names is None:
         declared_tool_names = []
         if agent and isinstance(agent.tools, list):
-            from app.services.chat.capabilities.collectors import normalize_declared_tool_names as _norm
+            from app.services.chat.capabilities.collectors import (
+                normalize_declared_tool_names as _norm,
+            )
+
             declared_tool_names = _norm(agent.tools)
 
     loaded_skills = skill_store.list_skills()
     if selected_skills is None:
-        active_skill_names = list(conversation.active_skills or []) if isinstance(conversation.active_skills, list) else []
+        active_skill_names = (
+            list(conversation.active_skills or [])
+            if isinstance(conversation.active_skills, list)
+            else []
+        )
         if not active_skill_names and agent and isinstance(agent.skills, list):
             active_skill_names = list(agent.skills)
         selected_skills = list_active_skill_models(active_skill_names, loaded_skills)
@@ -265,8 +295,21 @@ def build_agent_turn_context(
             services=list_bound_services(db, selected_datasource),
             knowledge_bases=knowledge_bases,
             active_skills=selected_skills,
-            scene_key=(extra.resolved_scene_agent.key if extra.resolved_scene_agent else extra.scene_fallback_payload.get("key") if isinstance(extra.scene_fallback_payload, dict) else None),
-            scene_focus=(extra.scene_payload.focus_object if extra.scene_payload and isinstance(extra.scene_payload.focus_object, dict) else extra.scene_fallback_payload.get("focus_object") if isinstance(extra.scene_fallback_payload, dict) and isinstance(extra.scene_fallback_payload.get("focus_object"), dict) else None),
+            scene_key=(
+                extra.resolved_scene_agent.key
+                if extra.resolved_scene_agent
+                else extra.scene_fallback_payload.get("key")
+                if isinstance(extra.scene_fallback_payload, dict)
+                else None
+            ),
+            scene_focus=(
+                extra.scene_payload.focus_object
+                if extra.scene_payload and isinstance(extra.scene_payload.focus_object, dict)
+                else extra.scene_fallback_payload.get("focus_object")
+                if isinstance(extra.scene_fallback_payload, dict)
+                and isinstance(extra.scene_fallback_payload.get("focus_object"), dict)
+                else None
+            ),
             scope_context=scope_context,
         )
     )
@@ -285,7 +328,11 @@ def build_agent_turn_context(
 
     ds_attrs_json = ""
     if selected_datasource:
-        ds_attrs = {k: v for k, v in (selected_datasource.attributes or {}).items() if v is not None and v != ""}
+        ds_attrs = {
+            k: v
+            for k, v in (selected_datasource.attributes or {}).items()
+            if v is not None and v != ""
+        }
         if ds_attrs:
             ds_attrs_json = json.dumps(ds_attrs, ensure_ascii=False)
 

@@ -1,8 +1,8 @@
 # semantic-guard: allow — variables checked are HTTP response data, not direct user input
-from abc import ABC, abstractmethod
 import asyncio
-from pathlib import Path
 import re
+from abc import ABC, abstractmethod
+from pathlib import Path
 from typing import Any
 
 from app.core.logging import fmt_kv, get_logger
@@ -52,20 +52,20 @@ class BaseTool(ABC):
                     "phase": {
                         "type": "string",
                         "enum": ["evidence", "verify", "action"],
-                        "description": "Current step phase: evidence=gather evidence, verify=validate candidate plan, action=execute confirmed action."
+                        "description": "Current step phase: evidence=gather evidence, verify=validate candidate plan, action=execute confirmed action.",
                     },
                     "goal": {
                         "type": "string",
-                        "description": "The key uncertainty to resolve or short-term objective for this step."
+                        "description": "The key uncertainty to resolve or short-term objective for this step.",
                     },
                     "success_criteria": {
                         "type": "string",
-                        "description": "What outcome qualifies this step as truly complete, beyond just a successful tool call."
+                        "description": "What outcome qualifies this step as truly complete, beyond just a successful tool call.",
                     },
                     "batch_boundary_after": {
                         "type": "boolean",
-                        "description": "Whether to end the current batch after this tool execution and enter reflection/re-planning."
-                    }
+                        "description": "Whether to end the current batch after this tool execution and enter reflection/re-planning.",
+                    },
                 },
             }
         return {
@@ -144,9 +144,11 @@ class ExecuteSQLTool(BaseTool):
         "required": ["sql", "datasource_id"],
     }
 
-    async def execute(self, sql: str, datasource_id: int, role: str = "user", **params: object) -> ToolResult:
-        from app.db.pool_factory import get_pool_for_datasource
+    async def execute(
+        self, sql: str, datasource_id: int, role: str = "user", **params: object
+    ) -> ToolResult:
         from app.db.database import SessionLocal
+        from app.db.pool_factory import get_pool_for_datasource
         from app.models import models
         from app.services.datasource.sql_guard import (
             build_action_token,
@@ -158,7 +160,10 @@ class ExecuteSQLTool(BaseTool):
 
         db = SessionLocal()
         try:
-            logger.info("tool_execute_start %s", fmt_kv(tool=self.name, datasource_id=datasource_id, role=role))
+            logger.info(
+                "tool_execute_start %s",
+                fmt_kv(tool=self.name, datasource_id=datasource_id, role=role),
+            )
             try:
                 routed = resolve_datasource_by_role(db, datasource_id, role)
             except DataSourceRoutingError as e:
@@ -235,7 +240,10 @@ class ExecuteSQLTool(BaseTool):
                 )
                 for existing in existing_actions:
                     existing_payload = existing.payload or {}
-                    if str(existing_payload.get("execution_fingerprint") or "") != execution_fingerprint:
+                    if (
+                        str(existing_payload.get("execution_fingerprint") or "")
+                        != execution_fingerprint
+                    ):
                         continue
                     logger.info(
                         "tool_execute_reuse_pending_confirmation %s",
@@ -253,7 +261,8 @@ class ExecuteSQLTool(BaseTool):
                             "requires_confirmation": True,
                             "action_type": "execute_sql",
                             "action_token": existing.token,
-                            "sql_preview": existing_payload.get("sql_preview") or redact_sql_preview(sql),
+                            "sql_preview": existing_payload.get("sql_preview")
+                            or redact_sql_preview(sql),
                             "batch_id": existing_payload.get("batch_id") or batch_id,
                             "execution_fingerprint": execution_fingerprint,
                             "tenant_fingerprint": tenant_fingerprint,
@@ -348,7 +357,9 @@ class ExecuteSQLTool(BaseTool):
                 fmt_kv(tool=self.name, datasource_id=datasource_id, role=role),
                 str(e),
             )
-            return ToolResult(success=False, error=_build_sql_error_payload(e, "SQL execution error"))
+            return ToolResult(
+                success=False, error=_build_sql_error_payload(e, "SQL execution error")
+            )
         finally:
             db.close()
 
@@ -374,13 +385,18 @@ class ExplainSQLTool(BaseTool):
         "required": ["sql", "datasource_id"],
     }
 
-    async def execute(self, sql: str, datasource_id: int, role: str = "user", **params: object) -> ToolResult:
-        from app.db.pool_factory import get_pool_for_datasource
+    async def execute(
+        self, sql: str, datasource_id: int, role: str = "user", **params: object
+    ) -> ToolResult:
         from app.db.database import SessionLocal
+        from app.db.pool_factory import get_pool_for_datasource
 
         db = SessionLocal()
         try:
-            logger.info("tool_execute_start %s", fmt_kv(tool=self.name, datasource_id=datasource_id, role=role))
+            logger.info(
+                "tool_execute_start %s",
+                fmt_kv(tool=self.name, datasource_id=datasource_id, role=role),
+            )
             try:
                 routed = resolve_datasource_by_role(db, datasource_id, role)
             except DataSourceRoutingError as e:
@@ -424,14 +440,15 @@ class ExplainSQLTool(BaseTool):
 
 class DatasourceSwitchTool(BaseTool):
     name = "datasource_switch"
-    description = (
-        "Switch the datasource context for the current conversation. Subsequent queries will default to the new datasource."
-    )
+    description = "Switch the datasource context for the current conversation. Subsequent queries will default to the new datasource."
     parameters = {
         "type": "object",
         "properties": {
             "datasource_id": {"type": "integer", "description": "Target datasource ID"},
-            "conversation_id": {"type": "integer", "description": "Conversation ID (auto-injected)"},
+            "conversation_id": {
+                "type": "integer",
+                "description": "Conversation ID (auto-injected)",
+            },
         },
         "required": ["datasource_id"],
     }
@@ -446,31 +463,64 @@ class DatasourceSwitchTool(BaseTool):
         from app.models import models
 
         if datasource_id <= 0:
-            return ToolResult(success=False, error={"code": "invalid_argument", "message": "datasource_id must be a positive integer"})
+            return ToolResult(
+                success=False,
+                error={
+                    "code": "invalid_argument",
+                    "message": "datasource_id must be a positive integer",
+                },
+            )
         if not conversation_id:
-            return ToolResult(success=False, error={"code": "missing_context", "message": "conversation_id is required"})
+            return ToolResult(
+                success=False,
+                error={"code": "missing_context", "message": "conversation_id is required"},
+            )
 
         db = SessionLocal()
         try:
-            datasource = db.query(models.DataSource).filter(models.DataSource.id == datasource_id).first()
+            datasource = (
+                db.query(models.DataSource).filter(models.DataSource.id == datasource_id).first()
+            )
             if datasource is None:
-                return ToolResult(success=False, error={"code": "not_found", "message": f"Datasource {datasource_id} not found"})
+                return ToolResult(
+                    success=False,
+                    error={"code": "not_found", "message": f"Datasource {datasource_id} not found"},
+                )
             if str(datasource.status or "").lower() != "active":
-                return ToolResult(success=False, error={"code": "inactive", "message": f"Datasource {datasource_id} is not active"})
+                return ToolResult(
+                    success=False,
+                    error={
+                        "code": "inactive",
+                        "message": f"Datasource {datasource_id} is not active",
+                    },
+                )
 
-            conversation = db.query(models.Conversation).filter(models.Conversation.id == conversation_id).first()
+            conversation = (
+                db.query(models.Conversation)
+                .filter(models.Conversation.id == conversation_id)
+                .first()
+            )
             if conversation is None:
-                return ToolResult(success=False, error={"code": "not_found", "message": f"Conversation {conversation_id} not found"})
+                return ToolResult(
+                    success=False,
+                    error={
+                        "code": "not_found",
+                        "message": f"Conversation {conversation_id} not found",
+                    },
+                )
 
             conversation.datasource_id = datasource.id
             db.commit()
 
-            return ToolResult(success=True, data={
-                "message": f"Switched to datasource {datasource.name} (#{datasource.id}, {datasource.tenant_role}). Subsequent queries will use this datasource by default.",
-                "datasource_id": datasource.id,
-                "datasource_name": datasource.name,
-                "tenant_role": datasource.tenant_role,
-            })
+            return ToolResult(
+                success=True,
+                data={
+                    "message": f"Switched to datasource {datasource.name} (#{datasource.id}, {datasource.tenant_role}). Subsequent queries will use this datasource by default.",
+                    "datasource_id": datasource.id,
+                    "datasource_name": datasource.name,
+                    "tenant_role": datasource.tenant_role,
+                },
+            )
         except Exception as e:
             db.rollback()
             logger.exception("datasource_switch_error datasource_id=%s", datasource_id)
@@ -488,7 +538,10 @@ class AgentSaveTool(BaseTool):
     parameters = {
         "type": "object",
         "properties": {
-            "user_input": {"type": "string", "description": "User's instructions for saving the Agent"},
+            "user_input": {
+                "type": "string",
+                "description": "User's instructions for saving the Agent",
+            },
         },
     }
 
@@ -498,17 +551,18 @@ class AgentSaveTool(BaseTool):
         **params: object,
     ) -> ToolResult:
         del params
-        return ToolResult(success=True, data={
-            "action": "save_agent",
-            "user_input": str(user_input or "").strip(),
-        })
+        return ToolResult(
+            success=True,
+            data={
+                "action": "save_agent",
+                "user_input": str(user_input or "").strip(),
+            },
+        )
 
 
 class AgentRunTool(BaseTool):
     name = "agent_run"
-    description = (
-        "Run a saved Agent in the current conversation context. This notifies the frontend to trigger the run flow."
-    )
+    description = "Run a saved Agent in the current conversation context. This notifies the frontend to trigger the run flow."
     parameters = {
         "type": "object",
         "properties": {
@@ -524,23 +578,36 @@ class AgentRunTool(BaseTool):
     ) -> ToolResult:
         del params
         if agent_id <= 0:
-            return ToolResult(success=False, error={"code": "invalid_argument", "message": "agent_id must be a positive integer"})
+            return ToolResult(
+                success=False,
+                error={
+                    "code": "invalid_argument",
+                    "message": "agent_id must be a positive integer",
+                },
+            )
         from app.models import models
+
         db = SessionLocal()
         try:
             db_agent = db.query(models.Agent).filter(models.Agent.id == agent_id).first()
         finally:
             db.close()
         if db_agent is None:
-            return ToolResult(success=False, error={"code": "agent_not_found", "message": f"Agent #{agent_id} not found"})
-        return ToolResult(success=True, data={
-            "action": "run_agent",
-            "agent_id": db_agent.id,
-            "agent_name": db_agent.name,
-            "agent_prompt": db_agent.prompt or "",
-            "agent_tools": db_agent.tools or [],
-            "agent_skills": db_agent.skills or [],
-        })
+            return ToolResult(
+                success=False,
+                error={"code": "agent_not_found", "message": f"Agent #{agent_id} not found"},
+            )
+        return ToolResult(
+            success=True,
+            data={
+                "action": "run_agent",
+                "agent_id": db_agent.id,
+                "agent_name": db_agent.name,
+                "agent_prompt": db_agent.prompt or "",
+                "agent_tools": db_agent.tools or [],
+                "agent_skills": db_agent.skills or [],
+            },
+        )
 
 
 class ToolRegistry:
@@ -571,7 +638,17 @@ class ObjectCrudTool(BaseTool):
         "properties": {
             "object_type": {
                 "type": "string",
-                "enum": ["page", "function", "scheduler", "datasource", "scheduler_history", "channel", "knowledge_base", "knowledge_document", "service"],
+                "enum": [
+                    "page",
+                    "function",
+                    "scheduler",
+                    "datasource",
+                    "scheduler_history",
+                    "channel",
+                    "knowledge_base",
+                    "knowledge_document",
+                    "service",
+                ],
                 "description": "Object type (page=PraxisPage, function=PraxisFunction, service=PraxisService)",
             },
             "action": {
@@ -579,7 +656,10 @@ class ObjectCrudTool(BaseTool):
                 "enum": ["create", "read", "update", "delete", "list"],
                 "description": "CRUD action",
             },
-            "object_id": {"type": "integer", "description": "Object ID (required for read/update/delete)"},
+            "object_id": {
+                "type": "integer",
+                "description": "Object ID (required for read/update/delete)",
+            },
             "payload": {"type": "object", "description": "Action parameters"},
             "actor": {"type": "string", "description": "Actor identifier (defaults to llm)"},
         },
@@ -700,7 +780,9 @@ class ObjectOperateTool(BaseTool):
                 },
             )
         except Exception as e:
-            logger.exception("object_operate_tool_error action=%s object_type=%s", action, object_type)
+            logger.exception(
+                "object_operate_tool_error action=%s object_type=%s", action, object_type
+            )
             return ToolResult(
                 success=False,
                 error={
@@ -761,6 +843,7 @@ class CallServiceTool(BaseTool):
         **params: object,
     ) -> ToolResult:
         import httpx
+
         from app.db.database import SessionLocal
         from app.models import models
 
@@ -768,14 +851,23 @@ class CallServiceTool(BaseTool):
         with SessionLocal() as db:
             svc = db.query(models.Service).filter(models.Service.id == service_id).first()
             if not svc:
-                return ToolResult(success=False, error={"code": "not_found", "message": f"Service {service_id} not found"})
+                return ToolResult(
+                    success=False,
+                    error={"code": "not_found", "message": f"Service {service_id} not found"},
+                )
 
             config = svc.config or {}
             base_url = f"http://{config.get('host', '')}:{config.get('port', 8080)}"
             auth_method_name = self._AUTH_BUILDERS.get(svc.service_type)
 
         if not auth_method_name:
-            return ToolResult(success=False, error={"code": "unsupported_service_type", "message": f"service_type '{svc.service_type}' has no auth builder"})
+            return ToolResult(
+                success=False,
+                error={
+                    "code": "unsupported_service_type",
+                    "message": f"service_type '{svc.service_type}' has no auth builder",
+                },
+            )
 
         auth_builder = getattr(self, auth_method_name)
         auth = auth_builder(config)
@@ -801,9 +893,13 @@ class CallServiceTool(BaseTool):
                     resp_data = {"raw_text": resp.text[:2000]}
 
                 content_type = str((resp.headers or {}).get("content-type") or "").lower()
-                raw_text = str(resp_data.get("raw_text") or "") if isinstance(resp_data, dict) else ""
+                raw_text = (
+                    str(resp_data.get("raw_text") or "") if isinstance(resp_data, dict) else ""
+                )
                 raw_text_lstrip = raw_text.lstrip().lower()
-                looks_like_html = raw_text_lstrip.startswith("<!doctype html") or raw_text_lstrip.startswith("<html")
+                looks_like_html = raw_text_lstrip.startswith(
+                    "<!doctype html"
+                ) or raw_text_lstrip.startswith("<html")
                 expects_json = True
 
                 if resp.status_code >= 400:
@@ -812,11 +908,17 @@ class CallServiceTool(BaseTool):
                         error={
                             "code": "api_error",
                             "http_status": resp.status_code,
-                            "message": resp_data.get("error", {}).get("message", "") if isinstance(resp_data.get("error"), dict) else str(resp_data),
+                            "message": resp_data.get("error", {}).get("message", "")
+                            if isinstance(resp_data.get("error"), dict)
+                            else str(resp_data),
                             "response": resp_data,
                         },
                     )
-                if expects_json and (not parsed_json or looks_like_html or (content_type and "json" not in content_type)):
+                if expects_json and (
+                    not parsed_json
+                    or looks_like_html
+                    or (content_type and "json" not in content_type)
+                ):
                     return ToolResult(
                         success=False,
                         error={
@@ -827,7 +929,9 @@ class CallServiceTool(BaseTool):
                         },
                     )
         except httpx.TimeoutException:
-            return ToolResult(success=False, error={"code": "timeout", "message": f"Request to {url} timed out"})
+            return ToolResult(
+                success=False, error={"code": "timeout", "message": f"Request to {url} timed out"}
+            )
         except Exception as e:
             return ToolResult(success=False, error={"code": "connection_error", "message": str(e)})
 
@@ -952,7 +1056,9 @@ class ExecCommandTool(BaseTool):
 
     def _validate_sed_args(self, args: list[str]) -> dict[str, Any] | None:
         for arg in args:
-            if arg in self._SED_FORBIDDEN_FLAGS or any(arg.startswith(f"{flag}=") for flag in self._SED_FORBIDDEN_FLAGS):
+            if arg in self._SED_FORBIDDEN_FLAGS or any(
+                arg.startswith(f"{flag}=") for flag in self._SED_FORBIDDEN_FLAGS
+            ):
                 return {
                     "code": "forbidden_arguments",
                     "message": f"sed flag not allowed: {arg}",
@@ -962,7 +1068,9 @@ class ExecCommandTool(BaseTool):
                 "code": "invalid_arguments",
                 "message": "sed requires -n and a print-only script when used via exec_command",
             }
-        scripts = [script.strip() for script in self._extract_sed_scripts(args) if str(script).strip()]
+        scripts = [
+            script.strip() for script in self._extract_sed_scripts(args) if str(script).strip()
+        ]
         if not scripts:
             return {
                 "code": "invalid_arguments",
@@ -1000,10 +1108,15 @@ class ExecCommandTool(BaseTool):
                 }
         return None
 
-    async def execute(self, command: str, args: list[str] | None = None, **params: object) -> ToolResult:
+    async def execute(
+        self, command: str, args: list[str] | None = None, **params: object
+    ) -> ToolResult:
         del params
         if command not in self._ALLOWED:
-            return ToolResult(success=False, error={"code": "forbidden", "message": f"Command not allowed: {command}"})
+            return ToolResult(
+                success=False,
+                error={"code": "forbidden", "message": f"Command not allowed: {command}"},
+            )
 
         args = args or []
         path_error = self._validate_path_args(command, args)
@@ -1012,22 +1125,29 @@ class ExecCommandTool(BaseTool):
 
         try:
             proc = await asyncio.create_subprocess_exec(
-                command, *args,
+                command,
+                *args,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 cwd=str(Path.cwd()),
             )
             stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=self._TIMEOUT)
-        except asyncio.TimeoutError:
-            return ToolResult(success=False, error={"code": "timeout", "message": f"Command timed out after {self._TIMEOUT}s"})
+        except TimeoutError:
+            return ToolResult(
+                success=False,
+                error={"code": "timeout", "message": f"Command timed out after {self._TIMEOUT}s"},
+            )
         except FileNotFoundError:
-            return ToolResult(success=False, error={"code": "not_found", "message": f"Command not found: {command}"})
+            return ToolResult(
+                success=False,
+                error={"code": "not_found", "message": f"Command not found: {command}"},
+            )
         except Exception as e:
             return ToolResult(success=False, error={"code": "exec_error", "message": str(e)})
 
         output = stdout.decode("utf-8", errors="replace")
         if len(output) > self._MAX_OUTPUT:
-            output = output[:self._MAX_OUTPUT] + f"\n... (truncated, total {len(stdout)} bytes)"
+            output = output[: self._MAX_OUTPUT] + f"\n... (truncated, total {len(stdout)} bytes)"
 
         err_text = stderr.decode("utf-8", errors="replace").strip()
         result: dict[str, Any] = {"exit_code": proc.returncode, "output": output}
@@ -1058,7 +1178,9 @@ class SkillReferenceTool(BaseTool):
         "required": ["skill_name"],
     }
 
-    async def execute(self, skill_name: str, section: str | None = None, **params: object) -> ToolResult:
+    async def execute(
+        self, skill_name: str, section: str | None = None, **params: object
+    ) -> ToolResult:
         del params
         from app.skills.store import skill_store
 
@@ -1072,7 +1194,10 @@ class SkillReferenceTool(BaseTool):
         if not reference:
             return ToolResult(
                 success=False,
-                error={"code": "no_reference", "message": f"Skill '{skill_name}' has no reference material"},
+                error={
+                    "code": "no_reference",
+                    "message": f"Skill '{skill_name}' has no reference material",
+                },
             )
         if section:
             section_lower = section.lower()
@@ -1164,8 +1289,11 @@ class KnowledgeSearchTool(BaseTool):
     ) -> ToolResult:
         del params
         if not query.strip():
-            return ToolResult(success=False, error={"code": "invalid_argument", "message": "query is required"})
+            return ToolResult(
+                success=False, error={"code": "invalid_argument", "message": "query is required"}
+            )
         from app.services.knowledge.search_agent import KnowledgeSearchAgent
+
         agent = KnowledgeSearchAgent()
         try:
             result = await agent.run(query=query, kb_ids=kb_ids, db_type=db_type, version=version)

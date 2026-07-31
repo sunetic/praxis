@@ -347,12 +347,7 @@ DEFAULT_PAGE_SOURCE_TEMPLATE_PATH = (
 
 
 def _escape_html(value: str) -> str:
-    return (
-        str(value or "")
-        .replace("&", "&amp;")
-        .replace("<", "&lt;")
-        .replace(">", "&gt;")
-    )
+    return str(value or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
 
 @lru_cache(maxsize=1)

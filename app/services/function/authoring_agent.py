@@ -1,12 +1,13 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, Callable
+from typing import Any
 
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.models import models
-from app.services.function.builder import FunctionBuildRunResult, FunctionBuilderService
+from app.services.function.builder import FunctionBuilderService, FunctionBuildRunResult
 from app.services.function.runtime import FunctionRuntimeResult, FunctionRuntimeService
 
 
@@ -47,7 +48,9 @@ class FunctionAuthoringAgent:
         runtime_factory: Callable[[sessionmaker[Session]], FunctionRuntimeService] | None = None,
     ) -> None:
         self._builder_factory = builder_factory or FunctionBuilderService
-        self._runtime_factory = runtime_factory or (lambda sf: FunctionRuntimeService(session_factory=sf))
+        self._runtime_factory = runtime_factory or (
+            lambda sf: FunctionRuntimeService(session_factory=sf)
+        )
 
     def build_draft(
         self,

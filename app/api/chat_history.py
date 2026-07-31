@@ -60,14 +60,18 @@ def _format_messages_for_llm(messages: list) -> list[dict[str, Any]]:
                     text_parts.append(part["text"])
                 elif part.get("type") == "tool_use":
                     tc_id = part.get("id") or f"tool_{part.get('name', '')}"
-                    tool_calls_openai.append({
-                        "id": tc_id,
-                        "type": "function",
-                        "function": {
-                            "name": part.get("name") or "",
-                            "arguments": json.dumps(part.get("input") or {}, ensure_ascii=False),
-                        },
-                    })
+                    tool_calls_openai.append(
+                        {
+                            "id": tc_id,
+                            "type": "function",
+                            "function": {
+                                "name": part.get("name") or "",
+                                "arguments": json.dumps(
+                                    part.get("input") or {}, ensure_ascii=False
+                                ),
+                            },
+                        }
+                    )
             assistant_msg: dict[str, Any] = {"role": "assistant"}
             if text_parts:
                 assistant_msg["content"] = "\n".join(text_parts)
@@ -80,21 +84,29 @@ def _format_messages_for_llm(messages: list) -> list[dict[str, Any]]:
                     continue
                 tc_id = part.get("id") or f"tool_{part.get('name', '')}"
                 result = part.get("result")
-                result_text = result if isinstance(result, str) else json.dumps(result, ensure_ascii=False, default=str)
-                chat_messages.append({"role": "tool", "tool_call_id": tc_id, "content": result_text})
+                result_text = (
+                    result
+                    if isinstance(result, str)
+                    else json.dumps(result, ensure_ascii=False, default=str)
+                )
+                chat_messages.append(
+                    {"role": "tool", "tool_call_id": tc_id, "content": result_text}
+                )
         elif m.role == "assistant" and m.tool_calls:
             tool_calls_openai = []
             text_content = str(m.content or "").strip()
             for tc in m.tool_calls:
                 tc_id = tc.get("id") or f"tool_{tc.get('name', '')}"
-                tool_calls_openai.append({
-                    "id": tc_id,
-                    "type": "function",
-                    "function": {
-                        "name": tc.get("name") or "",
-                        "arguments": json.dumps(tc.get("input") or {}, ensure_ascii=False),
-                    },
-                })
+                tool_calls_openai.append(
+                    {
+                        "id": tc_id,
+                        "type": "function",
+                        "function": {
+                            "name": tc.get("name") or "",
+                            "arguments": json.dumps(tc.get("input") or {}, ensure_ascii=False),
+                        },
+                    }
+                )
             assistant_msg = {"role": "assistant"}
             if text_content:
                 assistant_msg["content"] = text_content
@@ -105,8 +117,14 @@ def _format_messages_for_llm(messages: list) -> list[dict[str, Any]]:
             for tc in m.tool_calls:
                 tc_id = tc.get("id") or f"tool_{tc.get('name', '')}"
                 result = tc.get("result")
-                result_text = result if isinstance(result, str) else json.dumps(result, ensure_ascii=False, default=str)
-                chat_messages.append({"role": "tool", "tool_call_id": tc_id, "content": result_text})
+                result_text = (
+                    result
+                    if isinstance(result, str)
+                    else json.dumps(result, ensure_ascii=False, default=str)
+                )
+                chat_messages.append(
+                    {"role": "tool", "tool_call_id": tc_id, "content": result_text}
+                )
         else:
             chat_messages.append({"role": m.role, "content": m.content})
     return chat_messages

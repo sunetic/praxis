@@ -23,7 +23,7 @@ def main(payload, context):
     execution_mode = context.get("execution_mode", "plan")
     dry_run = execution_mode == "plan"
 
-    schedules = platform.list("scheduler")
+    schedules = platform.list("scheduler")  # noqa: F821
 
     results = []
     for sched in schedules:
@@ -31,7 +31,7 @@ def main(payload, context):
         if not schedule_id:
             continue
 
-        deleted = scheduler_history.delete(
+        deleted = scheduler_history.delete(  # noqa: F821
             where={"schedule_id": schedule_id},
             policy={"retention_seconds": retention_seconds},
             dry_run=dry_run,

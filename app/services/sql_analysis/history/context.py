@@ -4,6 +4,7 @@ import json
 from typing import Any
 
 from app.schemas import schemas
+from app.services.llm import get_llm_client
 from app.services.sql_analysis.history.facts_builder import (
     build_monitor_sql_rollup,
     build_sql_facts_payload,
@@ -14,13 +15,15 @@ from app.services.sql_analysis.history.queries import (
     get_monitor_sql_trend,
     list_monitor_plan_history,
 )
-from app.services.sql_analysis.history.signals import build_monitor_signals, detect_monitor_matched_categories
+from app.services.sql_analysis.history.signals import (
+    build_monitor_signals,
+    detect_monitor_matched_categories,
+)
 from app.services.sql_analysis.utils import (
     _normalize_json_value,
     _parse_llm_json_object,
     _truncate_text,
 )
-from app.services.llm import get_llm_client
 
 
 def _build_llm_context(context: dict[str, Any]) -> dict[str, Any]:
@@ -68,7 +71,9 @@ async def build_monitor_sql_context(
         datasource_id=datasource_id,
         tenant_id=tenant_id,
     )
-    tenant_id = tenant_id if tenant_id is not None else (detail.get("ob_tenant_id") if detail else None)
+    tenant_id = (
+        tenant_id if tenant_id is not None else (detail.get("ob_tenant_id") if detail else None)
+    )
     trend = await get_monitor_sql_trend(
         sql_id=sql_id,
         start_time_us=start_time_us,
@@ -195,7 +200,9 @@ async def explain_monitor_sql_with_ai(
         break
     if response is None:
         raise ValueError("LLM returned no response payload")
-    content = (((response.get("choices") or [{}])[0].get("message") or {}).get("content") or "").strip()
+    content = (
+        ((response.get("choices") or [{}])[0].get("message") or {}).get("content") or ""
+    ).strip()
     payload = _parse_llm_json_object(content)
     return {
         "datasource_id": datasource_id,
@@ -203,11 +210,17 @@ async def explain_monitor_sql_with_ai(
         "category": category,
         "context": context,
         "summary": str(payload.get("summary") or "").strip(),
-        "risk_points": [str(item).strip() for item in (payload.get("risk_points") or []) if str(item).strip()],
+        "risk_points": [
+            str(item).strip() for item in (payload.get("risk_points") or []) if str(item).strip()
+        ],
         "investigation_steps": [
-            str(item).strip() for item in (payload.get("investigation_steps") or []) if str(item).strip()
+            str(item).strip()
+            for item in (payload.get("investigation_steps") or [])
+            if str(item).strip()
         ],
         "optimization_directions": [
-            str(item).strip() for item in (payload.get("optimization_directions") or []) if str(item).strip()
+            str(item).strip()
+            for item in (payload.get("optimization_directions") or [])
+            if str(item).strip()
         ],
     }

@@ -1,11 +1,10 @@
 from __future__ import annotations
 
+import re
 from dataclasses import asdict, dataclass
 from html.parser import HTMLParser
 from pathlib import Path
-import re
 from typing import Any
-
 
 _MAX_EXCERPT_CHARS = 32000
 _MAX_VISIBLE_TEXTS = 24
@@ -70,8 +69,12 @@ def build_default_page_semantic_review_payload(
     raw_semantic_review: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     raw = raw_semantic_review if isinstance(raw_semantic_review, dict) else {}
-    page_purpose = _normalize_text(str(raw.get("page_purpose") or "")) or _derive_page_purpose(prompt)
-    primary_workflow = _normalize_string_list(raw.get("primary_workflow")) or _derive_primary_workflow(
+    page_purpose = _normalize_text(str(raw.get("page_purpose") or "")) or _derive_page_purpose(
+        prompt
+    )
+    primary_workflow = _normalize_string_list(
+        raw.get("primary_workflow")
+    ) or _derive_primary_workflow(
         prompt=prompt,
         conversation_context=conversation_context,
     )
@@ -88,7 +91,9 @@ def build_default_page_semantic_review_payload(
     }
 
 
-_FRONTEND_PAGE_PATTERN = re.compile(r"frontend/src/.*(?<!\.test)(?<!\.spec)\.(tsx|jsx)$", re.IGNORECASE)
+_FRONTEND_PAGE_PATTERN = re.compile(
+    r"frontend/src/.*(?<!\.test)(?<!\.spec)\.(tsx|jsx)$", re.IGNORECASE
+)
 
 
 def _is_frontend_page(file_path: Path) -> bool:
@@ -108,9 +113,9 @@ def _load_design_spec(repo_root: str | Path) -> str:
     if raw.startswith("---"):
         end = raw.find("---", 3)
         if end >= 0:
-            raw = raw[end + 3:].strip()
+            raw = raw[end + 3 :].strip()
     if len(raw) > _MAX_DESIGN_SPEC_CHARS:
-        raw = raw[:_MAX_DESIGN_SPEC_CHARS - 3].rstrip() + "..."
+        raw = raw[: _MAX_DESIGN_SPEC_CHARS - 3].rstrip() + "..."
     return raw
 
 
@@ -136,7 +141,9 @@ def build_repo_page_file_review_evidence(
     ):
         primary_workflow.append("按需进入对话补充分析")
     design_spec = _load_design_spec(repo_root) if _is_frontend_page(path_obj) else ""
-    child_component_texts = _extract_child_component_texts(source_code, path_obj, repo_root) if repo_root else {}
+    child_component_texts = (
+        _extract_child_component_texts(source_code, path_obj, repo_root) if repo_root else {}
+    )
     observations = _normalize_string_list(semantic_review.get("observations"))
     observations.extend(_derive_child_observations(child_component_texts))
     page_purpose = str(semantic_review.get("page_purpose") or "")
@@ -157,7 +164,12 @@ def build_repo_page_file_review_evidence(
         ),
         "drawer_layout_windows": _extract_source_windows(
             source_code,
-            markers=("<Drawer open=", "<DrawerBody", 'drawerMode === "chat"', 'drawerMode === "detail"'),
+            markers=(
+                "<Drawer open=",
+                "<DrawerBody",
+                'drawerMode === "chat"',
+                'drawerMode === "detail"',
+            ),
             max_chars=_MAX_DRAWER_CONTEXT_CHARS,
         ),
         "source_excerpt": _truncate(review_source),
@@ -217,7 +229,9 @@ class _VisibleTextParser(HTMLParser):
             self.heading_texts.append(text)
 
 
-def normalize_page_semantic_review_config(orchestration: dict[str, Any] | None) -> PageSemanticReviewConfig | None:
+def normalize_page_semantic_review_config(
+    orchestration: dict[str, Any] | None,
+) -> PageSemanticReviewConfig | None:
     if not isinstance(orchestration, dict):
         return None
     raw = orchestration.get("semantic_review")
@@ -236,8 +250,12 @@ def normalize_page_semantic_review_config(orchestration: dict[str, Any] | None) 
     )
 
 
-def build_page_review_evidence(*, page: Any, config: PageSemanticReviewConfig) -> PageReviewEvidencePacket:
-    draft_payload = page.draft_payload if isinstance(getattr(page, "draft_payload", None), dict) else {}
+def build_page_review_evidence(
+    *, page: Any, config: PageSemanticReviewConfig
+) -> PageReviewEvidencePacket:
+    draft_payload = (
+        page.draft_payload if isinstance(getattr(page, "draft_payload", None), dict) else {}
+    )
     source = draft_payload.get("source") if isinstance(draft_payload.get("source"), dict) else {}
     runtime = draft_payload.get("runtime") if isinstance(draft_payload.get("runtime"), dict) else {}
     source_code = str(source.get("code") or "").strip()
@@ -290,7 +308,9 @@ def _extract_visible_texts_from_source(source_code: str) -> list[str]:
 
 
 def _extract_heading_texts_from_source(source_code: str) -> list[str]:
-    matches = re.findall(r"<h[1-3][^>]*>([^<>{}\n][^<>{}]*)</h[1-3]>", source_code, flags=re.IGNORECASE)
+    matches = re.findall(
+        r"<h[1-3][^>]*>([^<>{}\n][^<>{}]*)</h[1-3]>", source_code, flags=re.IGNORECASE
+    )
     texts: list[str] = []
     for item in matches:
         normalized = _normalize_text(item)
@@ -301,7 +321,9 @@ def _extract_heading_texts_from_source(source_code: str) -> list[str]:
 
 def _extract_control_counts_from_source(source_code: str) -> dict[str, int]:
     lowered = source_code.lower()
-    drawer_count = (1 if re.search(r"<Drawer(?:\s|>)", source_code) else 0) + source_code.count("<DetailDrawer")
+    drawer_count = (1 if re.search(r"<Drawer(?:\s|>)", source_code) else 0) + source_code.count(
+        "<DetailDrawer"
+    )
     return {
         "button": lowered.count("<button") + source_code.count("<Button"),
         "input": lowered.count("<input") + source_code.count("<Input"),
@@ -364,7 +386,6 @@ _TASK_REQUEST_MARKERS = re.compile(
 )
 
 
-
 def _looks_like_task_request(text: str) -> bool:
     """Return True when text reads like a change request rather than a page purpose description."""
     return bool(_TASK_REQUEST_MARKERS.search(text))
@@ -395,7 +416,9 @@ def _derive_page_purpose_from_source(
     return "页面功能: " + "、".join(hints) + "。审查时以源码实现为准，不以 task request 推断缺失。"
 
 
-def _verify_design_patterns(source_code: str, child_component_texts: dict[str, Any]) -> dict[str, bool]:
+def _verify_design_patterns(
+    source_code: str, child_component_texts: dict[str, Any]
+) -> dict[str, bool]:
     """Pre-verify key design patterns by scanning source code. Results are authoritative."""
     all_sources = source_code
     for info in child_component_texts.values():
@@ -409,11 +432,17 @@ def _verify_design_patterns(source_code: str, child_component_texts: dict[str, A
         "uses_FilterToolbar": "FilterToolbar" in source_code,
         "uses_ListTable": "ListTable" in source_code,
         "uses_Drawer": "<Drawer" in source_code,
-        "uses_design_tokens": any(t in all_sources for t in ("bg-card", "text-foreground", "border-border")),
+        "uses_design_tokens": any(
+            t in all_sources for t in ("bg-card", "text-foreground", "border-border")
+        ),
         "uses_animate_in": "animate-in" in all_sources,
         "uses_lucide_react": "lucide-react" in all_sources,
-        "has_loading_state": any(t in all_sources for t in ("isLoading", "loading", "Skeleton", "LoadingRows")),
-        "has_empty_state": any(t in all_sources for t in ("empty", "暂无", "no data", "length === 0")),
+        "has_loading_state": any(
+            t in all_sources for t in ("isLoading", "loading", "Skeleton", "LoadingRows")
+        ),
+        "has_empty_state": any(
+            t in all_sources for t in ("empty", "暂无", "no data", "length === 0")
+        ),
         "has_error_state": any(t in all_sources for t in ("error", "Error", "错误")),
         "has_tabular_data_intent": has_tabular_data_intent,
     }
@@ -538,18 +567,31 @@ def _build_repo_review_scope_source(source_code: str) -> str:
         snippets.append(primary_windows)
 
     # 3. Drawer-specific context
-    const_blocks = _extract_named_const_blocks(source_code, names=("drawerTitle", "drawerDescription", "drawerContextText"))
+    const_blocks = _extract_named_const_blocks(
+        source_code, names=("drawerTitle", "drawerDescription", "drawerContextText")
+    )
     for key in ("drawerTitle", "drawerDescription", "drawerContextText"):
         block = const_blocks.get(key)
         if block:
             snippets.append(block)
-    for fn_name in ("renderDiagnosisPanel", "renderDeepCheckPanel", "renderTenantConfigPanel", "StatsDrawerHeader", "StatsDrawerStatusStrip"):
+    for fn_name in (
+        "renderDiagnosisPanel",
+        "renderDeepCheckPanel",
+        "renderTenantConfigPanel",
+        "StatsDrawerHeader",
+        "StatsDrawerStatusStrip",
+    ):
         block = _extract_function_block(lines, name=fn_name)
         if block:
             snippets.append(_truncate(block, max_chars=1200))
     drawer_windows = _extract_source_windows(
         source_code,
-        markers=("<Drawer open=", "<DrawerBody", 'drawerMode === "chat"', 'drawerMode === "detail"'),
+        markers=(
+            "<Drawer open=",
+            "<DrawerBody",
+            'drawerMode === "chat"',
+            'drawerMode === "detail"',
+        ),
         max_chars=_MAX_DRAWER_CONTEXT_CHARS,
     )
     if drawer_windows:

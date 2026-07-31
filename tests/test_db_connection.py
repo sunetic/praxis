@@ -115,7 +115,10 @@ class FlakyCursor(DummyCursor):
         self.calls.append(args)
         if not self._failed_once:
             self._failed_once = True
-            raise Exception(2013, "Lost connection to MySQL server during query ([Errno 60] Operation timed out)")
+            raise Exception(
+                2013,
+                "Lost connection to MySQL server during query ([Errno 60] Operation timed out)",
+            )
 
 
 @pytest.mark.anyio

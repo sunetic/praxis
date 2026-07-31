@@ -10,20 +10,19 @@ from typing import Any
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
+from opentelemetry import trace
 from sqlalchemy.orm import Session, sessionmaker
 
-from opentelemetry import trace
-
 from app.core.logging import fmt_kv, get_logger
-
-tracer = trace.get_tracer("app.services.scheduler.worker")
 from app.db.database import SessionLocal
 from app.models import models
+from app.services.agent.scheduled_runner import ScheduledAgentRunner
 from app.services.function.runtime import FunctionRuntimeService
 from app.services.lifecycle import ScheduleLifecycleService
-from app.services.agent.scheduled_runner import ScheduledAgentRunner
 from app.services.scheduler.result import ScheduleRuntimeResult
 from app.services.scheduler.runtime import ScheduleTargetRuntimeService
+
+tracer = trace.get_tracer("app.services.scheduler.worker")
 
 logger = get_logger("scheduler.worker")
 
@@ -90,13 +89,15 @@ class SchedulerWorker:
             self._event_loop = None
             logger.info("scheduler_stopped")
         if self._background_tasks:
-            logger.info("scheduler_waiting_background_tasks %s", fmt_kv(count=len(self._background_tasks)))
+            logger.info(
+                "scheduler_waiting_background_tasks %s", fmt_kv(count=len(self._background_tasks))
+            )
             try:
                 await asyncio.wait_for(
                     asyncio.gather(*self._background_tasks, return_exceptions=True),
                     timeout=120.0,
                 )
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 logger.warning("scheduler_background_tasks_timeout")
         self._target_runtime.shutdown()
 
@@ -166,7 +167,9 @@ class SchedulerWorker:
             future.result(timeout=max(timeout_seconds, 0.1))
             return True
         except FutureTimeoutError:
-            logger.warning("scheduler_refresh_request_timeout %s", fmt_kv(timeout_seconds=timeout_seconds))
+            logger.warning(
+                "scheduler_refresh_request_timeout %s", fmt_kv(timeout_seconds=timeout_seconds)
+            )
             return False
         except Exception as exc:
             logger.warning("scheduler_refresh_request_failed error=%s", str(exc))
@@ -204,11 +207,7 @@ class SchedulerWorker:
     async def _sync_active_schedules(self) -> None:
         db = self._session_factory()
         try:
-            schedules = (
-                db.query(models.Schedule)
-                .filter(models.Schedule.status == "active")
-                .all()
-            )
+            schedules = db.query(models.Schedule).filter(models.Schedule.status == "active").all()
             active_ids: set[str] = set()
             for schedule in schedules:
                 try:
@@ -352,12 +351,19 @@ class SchedulerWorker:
 
         cancelled_error: asyncio.CancelledError | None = None
         try:
-            runtime_result = await self._invoke_runtime(schedule_snapshot, trigger_type, trace_id=trace_id)
+            runtime_result = await self._invoke_runtime(
+                schedule_snapshot, trigger_type, trace_id=trace_id
+            )
         except asyncio.CancelledError as exc:
             cancelled_error = exc
             runtime_result = ScheduleRuntimeResult(
-                run_id="", status="failed", output=None, output_summary=None,
-                error_class="cancelled", error_message="Schedule invocation cancelled", duration_ms=0,
+                run_id="",
+                status="failed",
+                output=None,
+                output_summary=None,
+                error_class="cancelled",
+                error_message="Schedule invocation cancelled",
+                duration_ms=0,
             )
         except Exception as exc:
             logger.exception(
@@ -365,8 +371,13 @@ class SchedulerWorker:
                 fmt_kv(trace_id=trace_id, schedule_id=schedule_id_val, run_id=run_id_str),
             )
             runtime_result = ScheduleRuntimeResult(
-                run_id="", status="failed", output=None, output_summary=None,
-                error_class="runtime", error_message=str(exc), duration_ms=0,
+                run_id="",
+                status="failed",
+                output=None,
+                output_summary=None,
+                error_class="runtime",
+                error_message=str(exc),
+                duration_ms=0,
             )
         finished_at = datetime.utcnow()
 
@@ -385,7 +396,9 @@ class SchedulerWorker:
                 if run is not None:
                     run.status = "success"
                 db.commit()
-                schedule_row = db.query(models.Schedule).filter(models.Schedule.id == schedule_id_val).first()
+                schedule_row = (
+                    db.query(models.Schedule).filter(models.Schedule.id == schedule_id_val).first()
+                )
                 if schedule_row is not None:
                     schedule_row.last_run_at = finished_at
                     if schedule_status == "active":
@@ -406,7 +419,9 @@ class SchedulerWorker:
         finally:
             db.close()
 
-    async def _execute_schedule(self, *, schedule_id: int, trigger_type: str, trace_id: str | None = None) -> str:
+    async def _execute_schedule(
+        self, *, schedule_id: int, trigger_type: str, trace_id: str | None = None
+    ) -> str:
         correlation_id = str(uuid.uuid4())
         trace_id = trace_id or correlation_id
         logger.info(
@@ -424,13 +439,19 @@ class SchedulerWorker:
             # Phase 1: load schedule (short-lived session).
             db = self._session_factory()
             try:
-                schedule = db.query(models.Schedule).filter(models.Schedule.id == schedule_id).first()
+                schedule = (
+                    db.query(models.Schedule).filter(models.Schedule.id == schedule_id).first()
+                )
                 if schedule is None:
                     raise ValueError(f"Schedule {schedule_id} not found")
                 if trigger_type == "scheduled" and schedule.status != "active":
                     logger.info(
                         "schedule_execute_skipped %s",
-                        fmt_kv(schedule_id=schedule_id, trigger_type=trigger_type, status=schedule.status),
+                        fmt_kv(
+                            schedule_id=schedule_id,
+                            trigger_type=trigger_type,
+                            status=schedule.status,
+                        ),
                     )
                     return ""
                 # Snapshot fields needed after session close.
@@ -476,7 +497,9 @@ class SchedulerWorker:
                 # Phase 3: invoke runtime — no DB connection held.
                 cancelled_error: asyncio.CancelledError | None = None
                 try:
-                    runtime_result = await self._invoke_runtime(schedule_snapshot, trigger_type, trace_id=trace_id)
+                    runtime_result = await self._invoke_runtime(
+                        schedule_snapshot, trigger_type, trace_id=trace_id
+                    )
                 except asyncio.CancelledError as exc:
                     cancelled_error = exc
                     runtime_result = ScheduleRuntimeResult(
@@ -512,7 +535,9 @@ class SchedulerWorker:
                 # Phase 4: write result (short-lived session).
                 db = self._session_factory()
                 try:
-                    run = db.query(models.ScheduleRun).filter(models.ScheduleRun.id == run_pk).first()
+                    run = (
+                        db.query(models.ScheduleRun).filter(models.ScheduleRun.id == run_pk).first()
+                    )
                     if run is not None:
                         run.runtime_run_id = runtime_result.run_id or None
                         run.runtime_status = runtime_result.status
@@ -526,15 +551,21 @@ class SchedulerWorker:
                             run.status = "success"
                         db.commit()
 
-                        schedule_row = db.query(models.Schedule).filter(models.Schedule.id == schedule_id_val).first()
+                        schedule_row = (
+                            db.query(models.Schedule)
+                            .filter(models.Schedule.id == schedule_id_val)
+                            .first()
+                        )
                         if schedule_row is not None:
                             schedule_row.last_run_at = finished_at
                             if schedule_status == "active":
-                                schedule_row.next_run_at = self._lifecycle_service.calculate_next_run_at(
-                                    schedule_type=schedule_type,
-                                    cron_expression=cron_expression,
-                                    interval_seconds=interval_seconds,
-                                    now=finished_at,
+                                schedule_row.next_run_at = (
+                                    self._lifecycle_service.calculate_next_run_at(
+                                        schedule_type=schedule_type,
+                                        cron_expression=cron_expression,
+                                        interval_seconds=interval_seconds,
+                                        now=finished_at,
+                                    )
                                 )
                         db.commit()
                         span.set_attribute("scheduler.outcome", "success")
@@ -555,10 +586,13 @@ class SchedulerWorker:
                         if run is not None:
                             run.status = "retrying"
                         db.commit()
-                        span.add_event("scheduler.retry", {
-                            "attempt": attempt_index + 1,
-                            "error_class": runtime_result.error_class or "",
-                        })
+                        span.add_event(
+                            "scheduler.retry",
+                            {
+                                "attempt": attempt_index + 1,
+                                "error_class": runtime_result.error_class or "",
+                            },
+                        )
                         logger.warning(
                             "schedule_execute_retry %s",
                             fmt_kv(

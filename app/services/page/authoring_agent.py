@@ -6,10 +6,10 @@ from datetime import UTC, datetime
 from typing import Any
 
 from app.models import models
-from app.services.platform.coding_engine import CodingEngineApplyResult
 from app.services.page.chat_agent import PageChatAgent
 from app.services.page.review_agent import PageReviewAgent
 from app.services.page.review_evidence import normalize_page_semantic_review_config
+from app.services.platform.coding_engine import CodingEngineApplyResult
 from app.services.platform.workspace_store import WorkspaceStore
 
 
@@ -84,7 +84,9 @@ class PageVerifier:
     def __init__(self, *, review_agent: PageReviewAgent | None = None) -> None:
         self._review_agent = review_agent
 
-    def verify(self, *, page: models.Page, orchestration: dict[str, Any] | None = None) -> PageVerificationResult:
+    def verify(
+        self, *, page: models.Page, orchestration: dict[str, Any] | None = None
+    ) -> PageVerificationResult:
         payload = page.draft_payload if isinstance(page.draft_payload, dict) else {}
         checks: list[dict[str, Any]] = []
         diagnostics: list[str] = []
@@ -92,7 +94,9 @@ class PageVerifier:
 
         version = str(payload.get("version") or "")
         version_ok = version == "page-runtime-v2"
-        checks.append({"name": "runtime_version", "passed": version_ok, "value": version or "<empty>"})
+        checks.append(
+            {"name": "runtime_version", "passed": version_ok, "value": version or "<empty>"}
+        )
         if not version_ok:
             diagnostics.append("draft_payload.version 必须是 page-runtime-v2")
 
@@ -127,7 +131,9 @@ class PageVerifier:
                 }
             )
             if not review_inputs_ok:
-                diagnostics.append("semantic_review 缺少必要输入：page_purpose / primary_workflow / anti_goals")
+                diagnostics.append(
+                    "semantic_review 缺少必要输入：page_purpose / primary_workflow / anti_goals"
+                )
             elif source_ok and runtime_ok:
                 try:
                     review_agent = self._review_agent or PageReviewAgent()
@@ -192,7 +198,9 @@ class PageAuthoringAgent:
         if event_callback is not None:
             goal_text = str(plan.goal or "").strip()
             goal_preview = goal_text.split("\n")[0][:200] if goal_text else ""
-            _emit_authoring_plan_event(event_callback, summary=goal_preview or "需求规划 · 进入构建阶段")
+            _emit_authoring_plan_event(
+                event_callback, summary=goal_preview or "需求规划 · 进入构建阶段"
+            )
         apply = self._builder.build(
             page=page,
             goal=plan.goal,
@@ -209,13 +217,15 @@ def _emit_authoring_plan_event(
     summary: str,
 ) -> None:
     try:
-        event_callback({
-            "type": "phase",
-            "phase": "plan",
-            "status": "done",
-            "summary": summary,
-            "created_at": datetime.now(UTC).isoformat(),
-            "payload": {"source": "llm", "agent": "PagePlanner"},
-        })
+        event_callback(
+            {
+                "type": "phase",
+                "phase": "plan",
+                "status": "done",
+                "summary": summary,
+                "created_at": datetime.now(UTC).isoformat(),
+                "payload": {"source": "llm", "agent": "PagePlanner"},
+            }
+        )
     except Exception:
         pass

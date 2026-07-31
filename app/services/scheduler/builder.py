@@ -9,10 +9,10 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
-
 from app.core.logging import get_logger
 from app.services.json_schema_validator import JsonSchemaValidationError, validate_json_object
 from app.services.llm import LLMClient, get_llm_client
+
 logger = get_logger("builder.runtime")
 
 
@@ -23,11 +23,11 @@ def _utc_now_iso() -> str:
 def _compact_whitespace(text: str) -> str:
     return re.sub(r"\s+", " ", text).strip()
 
+
 @dataclass(frozen=True)
 class SchedulerBuildResult:
     patch: dict[str, Any]
     summary: str
-
 
 
 class SchedulerBuilderService:
@@ -57,7 +57,9 @@ class SchedulerBuilderService:
             current=projected_current,
         )
         raw_patch = parsed.get("patch") if isinstance(parsed.get("patch"), dict) else parsed
-        patch = self._normalize_patch(raw_patch if isinstance(raw_patch, dict) else {}, current=projected_current)
+        patch = self._normalize_patch(
+            raw_patch if isinstance(raw_patch, dict) else {}, current=projected_current
+        )
         summary = str(parsed.get("summary") or "").strip() if isinstance(parsed, dict) else ""
         if not summary:
             summary = self._summarize(patch, projected_current)
@@ -73,7 +75,9 @@ class SchedulerBuilderService:
             "timezone": str(current.get("timezone") or "Asia/Shanghai").strip() or "Asia/Shanghai",
         }
 
-    def _generate_scheduler_patch_payload(self, *, prompt: str, current: dict[str, Any]) -> dict[str, Any]:
+    def _generate_scheduler_patch_payload(
+        self, *, prompt: str, current: dict[str, Any]
+    ) -> dict[str, Any]:
         payload = {
             "user_prompt": prompt,
             "current_schedule": current,
@@ -113,12 +117,16 @@ class SchedulerBuilderService:
     def _normalize_patch(self, patch: dict[str, Any], *, current: dict[str, Any]) -> dict[str, Any]:
         pre_normalized = dict(patch)
         if "schedule_type" in pre_normalized:
-            pre_normalized["schedule_type"] = str(pre_normalized.get("schedule_type") or "").strip().lower()
+            pre_normalized["schedule_type"] = (
+                str(pre_normalized.get("schedule_type") or "").strip().lower()
+            )
         if "status" in pre_normalized:
             pre_normalized["status"] = str(pre_normalized.get("status") or "").strip().lower()
         if "cron_expression" in pre_normalized:
             raw_cron = pre_normalized.get("cron_expression")
-            pre_normalized["cron_expression"] = None if raw_cron is None else str(raw_cron).strip() or None
+            pre_normalized["cron_expression"] = (
+                None if raw_cron is None else str(raw_cron).strip() or None
+            )
         if "timezone" in pre_normalized:
             raw_timezone = str(pre_normalized.get("timezone") or "").strip()
             pre_normalized["timezone"] = raw_timezone or None
@@ -133,7 +141,9 @@ class SchedulerBuilderService:
         except JsonSchemaValidationError as err:
             raise ValueError(str(err)) from err
 
-        effective_schedule_type = normalized.get("schedule_type") or current.get("schedule_type") or "cron"
+        effective_schedule_type = (
+            normalized.get("schedule_type") or current.get("schedule_type") or "cron"
+        )
         if effective_schedule_type == "interval":
             normalized["cron_expression"] = None
         elif effective_schedule_type == "cron":
@@ -154,7 +164,9 @@ class SchedulerBuilderService:
             break
         if response is None:
             raise ValueError("LLM returned empty response")
-        content = (((response.get("choices") or [{}])[0].get("message") or {}).get("content") or "").strip()
+        content = (
+            ((response.get("choices") or [{}])[0].get("message") or {}).get("content") or ""
+        ).strip()
         if not content:
             raise ValueError("LLM did not return a structured patch")
         return content

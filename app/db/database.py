@@ -158,7 +158,9 @@ def _migrate_runtime_object_schema() -> None:
             )
             if engine.dialect.name == "sqlite":
                 conn.execute(text("DROP INDEX IF EXISTS ux_functions_name"))
-            conn.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS ux_functions_slug ON functions (slug)"))
+            conn.execute(
+                text("CREATE UNIQUE INDEX IF NOT EXISTS ux_functions_slug ON functions (slug)")
+            )
 
         if "schedules" in table_names:
             conn.execute(
@@ -333,7 +335,9 @@ def _migrate_function_schema() -> None:
     existing_columns = {col["name"] for col in inspector.get_columns("functions")}
     if "kind" not in existing_columns:
         with engine.begin() as conn:
-            conn.execute(text("ALTER TABLE functions ADD COLUMN kind VARCHAR(50) NOT NULL DEFAULT 'custom'"))
+            conn.execute(
+                text("ALTER TABLE functions ADD COLUMN kind VARCHAR(50) NOT NULL DEFAULT 'custom'")
+            )
         logger.info("function_schema_migrated %s", fmt_kv(added_column="kind"))
 
 
@@ -396,6 +400,10 @@ def _migrate_chat_event_schema() -> None:
         with engine.begin() as conn:
             for stmt in alter_statements:
                 conn.execute(text(stmt))
-            conn.execute(text("CREATE INDEX IF NOT EXISTS ix_chat_events_turn_seq ON chat_events (conversation_id, turn_seq, part_seq, id)"))
+            conn.execute(
+                text(
+                    "CREATE INDEX IF NOT EXISTS ix_chat_events_turn_seq ON chat_events (conversation_id, turn_seq, part_seq, id)"
+                )
+            )
 
     logger.info("chat_event_schema_migration_success %s", fmt_kv(count=len(alter_statements)))

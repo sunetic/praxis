@@ -277,7 +277,9 @@ async def test_function_api_write_apply_requires_confirm(session_factory: Any):
 
 
 @pytest.mark.anyio
-async def test_function_api_scheduler_history_delete_uses_plan_and_apply_semantics(session_factory: Any):
+async def test_function_api_scheduler_history_delete_uses_plan_and_apply_semantics(
+    session_factory: Any,
+):
     db = session_factory()
     try:
         schedule = models.Schedule(
@@ -333,7 +335,11 @@ async def test_function_api_scheduler_history_delete_uses_plan_and_apply_semanti
         draft_run = await functions_api.invoke_function(
             fn_id,
             {
-                "payload": {"schedule_id": schedule.id, "retention_seconds": 30 * 24 * 3600, "dry_run": True},
+                "payload": {
+                    "schedule_id": schedule.id,
+                    "retention_seconds": 30 * 24 * 3600,
+                    "dry_run": True,
+                },
                 "runtime_path": "draft",
                 "execution_mode": "plan",
                 "write_mode": "readonly",
@@ -344,7 +350,11 @@ async def test_function_api_scheduler_history_delete_uses_plan_and_apply_semanti
         assert draft_run["output"]["dry_run"] is True
         assert draft_run["output"]["candidate_count"] == 1
 
-        unchanged_count = db.query(models.ScheduleRun).filter(models.ScheduleRun.schedule_id == schedule.id).count()
+        unchanged_count = (
+            db.query(models.ScheduleRun)
+            .filter(models.ScheduleRun.schedule_id == schedule.id)
+            .count()
+        )
         assert unchanged_count == 2
 
         released = functions_api.release_function(fn_id, {}, db=db)
@@ -353,7 +363,11 @@ async def test_function_api_scheduler_history_delete_uses_plan_and_apply_semanti
         apply_run = await functions_api.invoke_function(
             fn_id,
             {
-                "payload": {"schedule_id": schedule.id, "retention_seconds": 30 * 24 * 3600, "dry_run": False},
+                "payload": {
+                    "schedule_id": schedule.id,
+                    "retention_seconds": 30 * 24 * 3600,
+                    "dry_run": False,
+                },
                 "runtime_path": "production",
                 "execution_mode": "apply",
                 "write_mode": "write",
@@ -405,7 +419,9 @@ async def test_function_chat_invoke_returns_structured_lifecycle_error(session_f
 
 
 @pytest.mark.anyio
-async def test_function_chat_invoke_failed_result_contains_structured_error_code(session_factory: Any):
+async def test_function_chat_invoke_failed_result_contains_structured_error_code(
+    session_factory: Any,
+):
     db = session_factory()
     try:
         fn = functions_api.create_function(
@@ -571,7 +587,9 @@ def test_schedule_api_rejects_invalid_timezone(session_factory: Any):
         db.close()
 
 
-def test_schedule_api_create_triggers_runtime_refresh(session_factory: Any, monkeypatch: pytest.MonkeyPatch):
+def test_schedule_api_create_triggers_runtime_refresh(
+    session_factory: Any, monkeypatch: pytest.MonkeyPatch
+):
     class _FakeWorker:
         def __init__(self) -> None:
             self.full_refresh_calls = 0
@@ -713,7 +731,9 @@ def test_schedule_api_runs_support_offset_and_total_header(session_factory: Any)
         db.commit()
 
         response = Response()
-        runs = schedules_api.list_schedule_runs(schedule_id, limit=2, offset=1, response=response, db=db)
+        runs = schedules_api.list_schedule_runs(
+            schedule_id, limit=2, offset=1, response=response, db=db
+        )
         assert [item["run_id"] for item in runs] == ["run-2", "run-1"]
         assert response.headers.get("X-Total-Count") == "3"
         assert response.headers.get("X-Limit") == "2"
@@ -789,7 +809,9 @@ def test_schedule_api_list_all_runs_supports_global_and_schedule_filter(session_
         db.commit()
 
         response_all = Response()
-        all_runs = schedules_api.list_all_schedule_runs(limit=10, offset=0, response=response_all, db=db)
+        all_runs = schedules_api.list_all_schedule_runs(
+            limit=10, offset=0, response=response_all, db=db
+        )
         assert [item["run_id"] for item in all_runs][:3] == ["run-a-2", "run-b-1", "run-a-1"]
         assert response_all.headers.get("X-Total-Count") == "3"
 

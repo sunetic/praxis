@@ -27,6 +27,7 @@ HANDOFF_MAX_LIST_ITEMS = 6
 
 def _normalize_json_payload(payload: dict | None) -> dict | None:
     import json
+
     if payload is None:
         return None
     return json.loads(json.dumps(payload, default=str, ensure_ascii=False))
@@ -64,8 +65,7 @@ def _trim_handoff_context(value: Any, *, depth: int = 0) -> Any:
         return _truncate_handoff_text(value)
     if isinstance(value, list):
         return [
-            _trim_handoff_context(item, depth=depth + 1)
-            for item in value[:HANDOFF_MAX_LIST_ITEMS]
+            _trim_handoff_context(item, depth=depth + 1) for item in value[:HANDOFF_MAX_LIST_ITEMS]
         ]
     if isinstance(value, dict):
         trimmed: dict[str, Any] = {}
@@ -116,7 +116,9 @@ def _handoff_status(payload: dict[str, Any] | None) -> str:
     raw = ""
     if isinstance(payload, dict):
         raw = str(payload.get("status") or "").strip().lower()
-    return raw if raw in {HANDOFF_STATUS_PENDING, HANDOFF_STATUS_CONSUMED} else HANDOFF_STATUS_PENDING
+    return (
+        raw if raw in {HANDOFF_STATUS_PENDING, HANDOFF_STATUS_CONSUMED} else HANDOFF_STATUS_PENDING
+    )
 
 
 def _handoff_consumed_at(payload: dict[str, Any] | None) -> datetime | None:
@@ -197,9 +199,7 @@ def _format_handoff_context_for_prompt(payload: dict[str, Any] | None) -> str:
         return ""
     source = payload.get("source") if isinstance(payload.get("source"), dict) else {}
     source_label = (
-        str(source.get("label") or "").strip()
-        or str(source.get("page") or "").strip()
-        or "unknown"
+        str(source.get("label") or "").strip() or str(source.get("page") or "").strip() or "unknown"
     )
     source_entry = str(source.get("entry") or "").strip() or "unknown"
     facts = payload.get("facts") if isinstance(payload.get("facts"), list) else []
@@ -207,7 +207,9 @@ def _format_handoff_context_for_prompt(payload: dict[str, Any] | None) -> str:
     datasource = context.get("datasource") if isinstance(context.get("datasource"), dict) else {}
     focus = context.get("focus") if isinstance(context.get("focus"), dict) else {}
     signals = context.get("signals") if isinstance(context.get("signals"), list) else []
-    current_plan = context.get("current_plan") if isinstance(context.get("current_plan"), dict) else {}
+    current_plan = (
+        context.get("current_plan") if isinstance(context.get("current_plan"), dict) else {}
+    )
 
     lines = [
         "Handoff Context (first turn only):",
@@ -304,7 +306,10 @@ def _resolve_handoff_preferred_execution_datasource_id(
     explicit_preferred_execution_datasource_id: int | None,
     packet_context: dict[str, Any] | None,
 ) -> int | None:
-    if isinstance(explicit_preferred_execution_datasource_id, int) and explicit_preferred_execution_datasource_id > 0:
+    if (
+        isinstance(explicit_preferred_execution_datasource_id, int)
+        and explicit_preferred_execution_datasource_id > 0
+    ):
         return explicit_preferred_execution_datasource_id
     if not isinstance(source_datasource_id, int) or source_datasource_id <= 0:
         return None
@@ -314,7 +319,9 @@ def _resolve_handoff_preferred_execution_datasource_id(
         routed = resolve_preferred_execution_datasource(
             db,
             source_datasource_id,
-            tenant_id=datasource.get("tenant_id") if isinstance(datasource.get("tenant_id"), int) else None,
+            tenant_id=datasource.get("tenant_id")
+            if isinstance(datasource.get("tenant_id"), int)
+            else None,
             db_name=str(datasource.get("db_name") or "").strip() or None,
         )
         return routed.datasource.id
@@ -326,6 +333,7 @@ def _resolve_handoff_preferred_execution_datasource_id(
 # Endpoints
 # ---------------------------------------------------------------------------
 
+
 @router.get("/{conversation_id}/events", response_model=list[schemas.ChatEventResponse])
 def list_chat_events(conversation_id: int, db: Session = Depends(get_db)):
     conversation = (
@@ -334,9 +342,7 @@ def list_chat_events(conversation_id: int, db: Session = Depends(get_db)):
     if not conversation:
         raise HTTPException(status_code=404, detail="Conversation not found")
     records = (
-        db.query(models.ChatEvent)
-        .filter(models.ChatEvent.conversation_id == conversation_id)
-        .all()
+        db.query(models.ChatEvent).filter(models.ChatEvent.conversation_id == conversation_id).all()
     )
     return sorted(
         records,
@@ -379,7 +385,9 @@ def create_chat_handoff(
     )
     datasource_id = preferred_execution_datasource_id or source_datasource_id
     if context:
-        execution_context = context.get("execution") if isinstance(context.get("execution"), dict) else {}
+        execution_context = (
+            context.get("execution") if isinstance(context.get("execution"), dict) else {}
+        )
         execution_context.update(
             {
                 "source_datasource_id": source_datasource_id,

@@ -9,13 +9,13 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
 from app.api.chat_agent_draft import _stream_save_agent_workflow
-from app.api.chat_history import load_chat_messages
 from app.api.chat_handoff import (
     HANDOFF_STATUS_PENDING,
     _get_handoff_event,
     _handoff_status,
     _mark_handoff_consumed,
 )
+from app.api.chat_history import load_chat_messages
 from app.core.config import get_settings
 from app.core.logging import fmt_kv, get_logger
 from app.db.database import get_db
@@ -111,12 +111,12 @@ async def chat_stream(
 
     db.refresh(conversation)
     incoming_content = message.content.strip()
-    run_datasource_ids: list[int] = [
-        x for x in (message.run_datasource_ids or []) if x > 0
-    ]
+    run_datasource_ids: list[int] = [x for x in (message.run_datasource_ids or []) if x > 0]
     scene_agent_payload = _extract_scene_agent_payload(message.model_dump())
     locale = message.locale
-    inferred_scene_datasource_id = _infer_datasource_id_from_scene_agent_payload(scene_agent_payload)
+    inferred_scene_datasource_id = _infer_datasource_id_from_scene_agent_payload(
+        scene_agent_payload
+    )
     if (
         conversation.datasource_id is None
         and isinstance(inferred_scene_datasource_id, int)
@@ -141,7 +141,9 @@ async def chat_stream(
             ),
         )
 
-    handoff_id: int | None = message.handoff_id if (message.handoff_id and message.handoff_id > 0) else None
+    handoff_id: int | None = (
+        message.handoff_id if (message.handoff_id and message.handoff_id > 0) else None
+    )
 
     pending_handoff_turn = False
     if handoff_id is not None:
@@ -166,7 +168,9 @@ async def chat_stream(
             .filter(models.DataSource.id == conversation.datasource_id)
             .first()
         )
-    scene_agent_payload = _normalize_scene_agent_payload_datasource(scene_agent_payload, selected_datasource)
+    scene_agent_payload = _normalize_scene_agent_payload_datasource(
+        scene_agent_payload, selected_datasource
+    )
     if (
         not pending_handoff_turn
         and selected_datasource
@@ -210,30 +214,45 @@ async def chat_stream(
     tools = _filter_tools_by_scope(tools, scope_context)
     tools = _inject_service_tools(tools, conversation.datasource_id, db)
     declared_tool_names = _normalize_declared_tool_names(
-        conversation.agent.tools if conversation.agent and isinstance(conversation.agent.tools, list) else None
+        conversation.agent.tools
+        if conversation.agent and isinstance(conversation.agent.tools, list)
+        else None
     )
     scene_agent_registry = SceneAgentRegistry()
     resolved_scene_agent = None
     normalized_scene_payload: SceneAgentPayload | None = None
     scene_agent_fallback_payload: dict[str, Any] | None = None
     if scene_agent_payload:
-        resolved_scene_agent = scene_agent_registry.resolve(str(scene_agent_payload.get("key") or ""))
+        resolved_scene_agent = scene_agent_registry.resolve(
+            str(scene_agent_payload.get("key") or "")
+        )
         if resolved_scene_agent is not None:
             normalized_scene_payload = SceneAgentPayload(
                 key=str(scene_agent_payload.get("key") or "").strip(),
-                context=scene_agent_payload.get("context") if isinstance(scene_agent_payload.get("context"), dict) else {},
-                focus_object=scene_agent_payload.get("focus_object") if isinstance(scene_agent_payload.get("focus_object"), dict) else None,
+                context=scene_agent_payload.get("context")
+                if isinstance(scene_agent_payload.get("context"), dict)
+                else {},
+                focus_object=scene_agent_payload.get("focus_object")
+                if isinstance(scene_agent_payload.get("focus_object"), dict)
+                else None,
                 requested_tools=_normalize_string_list(scene_agent_payload.get("tools"), limit=64),
-                requested_skills=_normalize_string_list(scene_agent_payload.get("skills"), limit=64),
-                source=str(scene_agent_payload.get("source") or "scene_agent").strip() or "scene_agent",
+                requested_skills=_normalize_string_list(
+                    scene_agent_payload.get("skills"), limit=64
+                ),
+                source=str(scene_agent_payload.get("source") or "scene_agent").strip()
+                or "scene_agent",
             )
             declared_tool_names = list(
-                dict.fromkeys(declared_tool_names + resolved_scene_agent.resolve_tools(normalized_scene_payload))
+                dict.fromkeys(
+                    declared_tool_names
+                    + resolved_scene_agent.resolve_tools(normalized_scene_payload)
+                )
             )
         elif scene_agent_payload.get("tools"):
             declared_tool_names = list(
                 dict.fromkeys(
-                    declared_tool_names + _normalize_declared_tool_names(
+                    declared_tool_names
+                    + _normalize_declared_tool_names(
                         _normalize_string_list(scene_agent_payload.get("tools"), limit=64)
                     )
                 )
@@ -328,7 +347,11 @@ async def chat_stream(
     )
     if resolved_scene_agent and normalized_scene_payload:
         existing = list(skill_selection.get("active_skills") or [])
-        merged = list(dict.fromkeys(existing + list(resolved_scene_agent.resolve_skills(normalized_scene_payload))))
+        merged = list(
+            dict.fromkeys(
+                existing + list(resolved_scene_agent.resolve_skills(normalized_scene_payload))
+            )
+        )
         skill_selection["active_skills"] = merged
     elif scene_agent_payload and scene_agent_payload.get("skills"):
         existing = list(skill_selection.get("active_skills") or [])
@@ -474,16 +497,28 @@ async def chat_stream(
             models.ChatEvent.conversation_id == conversation_id,
             models.ChatEvent.turn_seq.is_not(None),
         )
-        .order_by(models.ChatEvent.turn_seq.desc(), models.ChatEvent.part_seq.desc(), models.ChatEvent.id.desc())
+        .order_by(
+            models.ChatEvent.turn_seq.desc(),
+            models.ChatEvent.part_seq.desc(),
+            models.ChatEvent.id.desc(),
+        )
         .first()
     )
     current_turn_seq = (
         int(latest_user_turn_event.turn_seq)
         if latest_user_turn_event and latest_user_turn_event.turn_seq is not None
-        else (int(latest_turn_event.turn_seq) + 1 if latest_turn_event and latest_turn_event.turn_seq is not None else 1)
+        else (
+            int(latest_turn_event.turn_seq) + 1
+            if latest_turn_event and latest_turn_event.turn_seq is not None
+            else 1
+        )
     )
     current_turn_id = str(
-        (latest_user_turn_event.turn_id if latest_user_turn_event and latest_user_turn_event.turn_id else None)
+        (
+            latest_user_turn_event.turn_id
+            if latest_user_turn_event and latest_user_turn_event.turn_id
+            else None
+        )
         or f"turn-{conversation_id}-{current_turn_seq}"
     )
 
@@ -518,20 +553,26 @@ async def chat_stream(
             if not pending_parts:
                 return
             # Derive legacy fields for backward compat
-            text_parts = [p["text"] for p in pending_parts if p.get("type") == "text" and p.get("text")]
+            text_parts = [
+                p["text"] for p in pending_parts if p.get("type") == "text" and p.get("text")
+            ]
             tool_use_parts = [p for p in pending_parts if p.get("type") == "tool_use"]
             legacy_content = text_parts[0] if text_parts else ""
-            legacy_tool_calls = [
-                {
-                    "id": p.get("id", ""),
-                    "name": p.get("name", ""),
-                    "input": p.get("input"),
-                    "result": p.get("result"),
-                    "pending_action_token": p.get("pending_action_token"),
-                    "pending_action_status": p.get("pending_action_status"),
-                }
-                for p in tool_use_parts
-            ] if tool_use_parts else None
+            legacy_tool_calls = (
+                [
+                    {
+                        "id": p.get("id", ""),
+                        "name": p.get("name", ""),
+                        "input": p.get("input"),
+                        "result": p.get("result"),
+                        "pending_action_token": p.get("pending_action_token"),
+                        "pending_action_status": p.get("pending_action_status"),
+                    }
+                    for p in tool_use_parts
+                ]
+                if tool_use_parts
+                else None
+            )
             created_at = datetime.utcnow()
             saved_messages.append(
                 models.Message(
@@ -539,7 +580,9 @@ async def chat_stream(
                     role="assistant",
                     content=legacy_content,
                     agent_name=display_agent_name,
-                    tool_calls=json.loads(_json_dumps_safe(legacy_tool_calls)) if legacy_tool_calls else None,
+                    tool_calls=json.loads(_json_dumps_safe(legacy_tool_calls))
+                    if legacy_tool_calls
+                    else None,
                     content_parts=json.loads(_json_dumps_safe(pending_parts)),
                     created_at=created_at,
                 )
@@ -567,7 +610,9 @@ async def chat_stream(
             pending_parts = []
             assistant_content = ""
 
-        async def _persist_runtime_event(event_type: str, phase: str | None, payload: dict | None) -> None:
+        async def _persist_runtime_event(
+            event_type: str, phase: str | None, payload: dict | None
+        ) -> None:
             normalized_payload = dict(payload or {})
             if "trace_id" not in normalized_payload:
                 normalized_payload["trace_id"] = trace_id
@@ -595,7 +640,9 @@ async def chat_stream(
                 "type": "skill_delta",
                 "data": skill_delta_payload,
             }
-            yield _event_to_vds(_annotate_runtime_event(skill_delta_event, agent_name=display_agent_name))
+            yield _event_to_vds(
+                _annotate_runtime_event(skill_delta_event, agent_name=display_agent_name)
+            )
             async for event in chat_agent.stream_general_chat(
                 messages=chat_messages,
                 tools=tools if tools else None,
@@ -620,20 +667,28 @@ async def chat_stream(
                             pending_parts.append({"type": "text", "text": assistant_content})
                         assistant_content = ""
                     tc_id = event_data.get("tool_call_id") or ""
-                    pending_parts.append({
-                        "type": "tool_use",
-                        "id": tc_id,
-                        "name": event_data.get("name") or "",
-                        "input": _safe_parse_arguments(event_data.get("arguments")),
-                        "result": None,
-                        "pending_action_token": None,
-                        "pending_action_status": None,
-                    })
+                    pending_parts.append(
+                        {
+                            "type": "tool_use",
+                            "id": tc_id,
+                            "name": event_data.get("name") or "",
+                            "input": _safe_parse_arguments(event_data.get("arguments")),
+                            "result": None,
+                            "pending_action_token": None,
+                            "pending_action_status": None,
+                        }
+                    )
                 elif event_type == "tool_result":
                     tc_id = event_data.get("tool_call_id") or ""
                     result_payload = event_data.get("result") or {}
-                    result_full = result_payload if isinstance(result_payload, dict) else {"data": result_payload}
-                    result_data = result_full.get("data") if isinstance(result_full, dict) else result_full
+                    result_full = (
+                        result_payload
+                        if isinstance(result_payload, dict)
+                        else {"data": result_payload}
+                    )
+                    result_data = (
+                        result_full.get("data") if isinstance(result_full, dict) else result_full
+                    )
                     pending_action_token = None
                     pending_action_status = None
                     if isinstance(result_data, dict) and result_data.get("requires_confirmation"):
@@ -643,22 +698,31 @@ async def chat_stream(
                             or result_data.get("token")
                         )
                         pending_action_status = "pending"
-                    matched = next((p for p in pending_parts if p.get("type") == "tool_use" and p.get("id") == tc_id), None)
+                    matched = next(
+                        (
+                            p
+                            for p in pending_parts
+                            if p.get("type") == "tool_use" and p.get("id") == tc_id
+                        ),
+                        None,
+                    )
                     if matched:
                         matched["result"] = result_full
                         if pending_action_token:
                             matched["pending_action_token"] = pending_action_token
                             matched["pending_action_status"] = pending_action_status
                     else:
-                        pending_parts.append({
-                            "type": "tool_use",
-                            "id": tc_id,
-                            "name": event_data.get("name") or "",
-                            "input": _safe_parse_arguments(event_data.get("arguments")),
-                            "result": result_full,
-                            "pending_action_token": pending_action_token,
-                            "pending_action_status": pending_action_status,
-                        })
+                        pending_parts.append(
+                            {
+                                "type": "tool_use",
+                                "id": tc_id,
+                                "name": event_data.get("name") or "",
+                                "input": _safe_parse_arguments(event_data.get("arguments")),
+                                "result": result_full,
+                                "pending_action_token": pending_action_token,
+                                "pending_action_status": pending_action_status,
+                            }
+                        )
 
                 if event_type == "assistant":
                     if event.get("phase") != "responding":
@@ -691,14 +755,28 @@ async def chat_stream(
 
                     if event_result_data.get("action") == "save_agent":
                         user_input = str(event_result_data.get("user_input") or "").strip()
-                        mapped_event = _map_tool_event_to_step_event(event, trace_id=trace_id, route_source="chat_stream")
-                        mapped_data_raw = mapped_event.get("data") if isinstance(mapped_event.get("data"), dict) else None
+                        mapped_event = _map_tool_event_to_step_event(
+                            event, trace_id=trace_id, route_source="chat_stream"
+                        )
+                        mapped_data_raw = (
+                            mapped_event.get("data")
+                            if isinstance(mapped_event.get("data"), dict)
+                            else None
+                        )
                         if mapped_data_raw is not None:
                             mapped_data_raw.setdefault("turn_id", current_turn_id)
                             mapped_data_raw.setdefault("turn_seq", current_turn_seq)
                             mapped_data_raw.setdefault("part_seq", _allocate_part_seq())
-                        annotated = _annotate_runtime_event(mapped_event, agent_name=display_agent_name)
-                        await _persist_runtime_event("step_result", "tool_running", annotated.get("data") if isinstance(annotated.get("data"), dict) else None)
+                        annotated = _annotate_runtime_event(
+                            mapped_event, agent_name=display_agent_name
+                        )
+                        await _persist_runtime_event(
+                            "step_result",
+                            "tool_running",
+                            annotated.get("data")
+                            if isinstance(annotated.get("data"), dict)
+                            else None,
+                        )
                         yield _event_to_vds(annotated)
                         async for chunk in _stream_save_agent_workflow(
                             conversation_id=conversation_id,
@@ -710,18 +788,43 @@ async def chat_stream(
                             yield chunk
                         return
                     elif event_result_data.get("action") == "run_agent":
-                        mapped_event = _map_tool_event_to_step_event(event, trace_id=trace_id, route_source="chat_stream")
-                        mapped_data_raw = mapped_event.get("data") if isinstance(mapped_event.get("data"), dict) else None
+                        mapped_event = _map_tool_event_to_step_event(
+                            event, trace_id=trace_id, route_source="chat_stream"
+                        )
+                        mapped_data_raw = (
+                            mapped_event.get("data")
+                            if isinstance(mapped_event.get("data"), dict)
+                            else None
+                        )
                         if mapped_data_raw is not None:
                             mapped_data_raw.setdefault("turn_id", current_turn_id)
                             mapped_data_raw.setdefault("turn_seq", current_turn_seq)
                             mapped_data_raw.setdefault("part_seq", _allocate_part_seq())
-                        annotated = _annotate_runtime_event(mapped_event, agent_name=display_agent_name)
-                        await _persist_runtime_event("step_result", "tool_running", annotated.get("data") if isinstance(annotated.get("data"), dict) else None)
+                        annotated = _annotate_runtime_event(
+                            mapped_event, agent_name=display_agent_name
+                        )
+                        await _persist_runtime_event(
+                            "step_result",
+                            "tool_running",
+                            annotated.get("data")
+                            if isinstance(annotated.get("data"), dict)
+                            else None,
+                        )
                         yield _event_to_vds(annotated)
-                        agent_system_prompt = str(event_result_data.get("agent_prompt") or "").strip() or system_prompt
-                        agent_datasource_id = run_datasource_ids[0] if run_datasource_ids else conversation.datasource_id
-                        agent_tools = [t for t in (tools or []) if (t.get("function", {}).get("name") or t.get("name")) != "agent_run"]
+                        agent_system_prompt = (
+                            str(event_result_data.get("agent_prompt") or "").strip()
+                            or system_prompt
+                        )
+                        agent_datasource_id = (
+                            run_datasource_ids[0]
+                            if run_datasource_ids
+                            else conversation.datasource_id
+                        )
+                        agent_tools = [
+                            t
+                            for t in (tools or [])
+                            if (t.get("function", {}).get("name") or t.get("name")) != "agent_run"
+                        ]
                         async for event in chat_agent.stream_general_chat(
                             messages=chat_messages,
                             tools=agent_tools if agent_tools else None,
@@ -732,18 +835,32 @@ async def chat_stream(
                             is_cancelled=_is_cancelled,
                         ):
                             inner_type = event.get("type")
-                            inner_data = event.get("data") if isinstance(event.get("data"), dict) else {}
+                            inner_data = (
+                                event.get("data") if isinstance(event.get("data"), dict) else {}
+                            )
                             if inner_type == "assistant":
                                 if event.get("phase") == "responding":
                                     assistant_content += inner_data.get("text", "")
-                                    yield _event_to_vds(_annotate_runtime_event(event, agent_name=display_agent_name))
+                                    yield _event_to_vds(
+                                        _annotate_runtime_event(
+                                            event, agent_name=display_agent_name
+                                        )
+                                    )
                             elif inner_type in {"tool_start", "tool_result"}:
-                                mapped = _map_tool_event_to_step_event(event, trace_id=trace_id, route_source="chat_stream")
-                                yield _event_to_vds(_annotate_runtime_event(mapped, agent_name=display_agent_name))
+                                mapped = _map_tool_event_to_step_event(
+                                    event, trace_id=trace_id, route_source="chat_stream"
+                                )
+                                yield _event_to_vds(
+                                    _annotate_runtime_event(mapped, agent_name=display_agent_name)
+                                )
                             elif inner_type == "error":
-                                yield _event_to_vds(_annotate_runtime_event(event, agent_name=display_agent_name))
+                                yield _event_to_vds(
+                                    _annotate_runtime_event(event, agent_name=display_agent_name)
+                                )
                             elif inner_type == "done":
-                                yield _event_to_vds(_annotate_runtime_event(event, agent_name=display_agent_name))
+                                yield _event_to_vds(
+                                    _annotate_runtime_event(event, agent_name=display_agent_name)
+                                )
                         return
                 elif event_type == "error":
                     error_payload = event.get("data") or {}
@@ -775,18 +892,39 @@ async def chat_stream(
                     trace_id=trace_id,
                     route_source="chat_stream",
                 )
-                mapped_data_raw = mapped_event.get("data") if isinstance(mapped_event.get("data"), dict) else None
-                if mapped_data_raw is not None and mapped_event.get("type") in {"step_start", "step_result", "assistant", "done", "error"}:
+                mapped_data_raw = (
+                    mapped_event.get("data") if isinstance(mapped_event.get("data"), dict) else None
+                )
+                if mapped_data_raw is not None and mapped_event.get("type") in {
+                    "step_start",
+                    "step_result",
+                    "assistant",
+                    "done",
+                    "error",
+                }:
                     mapped_data_raw.setdefault("turn_id", current_turn_id)
                     mapped_data_raw.setdefault("turn_seq", current_turn_seq)
                     if mapped_event.get("type") in {"step_start", "step_result", "done", "error"}:
                         mapped_data_raw.setdefault("part_seq", _allocate_part_seq())
-                annotated_event = _annotate_runtime_event(mapped_event, agent_name=display_agent_name)
+                annotated_event = _annotate_runtime_event(
+                    mapped_event, agent_name=display_agent_name
+                )
                 mapped_type = annotated_event.get("type")
                 mapped_phase = annotated_event.get("phase")
-                mapped_data = annotated_event.get("data") if isinstance(annotated_event.get("data"), dict) else None
+                mapped_data = (
+                    annotated_event.get("data")
+                    if isinstance(annotated_event.get("data"), dict)
+                    else None
+                )
 
-                if mapped_type in {"thinking", "plan", "step_start", "step_result", "reflect", "error"}:
+                if mapped_type in {
+                    "thinking",
+                    "plan",
+                    "step_start",
+                    "step_result",
+                    "reflect",
+                    "error",
+                }:
                     await _persist_runtime_event(
                         str(mapped_type),
                         str(mapped_phase) if mapped_phase else None,
@@ -809,8 +947,12 @@ async def chat_stream(
                 {
                     "type": "error",
                     "data": {
-                        "message": _extract_error_message({"message": str(e), "error_class": "runtime_error"}),
-                        "user_message": _extract_error_message({"message": str(e), "error_class": "runtime_error"}),
+                        "message": _extract_error_message(
+                            {"message": str(e), "error_class": "runtime_error"}
+                        ),
+                        "user_message": _extract_error_message(
+                            {"message": str(e), "error_class": "runtime_error"}
+                        ),
                         "error_class": "runtime_error",
                     },
                 },
@@ -821,7 +963,9 @@ async def chat_stream(
                 "error",
                 "error",
                 {
-                    "message": _extract_error_message({"message": str(e), "error_class": "runtime_error"}),
+                    "message": _extract_error_message(
+                        {"message": str(e), "error_class": "runtime_error"}
+                    ),
                     "error_class": "runtime_error",
                 },
             )

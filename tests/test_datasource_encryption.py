@@ -1,12 +1,10 @@
 """Tests for datasource password encryption via EncryptedString TypeDecorator."""
 
 import pytest
-from cryptography.fernet import InvalidToken
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
 
 from app.core.security import (
-    EncryptedString,
     decrypt_password,
     encrypt_password,
     get_datasource_encryption_key,
@@ -19,6 +17,7 @@ from app.models import models
 @pytest.fixture(autouse=True)
 def reset_derived_key(monkeypatch):
     import app.core.security as sec
+
     monkeypatch.setattr(sec, "_DERIVED_KEY", None)
     yield
     monkeypatch.setattr(sec, "_DERIVED_KEY", None)
@@ -28,7 +27,7 @@ def reset_derived_key(monkeypatch):
 def db_session(tmp_path):
     engine = create_engine(f"sqlite:///{tmp_path}/test.db")
     Base.metadata.create_all(engine)
-    Session = sessionmaker(bind=engine)
+    Session = sessionmaker(bind=engine)  # noqa: N806
     session = Session()
     yield session
     session.close()
@@ -38,6 +37,7 @@ def db_session(tmp_path):
 # ---------------------------------------------------------------------------
 # Unit tests for encrypt/decrypt helpers
 # ---------------------------------------------------------------------------
+
 
 def test_encrypt_produces_fernet_token():
     token = encrypt_password("secret123")
@@ -62,6 +62,7 @@ def test_encrypt_same_plaintext_different_tokens():
 
 def test_key_derivation_is_deterministic(monkeypatch):
     import app.core.security as sec
+
     monkeypatch.setattr(sec, "_DERIVED_KEY", None)
     k1 = get_datasource_encryption_key()
     monkeypatch.setattr(sec, "_DERIVED_KEY", None)
@@ -71,6 +72,7 @@ def test_key_derivation_is_deterministic(monkeypatch):
 
 def test_explicit_datasource_encryption_key_overrides_derivation(monkeypatch):
     import base64
+
     import app.core.security as sec
     from app.core.config import get_settings
 
@@ -87,6 +89,7 @@ def test_explicit_datasource_encryption_key_overrides_derivation(monkeypatch):
 # ---------------------------------------------------------------------------
 # Integration tests: TypeDecorator via ORM session
 # ---------------------------------------------------------------------------
+
 
 def test_password_stored_encrypted(db_session):
     ds = models.DataSource(

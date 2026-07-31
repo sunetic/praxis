@@ -7,7 +7,6 @@ from typing import Any
 from app.models import models
 from app.schemas import schemas
 
-
 SQL_ANALYSIS_LIVE_POOL_GROUP = "sql_analysis_live"
 
 
@@ -59,16 +58,14 @@ def _get_live_db_pool():
 def _get_driver(datasource: models.DataSource) -> ModuleType:
     import importlib
 
-    _DRIVER_MODULES: dict[str, str] = {
+    _driver_modules: dict[str, str] = {
         "oceanbase": "app.services.sql_analysis.live.queries_ob",
         "mysql": "app.services.sql_analysis.live.queries_mysql",
         "postgresql": "app.services.sql_analysis.live.queries_pg",
     }
-    module_path = _DRIVER_MODULES.get(datasource.db_type)
+    module_path = _driver_modules.get(datasource.db_type)
     if module_path is None:
-        raise ValueError(
-            f"SQL analysis is not supported for db_type '{datasource.db_type}'"
-        )
+        raise ValueError(f"SQL analysis is not supported for db_type '{datasource.db_type}'")
     return importlib.import_module(module_path)
 
 

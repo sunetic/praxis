@@ -115,8 +115,7 @@ class ContextCompressor:
         summary_message: dict[str, Any] = {
             "role": "system",
             "content": (
-                f"[Context Summary — {len(middle)} earlier messages compressed]\n\n"
-                f"{summary_text}"
+                f"[Context Summary — {len(middle)} earlier messages compressed]\n\n{summary_text}"
             ),
         }
 
@@ -212,8 +211,7 @@ class ContextCompressor:
             tool_calls = msg.get("tool_calls")
             if isinstance(tool_calls, list):
                 tc_summary = ", ".join(
-                    (tc.get("function") or {}).get("name") or "?"
-                    for tc in tool_calls[:5]
+                    (tc.get("function") or {}).get("name") or "?" for tc in tool_calls[:5]
                 )
                 text += f"\n[Tool calls: {tc_summary}]"
 

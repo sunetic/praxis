@@ -1,17 +1,17 @@
 from __future__ import annotations
 
-from copy import deepcopy
 from collections.abc import Awaitable, Callable
+from copy import deepcopy
 from typing import Any
 
 import pytest
 
 from app.services.agent.reasoning_engine import (
+    VALID_TRANSITIONS,
     EngineConfig,
     ReasoningEngine,
     ReasoningPhase,
     SimpleToolExecutor,
-    VALID_TRANSITIONS,
     _build_retry_system_hint,
     _check_transition,
     _reflector_step,
@@ -242,7 +242,10 @@ def test_build_retry_hint_includes_planning_objective_summary() -> None:
                 "goal": "locate target API doc",
                 "success_criteria": "confirmed path and required params",
             },
-            "result": {"success": False, "error": {"code": "missing_path", "message": "path missing"}},
+            "result": {
+                "success": False,
+                "error": {"code": "missing_path", "message": "path missing"},
+            },
         }
     ]
     hint = _build_retry_system_hint(results, 1)
@@ -398,8 +401,15 @@ async def test_engine_executes_only_first_tool_per_round() -> None:
 
     llm = FakeLLM(
         responses=[
-            _tool_call_chunk("exec_command", '{"command":"ls","args":["data/"]}', call_id="tc-first")
-            + _tool_call_chunk("call_praxis_service", '{"method":"GET","path":"/api/v2/monitor/metric"}', call_id="tc-second", index=1),
+            _tool_call_chunk(
+                "exec_command", '{"command":"ls","args":["data/"]}', call_id="tc-first"
+            )
+            + _tool_call_chunk(
+                "call_praxis_service",
+                '{"method":"GET","path":"/api/v2/monitor/metric"}',
+                call_id="tc-second",
+                index=1,
+            ),
             [_text_chunk("Done.")],
         ]
     )
@@ -417,7 +427,6 @@ async def test_engine_executes_only_first_tool_per_round() -> None:
 
     tool_starts = [event for event in events if event["type"] == "tool_start"]
     tool_results = [event for event in events if event["type"] == "tool_result"]
-    reflect_events = [event for event in events if event["type"] == "reflect"]
 
     assert len(tool_starts) == 2
     assert len(tool_results) == 2

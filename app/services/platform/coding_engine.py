@@ -39,11 +39,11 @@ class CodingEngineAdapter(Protocol):
         goal: str,
         allowed_files: list[str],
         edits: list[CodingEngineEdit],
-    ) -> CodingEnginePlan:
-        ...
+    ) -> CodingEnginePlan: ...
 
-    def apply_changes(self, *, workspace_dir: Path, plan: CodingEnginePlan) -> CodingEngineApplyResult:
-        ...
+    def apply_changes(
+        self, *, workspace_dir: Path, plan: CodingEnginePlan
+    ) -> CodingEngineApplyResult: ...
 
 
 def _apply_prepared_edits(*, workspace_dir: Path, plan: CodingEnginePlan) -> list[str]:
@@ -105,7 +105,9 @@ class AiderLikeAdapter:
     ) -> CodingEnginePlan:
         return CodingEnginePlan(goal=goal, allowed_files=allowed_files, edits=edits)
 
-    def apply_changes(self, *, workspace_dir: Path, plan: CodingEnginePlan) -> CodingEngineApplyResult:
+    def apply_changes(
+        self, *, workspace_dir: Path, plan: CodingEnginePlan
+    ) -> CodingEngineApplyResult:
         changed_files = _apply_prepared_edits(workspace_dir=workspace_dir, plan=plan)
         return CodingEngineApplyResult(
             changed_files=changed_files,
@@ -137,7 +139,9 @@ class PiLiteAdapter:
     ) -> CodingEnginePlan:
         return CodingEnginePlan(goal=goal, allowed_files=allowed_files, edits=edits)
 
-    def apply_changes(self, *, workspace_dir: Path, plan: CodingEnginePlan) -> CodingEngineApplyResult:
+    def apply_changes(
+        self, *, workspace_dir: Path, plan: CodingEnginePlan
+    ) -> CodingEngineApplyResult:
         if plan.edits:
             changed_files = _apply_prepared_edits(workspace_dir=workspace_dir, plan=plan)
             return CodingEngineApplyResult(

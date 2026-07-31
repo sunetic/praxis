@@ -57,21 +57,29 @@ def event_to_vds(event: dict[str, Any]) -> str:
         if text:
             lines.append(_vds_reasoning(text))
     elif event_type == "tool_start":
-        lines.append(_vds_tool_call(
-            str(data.get("tool_call_id") or data.get("id") or ""),
-            str(data.get("name") or ""),
-            data.get("arguments") or {},
-        ))
+        lines.append(
+            _vds_tool_call(
+                str(data.get("tool_call_id") or data.get("id") or ""),
+                str(data.get("name") or ""),
+                data.get("arguments") or {},
+            )
+        )
     elif event_type == "tool_result":
-        lines.append(_vds_tool_result(
-            str(data.get("tool_call_id") or data.get("id") or ""),
-            data.get("result"),
-        ))
+        lines.append(
+            _vds_tool_result(
+                str(data.get("tool_call_id") or data.get("id") or ""),
+                data.get("result"),
+            )
+        )
         lines.append(_vds_finish_step("tool-calls"))
     elif event_type == "done":
         lines.append(_vds_finish_message("stop"))
     elif event_type == "error":
-        lines.append(_vds_data([{"type": "error", "message": str(data.get("message") or data.get("error") or "")}]))
+        lines.append(
+            _vds_data(
+                [{"type": "error", "message": str(data.get("message") or data.get("error") or "")}]
+            )
+        )
         lines.append(_vds_finish_message("error"))
     else:
         lines.append(_vds_data([{"type": event_type, **data}]))

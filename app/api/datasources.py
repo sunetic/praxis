@@ -1,5 +1,4 @@
 import asyncio
-from typing import List
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
@@ -16,7 +15,6 @@ except ImportError:
 
 router = APIRouter(prefix="/datasources", tags=["DataSources"])
 logger = get_logger("api.datasources")
-
 
 
 def _normalize_datasource_payload(payload: dict) -> dict:
@@ -36,12 +34,9 @@ def _ensure_single_sys_per_cluster(
     if tenant_role != "sys":
         return
 
-    query = (
-        db.query(models.DataSource)
-        .filter(
-            models.DataSource.cluster_key == cluster_key,
-            models.DataSource.tenant_role == "sys",
-        )
+    query = db.query(models.DataSource).filter(
+        models.DataSource.cluster_key == cluster_key,
+        models.DataSource.tenant_role == "sys",
     )
     if exclude_id is not None:
         query = query.filter(models.DataSource.id != exclude_id)
@@ -81,7 +76,7 @@ async def test_connection(datasource: schemas.DataSourceCreate):
             ),
             timeout=15,
         )
-    except asyncio.TimeoutError:
+    except TimeoutError:
         logger.warning("test_connection_timeout %s", fmt_kv(host=datasource.host))
         return {"success": False, "message": "Connection timed out (15s)"}
 
@@ -119,7 +114,7 @@ async def test_saved_connection(datasource_id: int, db: Session = Depends(get_db
             ),
             timeout=15,
         )
-    except asyncio.TimeoutError:
+    except TimeoutError:
         logger.warning("test_saved_connection_timeout %s", fmt_kv(datasource_id=datasource_id))
         return {"success": False, "message": "Connection timed out (15s)"}
     if not success:
@@ -130,8 +125,7 @@ async def test_saved_connection(datasource_id: int, db: Session = Depends(get_db
     return {"success": True, "message": "Connection successful"}
 
 
-
-@router.get("", response_model=List[schemas.DataSourceResponse])
+@router.get("", response_model=list[schemas.DataSourceResponse])
 def list_datasources(db: Session = Depends(get_db)):
     records = db.query(models.DataSource).all()
     logger.info("list_datasources %s", fmt_kv(count=len(records)))

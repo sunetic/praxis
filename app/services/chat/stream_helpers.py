@@ -22,6 +22,7 @@ from app.skills.store import skill_store
 
 logger = get_logger("chat.stream_helpers")
 
+
 async def _save_messages_to_db(messages: list[models.Message]) -> None:
     """Save messages to database in thread pool to avoid blocking event loop."""
     from app.db.database import SessionLocal
@@ -89,12 +90,11 @@ def _safe_parse_arguments(arguments: str | dict | None) -> dict:
     return {}
 
 
-
-
 def _build_knowledge_base_prompt() -> str:
     try:
         from app.db.database import SessionLocal
         from app.models import models as m
+
         db = SessionLocal()
         try:
             kbs = db.query(m.KnowledgeBase).order_by(m.KnowledgeBase.id).all()
@@ -103,31 +103,34 @@ def _build_knowledge_base_prompt() -> str:
             lines = [
                 "\n\nKnowledge Base:",
                 "When you need to look up documentation, you can access the platform knowledge bases:",
-                "1. Use object_crud(object_type=\"knowledge_base\", action=\"list\") to list all knowledge bases",
-                "2. Use object_crud(object_type=\"knowledge_document\", action=\"list\", payload={\"kb_id\": N}) to get document list and file paths",
-                "3. First use exec_command(command=\"ls\", args=[\"data/knowledge/N/\"]) to inspect directory structure; narrow down to relevant subdirectories before searching content",
+                '1. Use object_crud(object_type="knowledge_base", action="list") to list all knowledge bases',
+                '2. Use object_crud(object_type="knowledge_document", action="list", payload={"kb_id": N}) to get document list and file paths',
+                '3. First use exec_command(command="ls", args=["data/knowledge/N/"]) to inspect directory structure; narrow down to relevant subdirectories before searching content',
                 "4. Break the user question into several retrieval categories and then search: target object / operation / metrics or attributes / API domain terms / abbreviations and full names",
                 "  - For each category, dynamically generate English technical keywords, synonyms, related operations, and object names; do not reuse fixed keyword templates or search only single terms",
                 "  - Form 2-3 keyword combinations first, then preferably use exec_command with rg for multi-keyword search; use alternation or multiple -e flags with dynamically generated keywords",
-                "  - Alternation example: exec_command(command=\"rg\", args=[\"-n\", \"-i\", \"-e\", \"kw1|kw2|kw3\", \"data/knowledge/1/target-dir/\"])",
-                "  - Multi-pattern example: exec_command(command=\"rg\", args=[\"-n\", \"-i\", \"-e\", \"kw1\", \"-e\", \"kw2\", \"-e\", \"kw3\", \"data/knowledge/1/\"])",
-                "  - After a match, use exec_command(command=\"sed\", args=[\"-n\", \"20,80p\", \"data/knowledge/1/some.md\"]) or cat to read the surrounding context",
+                '  - Alternation example: exec_command(command="rg", args=["-n", "-i", "-e", "kw1|kw2|kw3", "data/knowledge/1/target-dir/"])',
+                '  - Multi-pattern example: exec_command(command="rg", args=["-n", "-i", "-e", "kw1", "-e", "kw2", "-e", "kw3", "data/knowledge/1/"])',
+                '  - After a match, use exec_command(command="sed", args=["-n", "20,80p", "data/knowledge/1/some.md"]) or cat to read the surrounding context',
                 "  - grep can still serve as a fallback, but prefer rg for complex searches; use sed only for reading, not for modifying files",
                 "5. After finding relevant documents, you must read the content to confirm API path, method, and query/body parameter format before proceeding",
                 "",
                 "Available knowledge bases:",
             ]
             for kb in kbs:
-                doc_count = db.query(m.KnowledgeDocument).filter(m.KnowledgeDocument.kb_id == kb.id).count()
+                doc_count = (
+                    db.query(m.KnowledgeDocument).filter(m.KnowledgeDocument.kb_id == kb.id).count()
+                )
                 tags = ", ".join(kb.tags) if kb.tags else ""
                 tag_str = f" (tags: {tags})" if tags else ""
-                lines.append(f"- [id={kb.id}] {kb.name}{tag_str} — {doc_count} document(s) — data/knowledge/{kb.id}/")
+                lines.append(
+                    f"- [id={kb.id}] {kb.name}{tag_str} — {doc_count} document(s) — data/knowledge/{kb.id}/"
+                )
             return "\n".join(lines) + "\n"
         finally:
             db.close()
     except Exception:
         return ""
-
 
 
 def _json_loads_safe(raw: str) -> dict | None:
@@ -155,7 +158,9 @@ def _extract_selector_payload(raw_text: str) -> dict | None:
     return None
 
 
-def _build_recent_conversation_context(messages: list[models.Message], limit: int = 8) -> list[dict]:
+def _build_recent_conversation_context(
+    messages: list[models.Message], limit: int = 8
+) -> list[dict]:
     context: list[dict] = []
     for msg in messages[-limit:]:
         if msg.role not in {"user", "assistant"}:
@@ -244,7 +249,6 @@ def _extract_latest_active_skills(events: list[models.ChatEvent], fallback: list
     return _normalize_string_list(fallback, limit=16)
 
 
-
 _META_TOOL_NAMES = {"agent_save"}  # lifecycle tools, not domain tools
 
 
@@ -259,13 +263,14 @@ def _extract_tool_call_trace(messages: list[models.Message], *, limit: int = 16)
             name = str(tc.get("name") or "").strip()
             if not name or name in _META_TOOL_NAMES:
                 continue
-            trace.append({
-                "name": name,
-                "input": tc.get("input") or {},
-                "result": tc.get("result"),
-            })
+            trace.append(
+                {
+                    "name": name,
+                    "input": tc.get("input") or {},
+                    "result": tc.get("result"),
+                }
+            )
     return trace[-limit:]
-
 
 
 def _normalize_positive_int_list(value: Any, *, limit: int = 64) -> list[int]:
@@ -287,7 +292,9 @@ def _normalize_positive_int_list(value: Any, *, limit: int = 64) -> list[int]:
     return result
 
 
-def _infer_datasource_id_from_scene_agent_payload(scene_agent_payload: dict[str, Any] | None) -> int | None:
+def _infer_datasource_id_from_scene_agent_payload(
+    scene_agent_payload: dict[str, Any] | None,
+) -> int | None:
     if not isinstance(scene_agent_payload, dict):
         return None
     context = scene_agent_payload.get("context")
@@ -310,7 +317,9 @@ def _normalize_scene_agent_payload_datasource(
         return scene_agent_payload
     normalized = copy.deepcopy(scene_agent_payload)
     context = normalized.get("context") if isinstance(normalized.get("context"), dict) else {}
-    datasource_context = context.get("datasource") if isinstance(context.get("datasource"), dict) else {}
+    datasource_context = (
+        context.get("datasource") if isinstance(context.get("datasource"), dict) else {}
+    )
     datasource_context.update(
         {
             "id": datasource.id,
@@ -422,7 +431,11 @@ def _map_tool_event_to_step_event(
     if event_type == "tool_result":
         step_id = str(data.get("tool_call_id") or uuid.uuid4())
         tool_name = str(data.get("name") or "")
-        result_obj = data.get("result") if isinstance(data.get("result"), dict) else {"success": True, "data": data.get("result")}
+        result_obj = (
+            data.get("result")
+            if isinstance(data.get("result"), dict)
+            else {"success": True, "data": data.get("result")}
+        )
         payload: dict[str, Any] = {
             "step_id": step_id,
             "kind": "tool",
@@ -433,7 +446,11 @@ def _map_tool_event_to_step_event(
             "trace_id": trace_id,
             "route_source": route_source,
         }
-        if tool_name == "datasource_switch" and isinstance(result_obj, dict) and result_obj.get("success"):
+        if (
+            tool_name == "datasource_switch"
+            and isinstance(result_obj, dict)
+            and result_obj.get("success")
+        ):
             result_data = result_obj.get("data") if isinstance(result_obj.get("data"), dict) else {}
             ds_id = result_data.get("datasource_id")
             if isinstance(ds_id, int) and ds_id > 0:
@@ -501,7 +518,6 @@ def _annotate_runtime_event(event: dict[str, Any], *, agent_name: str = "") -> d
     return enriched
 
 
-
 async def _select_dynamic_skills(
     conversation: models.Conversation,
     messages: list[models.Message],
@@ -528,9 +544,7 @@ async def _select_dynamic_skills(
     )
 
 
-ALL_TENANTS_REQUEST_PATTERNS = (
-    re.compile(r"\b(all|across)\s+tenants?\b", flags=re.IGNORECASE),
-)
+ALL_TENANTS_REQUEST_PATTERNS = (re.compile(r"\b(all|across)\s+tenants?\b", flags=re.IGNORECASE),)
 
 
 def _is_all_tenants_request(user_input: str) -> bool:
@@ -576,8 +590,10 @@ async def _stream_scope_guard_reply(
                 )
             ]
         )
-        yield _event_to_vds({'type': 'assistant', 'phase': 'responding', 'data': {'text': assistant_text}})
-    yield _event_to_vds({'type': 'done', 'data': {'trace_id': trace_id}})
+        yield _event_to_vds(
+            {"type": "assistant", "phase": "responding", "data": {"text": assistant_text}}
+        )
+    yield _event_to_vds({"type": "done", "data": {"trace_id": trace_id}})
 
 
 def _build_builder_scene_conversation_context(
@@ -629,11 +645,11 @@ def _resolve_builder_scene_target(
 
     payload = scene_agent_payload or {}
     context = payload.get("context") if isinstance(payload.get("context"), dict) else {}
-    focus_object = payload.get("focus_object") if isinstance(payload.get("focus_object"), dict) else {}
-    scope_object_id = str(scope_context.get("scope_object_id") or "").strip()
-    key_candidates = (
-        ["function_id"] if expected_scope_type == "function" else ["page_id"]
+    focus_object = (
+        payload.get("focus_object") if isinstance(payload.get("focus_object"), dict) else {}
     )
+    scope_object_id = str(scope_context.get("scope_object_id") or "").strip()
+    key_candidates = ["function_id"] if expected_scope_type == "function" else ["page_id"]
     for key in key_candidates:
         for source in (context, focus_object):
             candidate = source.get(key)
@@ -706,7 +722,9 @@ async def _stream_builder_scene_proxy(
     async def generate():
         assistant_content = ""
         async for raw_chunk in proxy_response.body_iterator:
-            text_chunk = raw_chunk.decode("utf-8") if isinstance(raw_chunk, bytes) else str(raw_chunk)
+            text_chunk = (
+                raw_chunk.decode("utf-8") if isinstance(raw_chunk, bytes) else str(raw_chunk)
+            )
             for event in _extract_sse_payloads(text_chunk):
                 event_type = str(event.get("type") or "").strip().lower()
                 event_phase = str(event.get("phase") or "").strip() or None
@@ -745,4 +763,3 @@ async def _stream_builder_scene_proxy(
             yield text_chunk
 
     return StreamingResponse(generate(), media_type="text/plain; charset=utf-8")
-

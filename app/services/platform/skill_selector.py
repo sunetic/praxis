@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import json
 import re
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 from app.core.logging import fmt_kv, get_logger
 from app.services.llm import get_llm_client
@@ -84,8 +85,12 @@ async def select_skills_for_context(
     always_apply_names = sorted([item.name for item in loaded_skills if item.always_apply])
 
     configured_names = [n for n in (configured_skill_names or []) if n in skill_by_name]
-    base_active = current_active_skill_names if current_active_skill_names is not None else configured_names
-    current_active = sorted(set(n for n in base_active if n in skill_by_name) | set(always_apply_names))
+    base_active = (
+        current_active_skill_names if current_active_skill_names is not None else configured_names
+    )
+    current_active = sorted(
+        set(n for n in base_active if n in skill_by_name) | set(always_apply_names)
+    )
 
     candidates = loaded_skills
 

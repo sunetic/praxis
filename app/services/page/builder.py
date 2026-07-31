@@ -92,16 +92,45 @@ _PAGE_TEMPLATE_CATALOG: tuple[dict[str, Any], ...] = (
         "id": "data_workbench",
         "name": "数据工作台",
         "description": "适合诊断/巡检/报表类页面。灰底白卡片层次，FilterToolbar 筛选 + 图表双列(3/5+2/5) + ListTable + PaginationFooter + DetailDrawer。",
-        "structure": ["FilterToolbar", "Charts(3/5+2/5)", "ListTable+PaginationFooter", "DetailDrawer"],
-        "default_primitives": ["card", "table", "button", "input", "select", "chart", "badge", "pagination", "drawer"],
+        "structure": [
+            "FilterToolbar",
+            "Charts(3/5+2/5)",
+            "ListTable+PaginationFooter",
+            "DetailDrawer",
+        ],
+        "default_primitives": [
+            "card",
+            "table",
+            "button",
+            "input",
+            "select",
+            "chart",
+            "badge",
+            "pagination",
+            "drawer",
+        ],
         "required_primitives": ["card", "table", "pagination"],
     },
     {
         "id": "diagnostic_flow",
         "name": "诊断流程",
         "description": "适合问题清单场景。ScopeSelector/TimeRangePicker 筛选 + 结果面板 + 明细 ListTable + PaginationFooter + DetailDrawer 呈现低频详情与调试信息。",
-        "structure": ["FilterToolbar(scope+time)", "ResultPanel", "ListTable+PaginationFooter", "DetailDrawer"],
-        "default_primitives": ["card", "table", "button", "drawer", "input", "select", "badge", "pagination"],
+        "structure": [
+            "FilterToolbar(scope+time)",
+            "ResultPanel",
+            "ListTable+PaginationFooter",
+            "DetailDrawer",
+        ],
+        "default_primitives": [
+            "card",
+            "table",
+            "button",
+            "drawer",
+            "input",
+            "select",
+            "badge",
+            "pagination",
+        ],
         "required_primitives": ["card", "table", "drawer", "pagination"],
     },
     {
@@ -167,7 +196,6 @@ def _normalize_ui_primitive_name(value: Any) -> str:
 
 
 @dataclass(frozen=True)
-
 class PageBuildResult:
     draft_payload: dict[str, Any]
     summary: str
@@ -330,7 +358,9 @@ class PageBuilderService:
             return True
         if prompt_lower in summary_lower:
             return True
-        if summary_lower in prompt_lower and len(summary_lower) >= max(8, int(len(prompt_lower) * 0.6)):
+        if summary_lower in prompt_lower and len(summary_lower) >= max(
+            8, int(len(prompt_lower) * 0.6)
+        ):
             return True
         return False
 
@@ -399,7 +429,7 @@ class PageBuilderService:
             template_id = _PAGE_DEFAULT_TEMPLATE_ID
         defaults = _PAGE_TEMPLATE_INDEX.get(template_id, {}).get("default_primitives") or []
         normalized_primitives: list[str] = []
-        for item in (template_meta.get("ui_primitives") or []):
+        for item in template_meta.get("ui_primitives") or []:
             primitive = _normalize_ui_primitive_name(item)
             if primitive in _PAGE_ALLOWED_UI_PRIMITIVES and primitive not in normalized_primitives:
                 normalized_primitives.append(primitive)
@@ -657,9 +687,11 @@ class PageBuilderService:
         layout_template = str(normalized.get("layout_template") or "").strip()
         if layout_template not in _PAGE_TEMPLATE_INDEX:
             layout_template = _PAGE_DEFAULT_TEMPLATE_ID
-        template_defaults = _PAGE_TEMPLATE_INDEX.get(layout_template, {}).get("default_primitives") or []
+        template_defaults = (
+            _PAGE_TEMPLATE_INDEX.get(layout_template, {}).get("default_primitives") or []
+        )
         normalized_primitives: list[str] = []
-        for item in (normalized.get("ui_primitives") or []):
+        for item in normalized.get("ui_primitives") or []:
             primitive = _normalize_ui_primitive_name(item)
             if primitive in _PAGE_ALLOWED_UI_PRIMITIVES and primitive not in normalized_primitives:
                 normalized_primitives.append(primitive)
@@ -669,7 +701,9 @@ class PageBuilderService:
                 for item in template_defaults
                 if _normalize_ui_primitive_name(item) in _PAGE_ALLOWED_UI_PRIMITIVES
             ]
-        required_primitives = _PAGE_TEMPLATE_INDEX.get(layout_template, {}).get("required_primitives") or []
+        required_primitives = (
+            _PAGE_TEMPLATE_INDEX.get(layout_template, {}).get("required_primitives") or []
+        )
         for item in required_primitives:
             primitive = _normalize_ui_primitive_name(item)
             if primitive in _PAGE_ALLOWED_UI_PRIMITIVES and primitive not in normalized_primitives:
@@ -677,7 +711,7 @@ class PageBuilderService:
         normalized["layout_template"] = layout_template
         normalized["ui_primitives"] = normalized_primitives
         assumptions: list[str] = []
-        for item in (normalized.get("intake_assumptions") or []):
+        for item in normalized.get("intake_assumptions") or []:
             value = str(item).strip()
             if value:
                 assumptions.append(value)
@@ -736,7 +770,9 @@ class PageBuilderService:
                 normalized_primitives.append(primitive)
         if not normalized_primitives:
             raise ValueError("runtime.ui_primitives 至少包含一个组件")
-        required_primitives = _PAGE_TEMPLATE_INDEX.get(template_id, {}).get("required_primitives") or []
+        required_primitives = (
+            _PAGE_TEMPLATE_INDEX.get(template_id, {}).get("required_primitives") or []
+        )
         missing_required = [
             _normalize_ui_primitive_name(item)
             for item in required_primitives
@@ -763,9 +799,17 @@ class PageBuilderService:
         destructive: bool,
     ) -> dict[str, Any]:
         next_draft = copy.deepcopy(draft)
-        config = runtime_payload.get("config") if isinstance(runtime_payload.get("config"), dict) else {}
-        source = runtime_payload.get("source") if isinstance(runtime_payload.get("source"), dict) else {}
-        runtime = runtime_payload.get("runtime") if isinstance(runtime_payload.get("runtime"), dict) else {}
+        config = (
+            runtime_payload.get("config") if isinstance(runtime_payload.get("config"), dict) else {}
+        )
+        source = (
+            runtime_payload.get("source") if isinstance(runtime_payload.get("source"), dict) else {}
+        )
+        runtime = (
+            runtime_payload.get("runtime")
+            if isinstance(runtime_payload.get("runtime"), dict)
+            else {}
+        )
         summary = str(runtime_payload.get("intent_summary") or "页面已更新")
         if self._is_redundant_summary(prompt=prompt, summary=summary):
             summary = "页面已更新，请查看预览结果。"
@@ -785,7 +829,9 @@ class PageBuilderService:
         meta = next_draft.get("meta") if isinstance(next_draft.get("meta"), dict) else {}
         history = meta.get("history") if isinstance(meta.get("history"), list) else []
         plan = runtime_payload.get("plan") if isinstance(runtime_payload.get("plan"), dict) else {}
-        template_id = str(runtime_payload.get("layout_template") or _PAGE_DEFAULT_TEMPLATE_ID).strip()
+        template_id = str(
+            runtime_payload.get("layout_template") or _PAGE_DEFAULT_TEMPLATE_ID
+        ).strip()
         if template_id not in _PAGE_TEMPLATE_INDEX:
             template_id = _PAGE_DEFAULT_TEMPLATE_ID
         ui_primitives = runtime_payload.get("ui_primitives")
@@ -793,7 +839,10 @@ class PageBuilderService:
         if isinstance(ui_primitives, list):
             for item in ui_primitives:
                 primitive = _normalize_ui_primitive_name(item)
-                if primitive in _PAGE_ALLOWED_UI_PRIMITIVES and primitive not in normalized_primitives:
+                if (
+                    primitive in _PAGE_ALLOWED_UI_PRIMITIVES
+                    and primitive not in normalized_primitives
+                ):
                     normalized_primitives.append(primitive)
         if not normalized_primitives:
             defaults = _PAGE_TEMPLATE_INDEX.get(template_id, {}).get("default_primitives") or []
@@ -802,7 +851,9 @@ class PageBuilderService:
                 for item in defaults
                 if _normalize_ui_primitive_name(item) in _PAGE_ALLOWED_UI_PRIMITIVES
             ]
-        required_primitives = _PAGE_TEMPLATE_INDEX.get(template_id, {}).get("required_primitives") or []
+        required_primitives = (
+            _PAGE_TEMPLATE_INDEX.get(template_id, {}).get("required_primitives") or []
+        )
         for item in required_primitives:
             primitive = _normalize_ui_primitive_name(item)
             if primitive in _PAGE_ALLOWED_UI_PRIMITIVES and primitive not in normalized_primitives:
@@ -819,7 +870,9 @@ class PageBuilderService:
             "summary": summary,
             "plan": {
                 "goal": str(plan.get("goal") or summary),
-                "todos": [str(item) for item in plan.get("todos", [])] if isinstance(plan.get("todos"), list) else [],
+                "todos": [str(item) for item in plan.get("todos", [])]
+                if isinstance(plan.get("todos"), list)
+                else [],
             },
             "template": {
                 "id": template_id,
@@ -851,7 +904,7 @@ class PageBuilderService:
         if template_id not in _PAGE_TEMPLATE_INDEX:
             template_id = _PAGE_DEFAULT_TEMPLATE_ID
         ui_primitives: list[str] = []
-        for item in (template_meta.get("ui_primitives") or []):
+        for item in template_meta.get("ui_primitives") or []:
             primitive = _normalize_ui_primitive_name(item)
             if primitive in _PAGE_ALLOWED_UI_PRIMITIVES and primitive not in ui_primitives:
                 ui_primitives.append(primitive)
@@ -901,7 +954,9 @@ class PageBuilderService:
             break
         if response is None:
             raise ValueError("LLM 返回为空")
-        content = (((response.get("choices") or [{}])[0].get("message") or {}).get("content") or "").strip()
+        content = (
+            ((response.get("choices") or [{}])[0].get("message") or {}).get("content") or ""
+        ).strip()
         if not content:
             raise ValueError("LLM 未返回结构化 patch")
         return content
@@ -923,4 +978,3 @@ class PageBuilderService:
         if not isinstance(data, dict):
             raise ValueError("LLM patch 必须是 JSON 对象")
         return data
-

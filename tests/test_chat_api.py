@@ -14,18 +14,20 @@ from sqlalchemy.orm import Session, sessionmaker
 from app.api import chat as chat_api
 from app.api import chat_pending as chat_pending_api
 from app.api import conversations as conversations_api
-from app.services.chat.stream_helpers import _normalize_json_payload
-from app.services.chat import stream_helpers as chat_stream_helpers
-from app.services.chat import tool_binding as chat_tool_binding
-from app.services.chat import turn_context as chat_turn_context
-from app.services.chat.turn_context import TurnContextExtras, build_agent_turn_context
 from app.core.config import Settings
 from app.db.database import Base
 from app.models import models
 from app.schemas import schemas
+from app.services.chat import stream_helpers as chat_stream_helpers
+from app.services.chat import tool_binding as chat_tool_binding
+from app.services.chat import turn_context as chat_turn_context
+from app.services.chat.stream_helpers import _normalize_json_payload
+from app.services.chat.turn_context import TurnContextExtras, build_agent_turn_context
 from app.skills.store import SkillStore
 
-_llm_configured = bool(os.getenv("PRAXIS_LLM_API_KEY") or os.getenv("LLM_API_KEY") or os.getenv("OPENAI_API_KEY"))
+_llm_configured = bool(
+    os.getenv("PRAXIS_LLM_API_KEY") or os.getenv("LLM_API_KEY") or os.getenv("OPENAI_API_KEY")
+)
 
 
 @pytest.fixture
@@ -269,7 +271,7 @@ def test_resolve_active_build_scope(tmp_path: Path) -> None:
     db_path = tmp_path / "chat-api-scope.db"
     engine = create_engine(f"sqlite:///{db_path}")
     Base.metadata.create_all(engine)
-    Session = sessionmaker(bind=engine, autocommit=False, autoflush=False, expire_on_commit=False)
+    Session = sessionmaker(bind=engine, autocommit=False, autoflush=False, expire_on_commit=False)  # noqa: N806
     db = Session()
     try:
         conv = models.Conversation(title="c1")
@@ -304,7 +306,7 @@ def test_resolve_active_build_scope_closes_expired_session(tmp_path: Path) -> No
     db_path = tmp_path / "chat-api-expired-scope.db"
     engine = create_engine(f"sqlite:///{db_path}")
     Base.metadata.create_all(engine)
-    Session = sessionmaker(bind=engine, autocommit=False, autoflush=False, expire_on_commit=False)
+    Session = sessionmaker(bind=engine, autocommit=False, autoflush=False, expire_on_commit=False)  # noqa: N806
     db = Session()
     try:
         conv = models.Conversation(title="c1")
@@ -328,7 +330,9 @@ def test_resolve_active_build_scope_closes_expired_session(tmp_path: Path) -> No
         resolved = chat_api._resolve_active_build_scope(db, conv.id)
         assert resolved is None
 
-        refreshed = db.query(models.BuildSession).filter(models.BuildSession.id == session.id).first()
+        refreshed = (
+            db.query(models.BuildSession).filter(models.BuildSession.id == session.id).first()
+        )
         assert refreshed is not None
         assert refreshed.status == "closed"
     finally:
@@ -344,7 +348,7 @@ def test_resolve_active_build_scope_respects_feature_flag(
     db_path = tmp_path / "chat-api-flag-scope.db"
     engine = create_engine(f"sqlite:///{db_path}")
     Base.metadata.create_all(engine)
-    Session = sessionmaker(bind=engine, autocommit=False, autoflush=False, expire_on_commit=False)
+    Session = sessionmaker(bind=engine, autocommit=False, autoflush=False, expire_on_commit=False)  # noqa: N806
     db = Session()
     try:
         conv = models.Conversation(title="c1")
@@ -432,7 +436,11 @@ def test_build_agent_turn_context_renders_tpl_slots(tmp_path: Path) -> None:
         system_prompt, _tools, _declared = build_agent_turn_context(
             conversation,
             db,
-            scope_context={"scope_type": "builder", "scope_object_type": "page", "scope_object_id": "42"},
+            scope_context={
+                "scope_type": "builder",
+                "scope_object_type": "page",
+                "scope_object_id": "42",
+            },
             extra=TurnContextExtras(
                 pending_actions=[
                     models.PendingAction(
@@ -481,7 +489,9 @@ def test_get_messages_returns_404_for_missing_conversation(tmp_path: Path) -> No
         engine.dispose()
 
 
-def test_get_messages_returns_empty_for_existing_conversation_without_messages(tmp_path: Path) -> None:
+def test_get_messages_returns_empty_for_existing_conversation_without_messages(
+    tmp_path: Path,
+) -> None:
     factory, engine = _build_session_factory(tmp_path)
     db = factory()
     try:
@@ -531,7 +541,7 @@ async def _collect_stream_payloads(response: Any) -> list[dict]:
     for line in "".join(chunks).splitlines():
         # SSE format: data: {...}
         if line.startswith("data: "):
-            payloads.append(json.loads(line[len("data: "):]))
+            payloads.append(json.loads(line[len("data: ") :]))
             continue
         # VDS format: 2:[{...}] (data messages)
         if line.startswith("2:"):
@@ -645,7 +655,6 @@ def test_create_get_and_consume_chat_handoff(tmp_path: Path) -> None:
             host="127.0.0.1",
             port=2881,
             db_type="oceanbase",
-
             cluster_key="cluster-a",
             tenant_role="sys",
             user="root@test#sys",
@@ -658,7 +667,6 @@ def test_create_get_and_consume_chat_handoff(tmp_path: Path) -> None:
             host="127.0.0.1",
             port=2881,
             db_type="oceanbase",
-
             cluster_key="cluster-a",
             tenant_role="user",
             user="root@test#wx",
@@ -737,7 +745,6 @@ def test_create_chat_handoff_resolves_preferred_execution_datasource_from_contex
             host="127.0.0.1",
             port=2881,
             db_type="oceanbase",
-
             cluster_key="cluster-a",
             tenant_role="sys",
             user="root@test#sys",
@@ -750,7 +757,6 @@ def test_create_chat_handoff_resolves_preferred_execution_datasource_from_contex
             host="127.0.0.1",
             port=2881,
             db_type="oceanbase",
-
             cluster_key="cluster-a",
             tenant_role="user",
             user="root@test#wx",
@@ -800,7 +806,10 @@ def test_create_chat_handoff_resolves_preferred_execution_datasource_from_contex
             created.handoff.packet.context["execution"]["preferred_execution_datasource_id"]
             == preferred_datasource.id
         )
-        assert created.handoff.packet.context["execution"]["source_datasource_id"] == source_datasource.id
+        assert (
+            created.handoff.packet.context["execution"]["source_datasource_id"]
+            == source_datasource.id
+        )
     finally:
         db.close()
         engine.dispose()
@@ -980,9 +989,17 @@ async def test_chat_stream_does_not_override_existing_conversation_datasource(
                 scene_agent=schemas.SceneAgentRequest(
                     key="stats_analysis",
                     context={
-                        "datasource": {"id": scene_datasource.id, "cluster_key": "cluster-b", "tenant_role": "user"},
+                        "datasource": {
+                            "id": scene_datasource.id,
+                            "cluster_key": "cluster-b",
+                            "tenant_role": "user",
+                        },
                     },
-                    focus_object={"type": "issue", "table_name": "tb_transactions", "tenant_name": "wx"},
+                    focus_object={
+                        "type": "issue",
+                        "table_name": "tb_transactions",
+                        "tenant_name": "wx",
+                    },
                 ),
             ),
             request=None,
@@ -1116,9 +1133,7 @@ async def test_chat_stream_injects_and_consumes_handoff(
         assert fake_service.calls[0]["tools"] in (None, [])
 
         refreshed = (
-            db.query(models.ChatEvent)
-            .filter(models.ChatEvent.id == handoff_event.id)
-            .first()
+            db.query(models.ChatEvent).filter(models.ChatEvent.id == handoff_event.id).first()
         )
         assert refreshed is not None
         assert refreshed.payload["status"] == "consumed"
@@ -1262,7 +1277,9 @@ async def test_chat_stream_persists_assistant_segments_around_tool_events(
             {
                 "type": "assistant",
                 "phase": "responding",
-                "data": {"text": "由于当前数据源缺少 OCP 集群关联信息，无法直接调用 OCP API 获取监控数据。"},
+                "data": {
+                    "text": "由于当前数据源缺少 OCP 集群关联信息，无法直接调用 OCP API 获取监控数据。"
+                },
                 "meta": {},
             },
             {
@@ -1332,13 +1349,18 @@ async def test_chat_stream_persists_assistant_segments_around_tool_events(
         )
         payloads = await _collect_stream_payloads(response)
 
-        assert any(item.get("type") == "step_start" or item.get("type") == "step_result" for item in payloads)
+        assert any(
+            item.get("type") == "step_start" or item.get("type") == "step_result"
+            for item in payloads
+        )
         # After refactor, assistant text segments within a single turn are
         # accumulated into content_parts and flushed as a single Message.
         # The legacy content field holds only the first text segment.
         assert len(saved_messages) >= 1
         all_parts = saved_messages[0].content_parts or []
-        text_contents = [p["text"] for p in all_parts if isinstance(p, dict) and p.get("type") == "text"]
+        text_contents = [
+            p["text"] for p in all_parts if isinstance(p, dict) and p.get("type") == "text"
+        ]
         assert any("由于当前数据源缺少 OCP 集群关联信息" in t for t in text_contents)
         assert any("不过我可以尝试通过数据库查询来获取 CPU 负载信息" in t for t in text_contents)
     finally:
@@ -1487,11 +1509,13 @@ async def test_chat_stream_emits_error_user_message(
         assert error_events
         error_event = error_events[0]
         expected = "upstream 429"
-        assert error_event.get("message") == expected or error_event.get("data", {}).get("message") == expected
+        assert (
+            error_event.get("message") == expected
+            or error_event.get("data", {}).get("message") == expected
+        )
     finally:
         db.close()
         engine.dispose()
-
 
 
 @pytest.mark.anyio
@@ -1559,7 +1583,10 @@ async def test_confirm_pending_object_action_executes_and_updates_event(
 
         refreshed = (
             db.query(models.PendingAction)
-            .filter(models.PendingAction.conversation_id == conversation.id, models.PendingAction.token == token)
+            .filter(
+                models.PendingAction.conversation_id == conversation.id,
+                models.PendingAction.token == token,
+            )
             .first()
         )
         assert refreshed is not None
@@ -1576,8 +1603,14 @@ async def test_confirm_pending_object_action_executes_and_updates_event(
         )
         assert updated_event is not None
         payload = updated_event.payload if isinstance(updated_event.payload, dict) else {}
-        result_data_wrapper = payload.get("result") if isinstance(payload.get("result"), dict) else {}
-        data = result_data_wrapper.get("data") if isinstance(result_data_wrapper.get("data"), dict) else {}
+        result_data_wrapper = (
+            payload.get("result") if isinstance(payload.get("result"), dict) else {}
+        )
+        data = (
+            result_data_wrapper.get("data")
+            if isinstance(result_data_wrapper.get("data"), dict)
+            else {}
+        )
         assert data.get("requires_confirmation") is False
         assert data.get("confirmed_action_token") == token
     finally:
@@ -1586,7 +1619,9 @@ async def test_confirm_pending_object_action_executes_and_updates_event(
 
 
 @pytest.mark.anyio
-async def test_confirm_execute_sql_adds_assistant_followup_message(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_confirm_execute_sql_adds_assistant_followup_message(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     factory, engine = _build_session_factory(tmp_path)
     db = factory()
     try:
@@ -1671,7 +1706,15 @@ async def test_confirm_execute_sql_adds_assistant_followup_message(tmp_path: Pat
                 }
 
         class _FakeResumeLLM:
-            async def chat(self, messages, tools=None, stream=False, temperature=None, response_format=None, reasoning_config=None):
+            async def chat(
+                self,
+                messages,
+                tools=None,
+                stream=False,
+                temperature=None,
+                response_format=None,
+                reasoning_config=None,
+            ):
                 del messages, tools, stream, temperature, response_format, reasoning_config
                 yield {
                     "choices": [
@@ -1684,19 +1727,29 @@ async def test_confirm_execute_sql_adds_assistant_followup_message(tmp_path: Pat
                 }
 
         monkeypatch.setattr(chat_pending_api, "probe_tenant_fingerprint", _fake_probe)
-        monkeypatch.setattr(chat_pending_api, "build_execution_fingerprint", lambda **kwargs: "fp-1")
+        monkeypatch.setattr(
+            chat_pending_api, "build_execution_fingerprint", lambda **kwargs: "fp-1"
+        )
         monkeypatch.setattr("app.db.connection.get_db_pool", lambda: _FakePool())
         monkeypatch.setattr(chat_pending_api, "get_llm_client", lambda: _FakeResumeLLM())
 
-        result = await chat_api.confirm_pending_action(conversation_id=conversation.id, token=token, db=db)
+        result = await chat_api.confirm_pending_action(
+            conversation_id=conversation.id, token=token, db=db
+        )
 
         assert result["success"] is True
         assert result["status"] == "executed"
-        assert result.get("assistant_message") == "已继续完成这一步：目标表存在，查询返回 1 条结果，可继续下一步分析。"
+        assert (
+            result.get("assistant_message")
+            == "已继续完成这一步：目标表存在，查询返回 1 条结果，可继续下一步分析。"
+        )
 
         refreshed = (
             db.query(models.PendingAction)
-            .filter(models.PendingAction.conversation_id == conversation.id, models.PendingAction.token == token)
+            .filter(
+                models.PendingAction.conversation_id == conversation.id,
+                models.PendingAction.token == token,
+            )
             .first()
         )
         assert refreshed is not None
@@ -1727,14 +1780,18 @@ async def test_confirm_execute_sql_adds_assistant_followup_message(tmp_path: Pat
             .order_by(models.Message.id.asc())
             .all()
         )
-        assert [item.content for item in assistant_messages] == ["已继续完成这一步：目标表存在，查询返回 1 条结果，可继续下一步分析。"]
+        assert [item.content for item in assistant_messages] == [
+            "已继续完成这一步：目标表存在，查询返回 1 条结果，可继续下一步分析。"
+        ]
     finally:
         db.close()
         engine.dispose()
 
 
 @pytest.mark.anyio
-async def test_confirm_execute_sql_marks_failed_event_without_requiring_confirmation(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_confirm_execute_sql_marks_failed_event_without_requiring_confirmation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     factory, engine = _build_session_factory(tmp_path)
     db = factory()
     try:
@@ -1818,7 +1875,15 @@ async def test_confirm_execute_sql_marks_failed_event_without_requiring_confirma
                 return await _raise_execute(*args, **kwargs)
 
         class _FakeFailureResumeLLM:
-            async def chat(self, messages, tools=None, stream=False, temperature=None, response_format=None, reasoning_config=None):
+            async def chat(
+                self,
+                messages,
+                tools=None,
+                stream=False,
+                temperature=None,
+                response_format=None,
+                reasoning_config=None,
+            ):
                 del messages, tools, stream, temperature, response_format, reasoning_config
                 yield {
                     "choices": [
@@ -1831,17 +1896,24 @@ async def test_confirm_execute_sql_marks_failed_event_without_requiring_confirma
                 }
 
         monkeypatch.setattr(chat_pending_api, "probe_tenant_fingerprint", _fake_probe)
-        monkeypatch.setattr(chat_pending_api, "build_execution_fingerprint", lambda **kwargs: "fp-1")
+        monkeypatch.setattr(
+            chat_pending_api, "build_execution_fingerprint", lambda **kwargs: "fp-1"
+        )
         monkeypatch.setattr("app.db.connection.get_db_pool", lambda: _FakePool())
         monkeypatch.setattr(chat_pending_api, "get_llm_client", lambda: _FakeFailureResumeLLM())
 
         with pytest.raises(HTTPException) as excinfo:
-            await chat_api.confirm_pending_action(conversation_id=conversation.id, token=token, db=db)
+            await chat_api.confirm_pending_action(
+                conversation_id=conversation.id, token=token, db=db
+            )
 
         assert excinfo.value.status_code == 400
         refreshed = (
             db.query(models.PendingAction)
-            .filter(models.PendingAction.conversation_id == conversation.id, models.PendingAction.token == token)
+            .filter(
+                models.PendingAction.conversation_id == conversation.id,
+                models.PendingAction.token == token,
+            )
             .first()
         )
         assert refreshed is not None
@@ -2000,13 +2072,20 @@ async def test_chat_stream_inline_triggers_save_agent_workflow(
     inline-trigger _stream_save_agent_workflow and emit save_agent_done — not just
     pass the tool result back to the LLM and let it reply with plain text.
     """
+
     async def _fake_select_dynamic_skills(
         conversation: Any,
         messages: list[dict],
         latest_user_input: str,
     ) -> dict[str, Any]:
         del conversation, messages, latest_user_input
-        return {"active_skills": [], "added": [], "removed": [], "reason": "test", "selector_ok": True}
+        return {
+            "active_skills": [],
+            "added": [],
+            "removed": [],
+            "reason": "test",
+            "selector_ok": True,
+        }
 
     async def _noop_save_messages(messages: list[models.Message]) -> None:
         del messages
@@ -2092,7 +2171,9 @@ async def test_chat_stream_inline_triggers_save_agent_workflow(
         monkeypatch.setattr(chat_api, "_save_messages_to_db", _noop_save_messages)
         monkeypatch.setattr(chat_api, "_save_chat_events_to_db", _noop_save_events)
         monkeypatch.setattr(chat_api, "get_chat_service", lambda: fake_service)
-        monkeypatch.setattr(chat_api, "_build_agent_draft_from_conversation", _fake_build_agent_draft)
+        monkeypatch.setattr(
+            chat_api, "_build_agent_draft_from_conversation", _fake_build_agent_draft
+        )
 
         response = await chat_api.chat_stream(
             conversation_id=conversation.id,
@@ -2132,13 +2213,20 @@ async def test_chat_stream_save_agent_workflow_emits_status_stages(
     """Guard: _stream_save_agent_workflow must emit save_agent_status events for
     summarizing_context and saving_agent stages before save_agent_done.
     """
+
     async def _fake_select_dynamic_skills(
         conversation: Any,
         messages: list[dict],
         latest_user_input: str,
     ) -> dict[str, Any]:
         del conversation, messages, latest_user_input
-        return {"active_skills": [], "added": [], "removed": [], "reason": "test", "selector_ok": True}
+        return {
+            "active_skills": [],
+            "added": [],
+            "removed": [],
+            "reason": "test",
+            "selector_ok": True,
+        }
 
     async def _noop_save_messages(messages: list[models.Message]) -> None:
         del messages
@@ -2187,7 +2275,9 @@ async def test_chat_stream_save_agent_workflow_emits_status_stages(
         monkeypatch.setattr(chat_api, "_save_messages_to_db", _noop_save_messages)
         monkeypatch.setattr(chat_api, "_save_chat_events_to_db", _noop_save_events)
         monkeypatch.setattr(chat_api, "get_chat_service", lambda: fake_service)
-        monkeypatch.setattr(chat_api, "_build_agent_draft_from_conversation", _fake_build_agent_draft)
+        monkeypatch.setattr(
+            chat_api, "_build_agent_draft_from_conversation", _fake_build_agent_draft
+        )
 
         response = await chat_api.chat_stream(
             conversation_id=conversation.id,

@@ -248,7 +248,9 @@ def build_dingtalk_message(template: dict[str, Any]) -> dict[str, Any]:
     title = str(template.get("title") or "Praxis Notification")
     body = str(template.get("body") or "Praxis test message")
     at_payload = {
-        "atUserIds": template.get("at_user_ids") if isinstance(template.get("at_user_ids"), list) else [],
+        "atUserIds": template.get("at_user_ids")
+        if isinstance(template.get("at_user_ids"), list)
+        else [],
         "isAtAll": bool(template.get("at_all", False)),
     }
 
@@ -305,7 +307,9 @@ def _collect_message_text(payload: Any) -> str:
 def _build_dingtalk_signed_url(webhook_url: str, secret: str) -> tuple[str, int]:
     timestamp = int(time.time() * 1000)
     string_to_sign = f"{timestamp}\n{secret}"
-    digest = hmac.new(secret.encode("utf-8"), string_to_sign.encode("utf-8"), hashlib.sha256).digest()
+    digest = hmac.new(
+        secret.encode("utf-8"), string_to_sign.encode("utf-8"), hashlib.sha256
+    ).digest()
     sign = quote(base64.b64encode(digest).decode("utf-8"), safe="")
     parsed = urlparse(webhook_url)
     query_items = parse_qsl(parsed.query, keep_blank_values=True)
@@ -511,7 +515,10 @@ class ChannelDeliveryService:
                 "provider": "telegram",
                 "channel_id": channel.id,
                 "dry_run": True,
-                "request": {"api_url": f"https://api.telegram.org/bot{masked_token}/sendMessage", "message": message},
+                "request": {
+                    "api_url": f"https://api.telegram.org/bot{masked_token}/sendMessage",
+                    "message": message,
+                },
             }
 
         async with httpx.AsyncClient(timeout=httpx.Timeout(10.0, connect=5.0)) as client:

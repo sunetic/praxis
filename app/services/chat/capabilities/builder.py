@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-
 from sqlalchemy.orm import Session
 
 from app.models import models

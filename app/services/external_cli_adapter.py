@@ -5,9 +5,10 @@ import os
 import re
 import subprocess
 import threading
-from datetime import datetime, UTC
+from collections.abc import Callable
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 from app.core.logging import fmt_kv, get_logger
 from app.services.platform.coding_engine import (
@@ -137,7 +138,8 @@ class ExternalCliAdapter:
 
         try:
             stdout, stderr, returncode = self._run_streaming(
-                full_command, cwd=str(workspace_resolved),
+                full_command,
+                cwd=str(workspace_resolved),
             )
         except subprocess.TimeoutExpired:
             last_summary = self._last_stream_summary.strip()
@@ -154,8 +156,7 @@ class ExternalCliAdapter:
             assistant_message = f"External engine timed out after {self._timeout_seconds} seconds."
             if last_summary:
                 assistant_message = (
-                    f"{assistant_message}\n"
-                    f"Last observed engine output: {last_summary[:1000]}"
+                    f"{assistant_message}\nLast observed engine output: {last_summary[:1000]}"
                 )
             return CodingEngineApplyResult(
                 changed_files=[],
@@ -224,25 +225,29 @@ class ExternalCliAdapter:
             result_status=result_status,
         )
 
-
     def _emit(self, summary: str) -> None:
         """Emit a streaming progress event if callback is set."""
         cb = self._event_callback
         if cb is None:
             return
         try:
-            cb({
-                "type": "phase",
-                "phase": "act",
-                "status": "running",
-                "summary": summary[:300],
-                "created_at": datetime.now(UTC).isoformat(),
-            })
+            cb(
+                {
+                    "type": "phase",
+                    "phase": "act",
+                    "status": "running",
+                    "summary": summary[:300],
+                    "created_at": datetime.now(UTC).isoformat(),
+                }
+            )
         except Exception:
             pass
 
     def _run_streaming(
-        self, command: str, *, cwd: str,
+        self,
+        command: str,
+        *,
+        cwd: str,
     ) -> tuple[str, str, int]:
         """Run command via Popen, streaming stdout lines as events."""
         process = subprocess.Popen(
@@ -448,14 +453,10 @@ def _snapshot_files(directory: Path) -> dict[str, float]:
     return snapshot
 
 
-def _diff_snapshots(
-    before: dict[str, float], after: dict[str, float]
-) -> list[str]:
+def _diff_snapshots(before: dict[str, float], after: dict[str, float]) -> list[str]:
     """Return list of files that were added or modified."""
     changed: list[str] = []
     for path, mtime in after.items():
         if path not in before or before[path] != mtime:
             changed.append(path)
     return sorted(changed)
-
-

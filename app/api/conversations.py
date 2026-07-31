@@ -1,6 +1,5 @@
-from typing import List
-from datetime import UTC, datetime, timedelta
 import uuid
+from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
@@ -27,7 +26,7 @@ def _validate_active_skills(active_skills: list[str] | None) -> None:
         raise HTTPException(status_code=400, detail=f"Unknown active skills: {', '.join(missing)}")
 
 
-@router.get("", response_model=List[schemas.ConversationResponse])
+@router.get("", response_model=list[schemas.ConversationResponse])
 def list_conversations(
     datasource_id: int | None = None,
     agent_id: int | None = None,
@@ -48,7 +47,13 @@ def list_conversations(
     records = query.order_by(models.Conversation.updated_at.desc()).all()
     logger.info(
         "list_conversations %s",
-        fmt_kv(datasource_id=datasource_id, agent_id=agent_id, category=category, scene_key=scene_key, count=len(records)),
+        fmt_kv(
+            datasource_id=datasource_id,
+            agent_id=agent_id,
+            category=category,
+            scene_key=scene_key,
+            count=len(records),
+        ),
     )
     return records
 
@@ -156,12 +161,10 @@ def _cleanup_expired_build_sessions(db: Session, now: datetime) -> None:
     )
 
 
-@message_router.get("/conversation/{conversation_id}", response_model=List[schemas.MessageResponse])
+@message_router.get("/conversation/{conversation_id}", response_model=list[schemas.MessageResponse])
 def get_messages(conversation_id: int, db: Session = Depends(get_db)):
     conversation = (
-        db.query(models.Conversation)
-        .filter(models.Conversation.id == conversation_id)
-        .first()
+        db.query(models.Conversation).filter(models.Conversation.id == conversation_id).first()
     )
     if not conversation:
         message_logger.warning("get_messages_not_found %s", fmt_kv(conversation_id=conversation_id))
@@ -175,7 +178,9 @@ def get_messages(conversation_id: int, db: Session = Depends(get_db)):
         .order_by(models.Message.created_at.asc())
         .all()
     )
-    message_logger.info("get_messages %s", fmt_kv(conversation_id=conversation_id, count=len(records)))
+    message_logger.info(
+        "get_messages %s", fmt_kv(conversation_id=conversation_id, count=len(records))
+    )
     return records
 
 
@@ -193,7 +198,11 @@ def create_message(message: schemas.MessageCreate, db: Session = Depends(get_db)
             models.ChatEvent.conversation_id == message.conversation_id,
             models.ChatEvent.turn_seq.is_not(None),
         )
-        .order_by(models.ChatEvent.turn_seq.desc(), models.ChatEvent.part_seq.desc(), models.ChatEvent.id.desc())
+        .order_by(
+            models.ChatEvent.turn_seq.desc(),
+            models.ChatEvent.part_seq.desc(),
+            models.ChatEvent.id.desc(),
+        )
         .first()
     )
     next_turn_seq = int(latest_turn_event.turn_seq or 0) + 1 if latest_turn_event else 1

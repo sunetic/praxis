@@ -201,7 +201,9 @@ class EngineProbeAgent:
             post.append(tool_flags)
         return pre, post
 
-    def _assemble_command(self, command: str, pre_flags: list[str], post_flags: list[str], prompt: str) -> str:
+    def _assemble_command(
+        self, command: str, pre_flags: list[str], post_flags: list[str], prompt: str
+    ) -> str:
         """Assemble: command pre_flags prompt post_flags."""
         parts = [command]
         parts.extend(pre_flags)
@@ -210,7 +212,9 @@ class EngineProbeAgent:
             parts.append(_ensure_flag_arg_quoted(flag))
         return " ".join(parts)
 
-    def _test_command_with_flags(self, command: str, pre_flags: list[str], post_flags: list[str]) -> ProbeResult:
+    def _test_command_with_flags(
+        self, command: str, pre_flags: list[str], post_flags: list[str]
+    ) -> ProbeResult:
         """Test a command with proper prompt ordering."""
         full = self._assemble_command(command, pre_flags, post_flags, "respond with just: ok")
         return self._run_probe(full)

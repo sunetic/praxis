@@ -5,7 +5,6 @@ import re
 import unicodedata
 from collections.abc import Callable
 
-
 FUNCTION_SLUG_RE = re.compile(r"^[a-z][a-z0-9_-]{2,63}$")
 _NON_SLUG_CHARS_RE = re.compile(r"[^a-z0-9_-]+")
 _MULTI_DASH_RE = re.compile(r"-{2,}")
@@ -45,9 +44,7 @@ def validate_function_slug(slug: str) -> bool:
 def build_function_slug_base(display_name: str) -> str:
     normalized_name = normalize_function_display_name(display_name)
     ascii_name = (
-        unicodedata.normalize("NFKD", normalized_name)
-        .encode("ascii", "ignore")
-        .decode("ascii")
+        unicodedata.normalize("NFKD", normalized_name).encode("ascii", "ignore").decode("ascii")
     )
     slug = normalize_function_slug(ascii_name)
     if not validate_function_slug(slug):

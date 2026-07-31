@@ -62,7 +62,9 @@ def build_sql_rollup_from_trend(
             "executions": _to_int(item.get("executions")),
             "avg_elapsed_time_us": _to_float(item.get("avg_elapsed_time_us")),
             "total_elapsed_time_us": _to_int(item.get("total_elapsed_time_us")),
-            "avg_cpu_time_us": _to_float(item.get("avg_execute_time_us")) if item.get("avg_execute_time_us") is not None else None,
+            "avg_cpu_time_us": _to_float(item.get("avg_execute_time_us"))
+            if item.get("avg_execute_time_us") is not None
+            else None,
         }
         for item in trend
     ]
@@ -75,8 +77,14 @@ def build_sql_rollup_from_trend(
         for item in normalized_buckets
         if item["avg_cpu_time_us"] is not None
     )
-    avg_elapsed_time_us = round(total_elapsed_time_us / total_executions, 2) if total_executions else 0.0
-    avg_cpu_time_us = round(total_cpu_time_us / total_executions, 2) if total_executions and total_cpu_time_us else None
+    avg_elapsed_time_us = (
+        round(total_elapsed_time_us / total_executions, 2) if total_executions else 0.0
+    )
+    avg_cpu_time_us = (
+        round(total_cpu_time_us / total_executions, 2)
+        if total_executions and total_cpu_time_us
+        else None
+    )
 
     return {
         "sampling_strategy": sampling_strategy,
@@ -89,8 +97,12 @@ def build_sql_rollup_from_trend(
             "total_cpu_time_us": total_cpu_time_us or None,
             "avg_elapsed_time_us": avg_elapsed_time_us,
             "avg_cpu_time_us": avg_cpu_time_us,
-            "max_avg_elapsed_time_us": max((item["avg_elapsed_time_us"] for item in normalized_buckets), default=0.0),
-            "latest_avg_elapsed_time_us": normalized_buckets[-1]["avg_elapsed_time_us"] if normalized_buckets else 0.0,
+            "max_avg_elapsed_time_us": max(
+                (item["avg_elapsed_time_us"] for item in normalized_buckets), default=0.0
+            ),
+            "latest_avg_elapsed_time_us": normalized_buckets[-1]["avg_elapsed_time_us"]
+            if normalized_buckets
+            else 0.0,
         },
         "buckets": sampled_buckets,
     }
@@ -118,9 +130,7 @@ def build_sql_facts_payload(
     )
     total_elapsed_time_us = _to_int(round(executions * avg_elapsed_time_us))
     total_cpu_time_us = (
-        _to_int(round(executions * avg_cpu_time_us))
-        if avg_cpu_time_us is not None
-        else None
+        _to_int(round(executions * avg_cpu_time_us)) if avg_cpu_time_us is not None else None
     )
 
     return {

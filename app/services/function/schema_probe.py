@@ -125,9 +125,15 @@ class FunctionSchemaProbe:
                     rows: list[dict[str, Any]] = []
                     error_text = ""
                     try:
-                        result = _run_async_safely(get_db_pool().execute_query(datasource, sql, role=role))
+                        result = _run_async_safely(
+                            get_db_pool().execute_query(datasource, sql, role=role)
+                        )
                         raw_rows = result.get("rows") if isinstance(result, dict) else []
-                        rows = [item for item in raw_rows if isinstance(item, dict)] if isinstance(raw_rows, list) else []
+                        rows = (
+                            [item for item in raw_rows if isinstance(item, dict)]
+                            if isinstance(raw_rows, list)
+                            else []
+                        )
                     except Exception as exc:
                         error_text = str(exc)
                     attempts.append(
@@ -165,7 +171,9 @@ class FunctionSchemaProbe:
                 goal_context="",
             )
 
-        datasource = next((item for item in datasources if int(item.id) == selected_datasource_id), None)
+        datasource = next(
+            (item for item in datasources if int(item.id) == selected_datasource_id), None
+        )
         if datasource is None:
             return FunctionSchemaProbeResult(
                 ran=True,
@@ -186,9 +194,15 @@ class FunctionSchemaProbe:
                 rows: list[dict[str, Any]] = []
                 error_text = ""
                 try:
-                    result = _run_async_safely(get_db_pool().execute_query(datasource, sql, role=selected_role))
+                    result = _run_async_safely(
+                        get_db_pool().execute_query(datasource, sql, role=selected_role)
+                    )
                     raw_rows = result.get("rows") if isinstance(result, dict) else []
-                    rows = [item for item in raw_rows if isinstance(item, dict)] if isinstance(raw_rows, list) else []
+                    rows = (
+                        [item for item in raw_rows if isinstance(item, dict)]
+                        if isinstance(raw_rows, list)
+                        else []
+                    )
                 except Exception as exc:
                     error_text = str(exc)
                 attempts.append(
@@ -203,7 +217,9 @@ class FunctionSchemaProbe:
                 )
                 if error_text:
                     continue
-                probe_columns = self._extract_column_names(rows)[: max(1, min(int(max_columns or 1), 20))]
+                probe_columns = self._extract_column_names(rows)[
+                    : max(1, min(int(max_columns or 1), 20))
+                ]
                 if probe_columns:
                     break
             if probe_columns:
@@ -270,7 +286,11 @@ class FunctionSchemaProbe:
                     break
             if not candidate:
                 for key, value in row.items():
-                    if isinstance(value, str) and value.strip() and key.lower() not in ("type", "null", "key", "default", "extra"):
+                    if (
+                        isinstance(value, str)
+                        and value.strip()
+                        and key.lower() not in ("type", "null", "key", "default", "extra")
+                    ):
                         candidate = value.strip()
                         break
             if not candidate:

@@ -1,5 +1,5 @@
-from pathlib import Path
 from datetime import datetime, timedelta
+from pathlib import Path
 
 import pytest
 from sqlalchemy import create_engine

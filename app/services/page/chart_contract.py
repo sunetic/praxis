@@ -3,7 +3,6 @@ from __future__ import annotations
 import json
 from typing import Any
 
-
 _PAGE_CHART_CONTRACT: dict[str, Any] = {
     "contract_version": "page-chart-contract-v1",
     "design_profile": {

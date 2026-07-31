@@ -1,8 +1,11 @@
 # semantic-guard: allow — message here is an LLM API message dict, not user input
 import json
 import logging
-from typing import Any, AsyncGenerator
-from opentelemetry import context as otel_context, trace
+from collections.abc import AsyncGenerator
+from typing import Any
+
+from opentelemetry import context as otel_context
+from opentelemetry import trace
 
 from app.core.config import get_settings
 from app.core.logging import fmt_kv, get_logger
@@ -82,7 +85,15 @@ def _summarize_tools(tools: list[dict[str, Any]] | None) -> list[dict[str, Any]]
     return summarized
 
 
-def _log_outbound_payload(*, model: str, base_url: str, stream: bool, messages: list[dict[str, Any]], tools: list[dict[str, Any]] | None, reasoning_config: dict[str, Any] | None) -> None:
+def _log_outbound_payload(
+    *,
+    model: str,
+    base_url: str,
+    stream: bool,
+    messages: list[dict[str, Any]],
+    tools: list[dict[str, Any]] | None,
+    reasoning_config: dict[str, Any] | None,
+) -> None:
     payload = {
         "base_url": base_url,
         "model": model,
@@ -109,10 +120,13 @@ def _resolve_llm_config() -> dict[str, str]:
     try:
         from app.db.database import SessionLocal
         from app.models.models import PlatformSetting
+
         with SessionLocal() as db:
-            rows = db.query(PlatformSetting).filter(
-                PlatformSetting.key.in_(["ai_base_url", "ai_api_key", "ai_model"])
-            ).all()
+            rows = (
+                db.query(PlatformSetting)
+                .filter(PlatformSetting.key.in_(["ai_base_url", "ai_api_key", "ai_model"]))
+                .all()
+            )
             for row in rows:
                 if row.value:
                     key = row.key

@@ -29,7 +29,9 @@ def summarize_tool_description(name: str) -> str:
     return description
 
 
-def _collect_tool_capabilities(tools: list[dict], declared_tool_names: list[str]) -> tuple[list[CapabilitySummary], list[CapabilitySummary]]:
+def _collect_tool_capabilities(
+    tools: list[dict], declared_tool_names: list[str]
+) -> tuple[list[CapabilitySummary], list[CapabilitySummary]]:
     available_names: list[str] = []
     for tool in tools:
         fn = tool.get("function") if isinstance(tool, dict) else None
@@ -48,7 +50,11 @@ def _collect_tool_capabilities(tools: list[dict], declared_tool_names: list[str]
         for name in available_names
     ]
 
-    declared = [name for name in normalize_declared_tool_names(declared_tool_names) if name in available_names]
+    declared = [
+        name
+        for name in normalize_declared_tool_names(declared_tool_names)
+        if name in available_names
+    ]
     hint_summaries = [
         CapabilitySummary(
             kind="tool_hint",
@@ -78,9 +84,14 @@ def _collect_datasource_capabilities(datasource: Any | None) -> list[CapabilityS
             )
         ]
 
-    attrs = datasource.attributes if isinstance(getattr(datasource, "attributes", None), dict) else {}
+    attrs = (
+        datasource.attributes if isinstance(getattr(datasource, "attributes", None), dict) else {}
+    )
     attr_keys = [str(key) for key in list(attrs.keys())[:4]]
-    hints = [f"cluster_key={getattr(datasource, 'cluster_key', '') or 'unknown'}", f"tenant_role={getattr(datasource, 'tenant_role', '') or 'unknown'}"]
+    hints = [
+        f"cluster_key={getattr(datasource, 'cluster_key', '') or 'unknown'}",
+        f"tenant_role={getattr(datasource, 'tenant_role', '') or 'unknown'}",
+    ]
     if attr_keys:
         hints.append(f"metadata={', '.join(attr_keys)}")
     return [
@@ -128,7 +139,11 @@ def _collect_service_capabilities(services: list[Any]) -> list[CapabilitySummary
 def _collect_knowledge_capabilities(knowledge_bases: list[Any]) -> list[CapabilitySummary]:
     if not knowledge_bases:
         return []
-    names = [str(getattr(kb, "name", "") or "").strip() for kb in knowledge_bases[:3] if str(getattr(kb, "name", "") or "").strip()]
+    names = [
+        str(getattr(kb, "name", "") or "").strip()
+        for kb in knowledge_bases[:3]
+        if str(getattr(kb, "name", "") or "").strip()
+    ]
     hints: list[str] = [f"count={len(knowledge_bases)}"]
     if names:
         hints.append(f"examples={', '.join(names)}")
@@ -152,7 +167,9 @@ def _collect_skill_capabilities(active_skills: list[Any]) -> list[CapabilitySumm
         name = str(getattr(skill, "name", "") or "").strip()
         if not name:
             continue
-        description = str(getattr(skill, "description", "") or "").strip() or "Currently active skill rule"
+        description = (
+            str(getattr(skill, "description", "") or "").strip() or "Currently active skill rule"
+        )
         summaries.append(
             CapabilitySummary(
                 kind="skill",
@@ -165,7 +182,9 @@ def _collect_skill_capabilities(active_skills: list[Any]) -> list[CapabilitySumm
     return summaries
 
 
-def _collect_scene_capabilities(scene_key: str | None, scene_focus: dict[str, Any] | None) -> list[CapabilitySummary]:
+def _collect_scene_capabilities(
+    scene_key: str | None, scene_focus: dict[str, Any] | None
+) -> list[CapabilitySummary]:
     normalized_key = str(scene_key or "").strip()
     if not normalized_key:
         return []

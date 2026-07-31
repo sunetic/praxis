@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from app.core.config import get_settings
 from app.core.logging import get_logger
@@ -30,14 +30,22 @@ _METADATA_LOOKBACK_WINDOW_US = 60 * 60 * 1_000_000
 
 _CAUSE_TYPE_CONDITIONS = [
     ("slow_sql", lambda r: r["ELAPSED_TIME"] >= cfg.slow_sql_threshold_us),
-    ("large_query", lambda r: (r["MEMSTORE_READ_ROW_COUNT"] + r["SSSTORE_READ_ROW_COUNT"]) >= cfg.large_query_rows),
+    (
+        "large_query",
+        lambda r: (
+            (r["MEMSTORE_READ_ROW_COUNT"] + r["SSSTORE_READ_ROW_COUNT"]) >= cfg.large_query_rows
+        ),
+    ),
     ("error_sql", lambda r: r["RET_CODE"] != 0),
-    ("table_scan_slow", lambda r: r["TABLE_SCAN"] and r["ELAPSED_TIME"] >= cfg.table_scan_slow_threshold_us),
+    (
+        "table_scan_slow",
+        lambda r: r["TABLE_SCAN"] and r["ELAPSED_TIME"] >= cfg.table_scan_slow_threshold_us,
+    ),
 ]
 
 
 def _now_us() -> int:
-    return int(datetime.now(timezone.utc).timestamp() * 1_000_000)
+    return int(datetime.now(UTC).timestamp() * 1_000_000)
 
 
 def _clean_text(value: object) -> str:
@@ -182,9 +190,13 @@ async def collect_threshold(
             aggregate["sum_cpu_us"] += row["sum_cpu_us"]
             aggregate["max_cpu_us"] = max(aggregate["max_cpu_us"], row["max_cpu_us"])
             aggregate["sum_logical_reads"] += row["sum_logical_reads"]
-            aggregate["max_logical_reads"] = max(aggregate["max_logical_reads"], row["max_logical_reads"])
+            aggregate["max_logical_reads"] = max(
+                aggregate["max_logical_reads"], row["max_logical_reads"]
+            )
             aggregate["sum_affected_rows"] += row["sum_affected_rows"]
-            aggregate["max_affected_rows"] = max(aggregate["max_affected_rows"], row["max_affected_rows"])
+            aggregate["max_affected_rows"] = max(
+                aggregate["max_affected_rows"], row["max_affected_rows"]
+            )
             aggregate["sum_return_rows"] += row["sum_return_rows"]
             aggregate["has_table_scan"] = max(aggregate["has_table_scan"], row["has_table_scan"])
             aggregate["fail_count"] += row["fail_count"]
@@ -216,12 +228,26 @@ async def collect_threshold(
               collect_mode='threshold', collected_at=NOW(3)
             """,
             params=[
-                source_ds.id, row["TENANT_ID"], tenant_name,
-                row["SQL_ID"], row["PLAN_HASH"] or 0, db_name, user_name,
-                window_start_us, row["executions"], row["sum_elapsed_us"], row["max_elapsed_us"],
-                row["sum_cpu_us"], row["max_cpu_us"], row["sum_logical_reads"], row["max_logical_reads"],
-                row["sum_affected_rows"], row["max_affected_rows"], row["sum_return_rows"],
-                int(bool(row["has_table_scan"])), row["fail_count"],
+                source_ds.id,
+                row["TENANT_ID"],
+                tenant_name,
+                row["SQL_ID"],
+                row["PLAN_HASH"] or 0,
+                db_name,
+                user_name,
+                window_start_us,
+                row["executions"],
+                row["sum_elapsed_us"],
+                row["max_elapsed_us"],
+                row["sum_cpu_us"],
+                row["max_cpu_us"],
+                row["sum_logical_reads"],
+                row["max_logical_reads"],
+                row["sum_affected_rows"],
+                row["max_affected_rows"],
+                row["sum_return_rows"],
+                int(bool(row["has_table_scan"])),
+                row["fail_count"],
             ],
         )
         if query_sql:
@@ -236,11 +262,22 @@ async def collect_threshold(
                 VALUES (%s,%s,%s,%s,%s,%s,%s,'threshold',%s,%s,%s,%s,0,%s,0,%s,%s,%s,0,%s)
                 """,
                 params=[
-                    source_ds.id, row["TENANT_ID"], tenant_name,
-                    row["SQL_ID"], row["PLAN_HASH"] or 0, db_name, user_name,
-                    window_end_us, row["max_elapsed_us"], row["max_cpu_us"], row["max_cpu_us"],
-                    row["max_logical_reads"], row["max_affected_rows"], row["sum_return_rows"],
-                    int(bool(row["has_table_scan"])), query_sql,
+                    source_ds.id,
+                    row["TENANT_ID"],
+                    tenant_name,
+                    row["SQL_ID"],
+                    row["PLAN_HASH"] or 0,
+                    db_name,
+                    user_name,
+                    window_end_us,
+                    row["max_elapsed_us"],
+                    row["max_cpu_us"],
+                    row["max_cpu_us"],
+                    row["max_logical_reads"],
+                    row["max_affected_rows"],
+                    row["sum_return_rows"],
+                    int(bool(row["has_table_scan"])),
+                    query_sql,
                 ],
             )
         matched.append((row["SQL_ID"], int(row["TENANT_ID"])))
@@ -250,7 +287,11 @@ async def collect_threshold(
 
 
 async def collect_watchlist(
-    source_ds: DataSource, target_ds: DataSource, tenant_ids: set[int], window_start_us: int, window_end_us: int
+    source_ds: DataSource,
+    target_ds: DataSource,
+    tenant_ids: set[int],
+    window_start_us: int,
+    window_end_us: int,
 ) -> None:
     """Targeted collection for watchlisted sql_ids across all tracked tenants."""
     all_sql_ids: list[str] = []
@@ -307,15 +348,23 @@ async def collect_watchlist(
             else:
                 aggregate["executions"] += row["executions"]
                 aggregate["sum_elapsed_us"] += row["sum_elapsed_us"]
-                aggregate["max_elapsed_us"] = max(aggregate["max_elapsed_us"], row["max_elapsed_us"])
+                aggregate["max_elapsed_us"] = max(
+                    aggregate["max_elapsed_us"], row["max_elapsed_us"]
+                )
                 aggregate["sum_cpu_us"] += row["sum_cpu_us"]
                 aggregate["max_cpu_us"] = max(aggregate["max_cpu_us"], row["max_cpu_us"])
                 aggregate["sum_logical_reads"] += row["sum_logical_reads"]
-                aggregate["max_logical_reads"] = max(aggregate["max_logical_reads"], row["max_logical_reads"])
+                aggregate["max_logical_reads"] = max(
+                    aggregate["max_logical_reads"], row["max_logical_reads"]
+                )
                 aggregate["sum_affected_rows"] += row["sum_affected_rows"]
-                aggregate["max_affected_rows"] = max(aggregate["max_affected_rows"], row["max_affected_rows"])
+                aggregate["max_affected_rows"] = max(
+                    aggregate["max_affected_rows"], row["max_affected_rows"]
+                )
                 aggregate["sum_return_rows"] += row["sum_return_rows"]
-                aggregate["has_table_scan"] = max(aggregate["has_table_scan"], row["has_table_scan"])
+                aggregate["has_table_scan"] = max(
+                    aggregate["has_table_scan"], row["has_table_scan"]
+                )
                 aggregate["fail_count"] += row["fail_count"]
 
         for key, row in aggregates.items():
@@ -343,12 +392,26 @@ async def collect_watchlist(
                   max_cpu_us=VALUES(max_cpu_us), collected_at=NOW(3), collect_mode='watchlist'
                 """,
                 params=[
-                    source_ds.id, tid, tenant_name,
-                    row["SQL_ID"], row["PLAN_HASH"] or 0, db_name, user_name,
-                    window_start_us, row["executions"], row["sum_elapsed_us"], row["max_elapsed_us"],
-                    row["sum_cpu_us"], row["max_cpu_us"], row["sum_logical_reads"], row["max_logical_reads"],
-                    row["sum_affected_rows"], row["max_affected_rows"], row["sum_return_rows"],
-                    int(bool(row["has_table_scan"])), row["fail_count"],
+                    source_ds.id,
+                    tid,
+                    tenant_name,
+                    row["SQL_ID"],
+                    row["PLAN_HASH"] or 0,
+                    db_name,
+                    user_name,
+                    window_start_us,
+                    row["executions"],
+                    row["sum_elapsed_us"],
+                    row["max_elapsed_us"],
+                    row["sum_cpu_us"],
+                    row["max_cpu_us"],
+                    row["sum_logical_reads"],
+                    row["max_logical_reads"],
+                    row["sum_affected_rows"],
+                    row["max_affected_rows"],
+                    row["sum_return_rows"],
+                    int(bool(row["has_table_scan"])),
+                    row["fail_count"],
                 ],
             )
             if query_sql:
@@ -363,11 +426,22 @@ async def collect_watchlist(
                     VALUES (%s,%s,%s,%s,%s,%s,%s,'watchlist',%s,%s,%s,%s,0,%s,0,%s,%s,%s,0,%s)
                     """,
                     params=[
-                        source_ds.id, tid, tenant_name,
-                        row["SQL_ID"], row["PLAN_HASH"] or 0, db_name, user_name,
-                        window_end_us, row["max_elapsed_us"], row["max_cpu_us"], row["max_cpu_us"],
-                        row["max_logical_reads"], row["max_affected_rows"], row["sum_return_rows"],
-                        int(bool(row["has_table_scan"])), query_sql,
+                        source_ds.id,
+                        tid,
+                        tenant_name,
+                        row["SQL_ID"],
+                        row["PLAN_HASH"] or 0,
+                        db_name,
+                        user_name,
+                        window_end_us,
+                        row["max_elapsed_us"],
+                        row["max_cpu_us"],
+                        row["max_cpu_us"],
+                        row["max_logical_reads"],
+                        row["max_affected_rows"],
+                        row["sum_return_rows"],
+                        int(bool(row["has_table_scan"])),
+                        query_sql,
                     ],
                 )
 
@@ -380,13 +454,22 @@ async def collect_watchlist(
         if idle_ids:
             await watchlist.increment_idle(target_ds, source_ds.id, tid, idle_ids)
         if tid_active:
-            await watchlist.add_or_renew(target_ds, source_ds.id, tid, [sid for sid, _ in tid_active], "watchlist")
+            await watchlist.add_or_renew(
+                target_ds, source_ds.id, tid, [sid for sid, _ in tid_active], "watchlist"
+            )
 
-    logger.info("watchlist_collect window=%s-%s tracked=%s active=%s",
-                window_start_us, window_end_us, len(all_sql_ids), len(active))
+    logger.info(
+        "watchlist_collect window=%s-%s tracked=%s active=%s",
+        window_start_us,
+        window_end_us,
+        len(all_sql_ids),
+        len(active),
+    )
 
 
-async def collect_samples(source_ds: DataSource, target_ds: DataSource, last_request_time_us: int) -> tuple[int, list[tuple[str, int]]]:
+async def collect_samples(
+    source_ds: DataSource, target_ds: DataSource, last_request_time_us: int
+) -> tuple[int, list[tuple[str, int]]]:
     """Cursor-based incremental sample collection by cause_type. Returns (max_ts, [(sql_id, tenant_id)])."""
     result = await _pool.execute_query(
         source_ds,
@@ -410,8 +493,11 @@ async def collect_samples(source_ds: DataSource, target_ds: DataSource, last_req
         LIMIT 500
         """,
         params=[
-            last_request_time_us, *_EXCLUDED_DBS,
-            cfg.slow_sql_threshold_us, cfg.large_query_rows, cfg.table_scan_slow_threshold_us,
+            last_request_time_us,
+            *_EXCLUDED_DBS,
+            cfg.slow_sql_threshold_us,
+            cfg.large_query_rows,
+            cfg.table_scan_slow_threshold_us,
         ],
     )
 
@@ -446,18 +532,36 @@ async def collect_samples(source_ds: DataSource, target_ds: DataSource, last_req
                 VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                 """,
                 params=[
-                    source_ds.id, row["TENANT_ID"], metadata["TENANT_NAME"],
-                    row["SQL_ID"], row["PLAN_HASH"] or 0, metadata["DB_NAME"], metadata["USER_NAME"],
-                    cause_type, row["REQUEST_TIME"], row["ELAPSED_TIME"], row["EXECUTE_TIME"],
-                    row["EXECUTE_TIME"], row["QUEUE_TIME"], logical_reads, row["DISK_READS"],
-                    row["AFFECTED_ROWS"], row["RETURN_ROWS"], int(bool(row["TABLE_SCAN"])),
-                    row["RET_CODE"], metadata["QUERY_SQL"],
+                    source_ds.id,
+                    row["TENANT_ID"],
+                    metadata["TENANT_NAME"],
+                    row["SQL_ID"],
+                    row["PLAN_HASH"] or 0,
+                    metadata["DB_NAME"],
+                    metadata["USER_NAME"],
+                    cause_type,
+                    row["REQUEST_TIME"],
+                    row["ELAPSED_TIME"],
+                    row["EXECUTE_TIME"],
+                    row["EXECUTE_TIME"],
+                    row["QUEUE_TIME"],
+                    logical_reads,
+                    row["DISK_READS"],
+                    row["AFFECTED_ROWS"],
+                    row["RETURN_ROWS"],
+                    int(bool(row["TABLE_SCAN"])),
+                    row["RET_CODE"],
+                    metadata["QUERY_SQL"],
                 ],
             )
             triggered.add((row["SQL_ID"], int(row["TENANT_ID"])))
 
-    logger.info("sample_collect rows=%s triggered=%s max_request_time=%s",
-                len(rows), len(triggered), max_request_time)
+    logger.info(
+        "sample_collect rows=%s triggered=%s max_request_time=%s",
+        len(rows),
+        len(triggered),
+        max_request_time,
+    )
     return max_request_time, list(triggered)
 
 
@@ -493,7 +597,9 @@ async def run_sql_audit_collection(source_ds: DataSource, target_ds: DataSource)
         last_sample_ts = now_us - 15 * 60 * 1_000_000  # first run: start from 15 min ago
 
     try:
-        threshold_pairs = await collect_threshold(source_ds, target_ds, window_start_us, window_end_us)
+        threshold_pairs = await collect_threshold(
+            source_ds, target_ds, window_start_us, window_end_us
+        )
 
         # Derive tenant_ids from actual collected data for watchlist
         seen_tenants: set[int] = set()
@@ -506,7 +612,9 @@ async def run_sql_audit_collection(source_ds: DataSource, target_ds: DataSource)
                 await watchlist.add_or_renew(target_ds, source_ds.id, tid, sids, "threshold")
 
         if seen_tenants:
-            await collect_watchlist(source_ds, target_ds, seen_tenants, window_start_us, window_end_us)
+            await collect_watchlist(
+                source_ds, target_ds, seen_tenants, window_start_us, window_end_us
+            )
 
         new_last_ts, sample_pairs = await collect_samples(source_ds, target_ds, last_sample_ts)
         if sample_pairs:
@@ -522,7 +630,9 @@ async def run_sql_audit_collection(source_ds: DataSource, target_ds: DataSource)
 
         # Collect sql_text_map from all three collection phases via sql_audit_samples
         # (samples already have query_sql written; read back to build the map for upsert)
-        all_sql_ids: set[str] = {sid for sid, _ in threshold_pairs} | {sid for sid, _ in sample_pairs}
+        all_sql_ids: set[str] = {sid for sid, _ in threshold_pairs} | {
+            sid for sid, _ in sample_pairs
+        }
 
         sql_text_map: dict[str, str] = {}
         if all_sql_ids:
@@ -581,8 +691,11 @@ async def run_sql_audit_collection(source_ds: DataSource, target_ds: DataSource)
             new_plans = await collect_plans_for_sql_ids(source_ds, target_ds, list(all_sql_ids))
 
         await checkpoint.update(
-            target_ds, f"sql_audit_{source_ds.id}",
-            last_value=new_last_ts, row_count=len(threshold_pairs), status="idle",
+            target_ds,
+            f"sql_audit_{source_ds.id}",
+            last_value=new_last_ts,
+            row_count=len(threshold_pairs),
+            status="idle",
         )
         return {
             "status": "ok",

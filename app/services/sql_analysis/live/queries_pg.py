@@ -5,9 +5,9 @@ from typing import Any
 from app.models import models
 from app.schemas import schemas
 from app.services.sql_analysis.live.queries import (
-    LiveSqlProfileQuery,
-    LiveDbNamesQuery,
     LiveCategoryQuery,
+    LiveDbNamesQuery,
+    LiveSqlProfileQuery,
     _get_live_db_pool,
 )
 
@@ -28,7 +28,8 @@ def derive_compare_window(query: LiveCategoryQuery) -> tuple[int | None, int | N
 
 
 async def list_live_category(
-    datasource: models.DataSource, query: LiveCategoryQuery,
+    datasource: models.DataSource,
+    query: LiveCategoryQuery,
 ) -> list[dict[str, Any]]:
     if query.end_time_us <= query.start_time_us:
         raise ValueError("end_time_us must be greater than start_time_us")
@@ -37,9 +38,7 @@ async def list_live_category(
         schemas.SqlMonitorCategory.TOP_SQL,
         schemas.SqlMonitorCategory.SLOW_SQL,
     }:
-        raise ValueError(
-            f"Category '{query.category.value}' is not supported for PostgreSQL"
-        )
+        raise ValueError(f"Category '{query.category.value}' is not supported for PostgreSQL")
 
     clauses: list[str] = [
         "s.query IS NOT NULL",
@@ -92,13 +91,17 @@ async def list_live_category(
     params.append(query.limit)
 
     result = await _get_live_db_pool().execute_query(
-        datasource, sql, role=datasource.tenant_role, params=params,
+        datasource,
+        sql,
+        role=datasource.tenant_role,
+        params=params,
     )
     return [dict(row) for row in result.get("rows", [])]
 
 
 async def list_live_db_names(
-    datasource: models.DataSource, query: LiveDbNamesQuery,
+    datasource: models.DataSource,
+    query: LiveDbNamesQuery,
 ) -> list[str]:
     if query.end_time_us <= query.start_time_us:
         raise ValueError("end_time_us must be greater than start_time_us")
@@ -114,7 +117,10 @@ async def list_live_db_names(
         LIMIT 200
     """
     result = await _get_live_db_pool().execute_query(
-        datasource, sql, role=datasource.tenant_role, params=non_sys_params,
+        datasource,
+        sql,
+        role=datasource.tenant_role,
+        params=non_sys_params,
     )
     return [str(row.get("db_name")) for row in result.get("rows", []) if row.get("db_name")]
 
@@ -147,7 +153,10 @@ async def get_live_sql_detail(
         LIMIT 1
     """
     result = await _get_live_db_pool().execute_query(
-        datasource, sql, role=datasource.tenant_role, params=[sql_id],
+        datasource,
+        sql,
+        role=datasource.tenant_role,
+        params=[sql_id],
     )
     rows = result.get("rows", [])
     return dict(rows[0]) if rows else None
@@ -190,7 +199,10 @@ async def get_live_plan_explain(
     if sql_text and sql_text.strip().lower().startswith("select"):
         try:
             result = await _get_live_db_pool().execute_explain(
-                datasource, sql_text, role=datasource.tenant_role, database=db_name,
+                datasource,
+                sql_text,
+                role=datasource.tenant_role,
+                database=db_name,
             )
             rows = [
                 {
@@ -262,6 +274,9 @@ async def list_live_sql_profiles(
     params.append(query.limit)
 
     result = await _get_live_db_pool().execute_query(
-        datasource, sql, role=datasource.tenant_role, params=params,
+        datasource,
+        sql,
+        role=datasource.tenant_role,
+        params=params,
     )
     return [dict(row) for row in result.get("rows", [])]

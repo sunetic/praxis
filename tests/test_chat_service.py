@@ -1,8 +1,9 @@
-import pytest
-from datetime import datetime
 from copy import deepcopy
+from datetime import datetime
 from typing import Any
 from unittest.mock import AsyncMock, Mock
+
+import pytest
 
 from app.services.chat import ChatService
 from app.services.llm import RateLimitError
@@ -241,7 +242,10 @@ async def test_chat_service_handles_datetime_in_tool_result_without_serializatio
 
         events = await _collect_events(service)
         error_events = [event for event in events if event["type"] == "error"]
-        assert not any("not JSON serializable" in (event["data"].get("message") or "") for event in error_events)
+        assert not any(
+            "not JSON serializable" in (event["data"].get("message") or "")
+            for event in error_events
+        )
     finally:
         if original is not None:
             registry.tools[tool.name] = original
@@ -500,7 +504,14 @@ async def test_chat_service_does_not_false_positive_on_natural_text_with_functio
 
 
 class _FakeHttpxResponse:
-    def __init__(self, status_code: int, *, json_data: Any | None = None, text: str = "", headers: dict[str, str] | None = None) -> None:
+    def __init__(
+        self,
+        status_code: int,
+        *,
+        json_data: Any | None = None,
+        text: str = "",
+        headers: dict[str, str] | None = None,
+    ) -> None:
         self.status_code = status_code
         self._json_data = json_data
         self.text = text
@@ -536,7 +547,9 @@ async def test_chat_service_auto_binds_call_service_tool(
     mock_tool.execute = AsyncMock(return_value=ToolResult(success=True, data={"ok": True}))
 
     monkeypatch.setattr(service, "_resolve_call_service_binding", lambda datasource_id: (88, None))
-    monkeypatch.setattr(registry, "get", lambda name: mock_tool if name == "call_praxis_service" else None)
+    monkeypatch.setattr(
+        registry, "get", lambda name: mock_tool if name == "call_praxis_service" else None
+    )
 
     result = await service._execute_tool_lifecycle(
         tool_call={
@@ -563,11 +576,12 @@ async def test_call_service_tool_treats_html_success_response_as_failure(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path,
 ) -> None:
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+
     from app.db.database import Base
     from app.models import models
     from app.tools.registry import CallServiceTool
-    from sqlalchemy import create_engine
-    from sqlalchemy.orm import sessionmaker
 
     db_path = tmp_path / "service.db"
     engine = create_engine(f"sqlite:///{db_path}")
@@ -605,7 +619,9 @@ async def test_call_service_tool_treats_html_success_response_as_failure(
 
     tool = CallServiceTool()
     try:
-        result = await tool.execute(service_id=service_id, method="GET", path="/api/v2/monitor/metric")
+        result = await tool.execute(
+            service_id=service_id, method="GET", path="/api/v2/monitor/metric"
+        )
 
         assert result.success is False
         assert result.error["code"] == "unexpected_response_format"
@@ -649,7 +665,9 @@ async def test_chat_service_does_not_apply_domain_metadata_gate(
     service = ChatService(max_iterations=1, max_reflections=0)
     mock_tool = AsyncMock()
     mock_tool.execute = AsyncMock(return_value=ToolResult(success=True, data={"ok": True}))
-    monkeypatch.setattr(registry, "get", lambda name: mock_tool if name == "call_praxis_service" else None)
+    monkeypatch.setattr(
+        registry, "get", lambda name: mock_tool if name == "call_praxis_service" else None
+    )
 
     result = await service._execute_tool_lifecycle(
         tool_call={
@@ -774,7 +792,9 @@ async def test_chat_service_forces_finalize_when_iteration_budget_reached():
             }
         ]
     }
-    forced_final_chunk = {"choices": [{"delta": {"content": "当前已完成初步分析，建议下一步缩小范围。"}}]}
+    forced_final_chunk = {
+        "choices": [{"delta": {"content": "当前已完成初步分析，建议下一步缩小范围。"}}]
+    }
     service = ChatService(max_iterations=1, max_reflections=5)
     service.llm = FakeLLM(responses=[[tool_call_chunk], [forced_final_chunk]])
     events = await _collect_events(service)

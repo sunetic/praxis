@@ -66,15 +66,11 @@ def analyze_page_preview_quality(html: str) -> PageTemplateQualityReport:
     warnings: list[str] = []
     body_only = re.sub(r"<style[^>]*>.*?</style>", "", normalized, flags=re.DOTALL | re.IGNORECASE)
     body_only = re.sub(r"(?:stop-color|var\()[^)]*\)", "", body_only)
-    hardcoded_hex_count = len(
-        re.findall(r"""(?<!['"-])#[0-9a-fA-F]{3,8}\b""", body_only)
-    )
+    hardcoded_hex_count = len(re.findall(r"""(?<!['"-])#[0-9a-fA-F]{3,8}\b""", body_only))
     if hardcoded_hex_count > 0:
         warnings.append("hardcoded_color")
     has_entry_animation = (
-        "animate-in" in normalized
-        or "transition" in normalized
-        or "animation" in normalized
+        "animate-in" in normalized or "transition" in normalized or "animation" in normalized
     )
     if not has_entry_animation:
         warnings.append("missing_entry_animation")

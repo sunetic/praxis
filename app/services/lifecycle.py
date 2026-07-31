@@ -142,9 +142,13 @@ class PageLifecycleService:
 
     def rollback(self, page: models.Page, target_release_id: int) -> models.PageRelease:
         self.checker.ensure_operation_allowed("page", page.status, "rollback")
-        target = next((release for release in page.releases if release.id == target_release_id), None)
+        target = next(
+            (release for release in page.releases if release.id == target_release_id), None
+        )
         if target is None:
-            raise LifecycleValidationError(f"Page release {target_release_id} not found for rollback")
+            raise LifecycleValidationError(
+                f"Page release {target_release_id} not found for rollback"
+            )
         page.current_release = target
         page.status = PageState.PUBLISHED.value
         return target
@@ -214,7 +218,9 @@ class ScheduleLifecycleService:
     ) -> None:
         if schedule_type == "interval":
             if interval_seconds is None or interval_seconds <= 0:
-                raise LifecycleValidationError("interval schedule must define positive interval_seconds")
+                raise LifecycleValidationError(
+                    "interval schedule must define positive interval_seconds"
+                )
             return
 
         if schedule_type == "cron":
@@ -270,8 +276,12 @@ class ScheduleLifecycleService:
         minute_expr, hour_expr, day_expr, month_expr, weekday_expr = self._parse_cron(expression)
         candidate = now.replace(second=0, microsecond=0) + timedelta(minutes=1)
         for _ in range(0, 366 * 24 * 60):
-            if self._matches(minute_expr, candidate.minute) and self._matches(hour_expr, candidate.hour):
-                if self._matches(day_expr, candidate.day) and self._matches(month_expr, candidate.month):
+            if self._matches(minute_expr, candidate.minute) and self._matches(
+                hour_expr, candidate.hour
+            ):
+                if self._matches(day_expr, candidate.day) and self._matches(
+                    month_expr, candidate.month
+                ):
                     # Python weekday: Monday=0. Cron weekday: Sunday=0/7.
                     cron_weekday = (candidate.weekday() + 1) % 7
                     if self._matches(weekday_expr, cron_weekday):

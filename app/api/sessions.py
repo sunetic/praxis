@@ -39,7 +39,10 @@ def _resolve_execution_datasource(db: Session, datasource_id: int) -> models.Dat
             .first()
         )
         if not mapped:
-            raise HTTPException(status_code=400, detail="No executable session-analysis datasource in current cluster")
+            raise HTTPException(
+                status_code=400,
+                detail="No executable session-analysis datasource in current cluster",
+            )
         return mapped
     return ds
 
@@ -94,11 +97,15 @@ def _select_execution_datasources(
     *,
     scope_tenant_id: int | None,
 ) -> list[models.DataSource]:
-    sys_datasources = [item for item in scope_datasources if str(item.tenant_role or "").lower() == "sys"]
+    sys_datasources = [
+        item for item in scope_datasources if str(item.tenant_role or "").lower() == "sys"
+    ]
     if sys_datasources:
         return sys_datasources
 
-    user_datasources = [item for item in scope_datasources if str(item.tenant_role or "").lower() != "sys"]
+    user_datasources = [
+        item for item in scope_datasources if str(item.tenant_role or "").lower() != "sys"
+    ]
     if scope_tenant_id is None:
         return user_datasources
 
@@ -126,7 +133,11 @@ def _resolve_scope_datasources(
         scope_cluster_key = normalized_cluster_key
 
     if scope_cluster_key is not None:
-        scope_datasources = _active_datasources_query(db).filter(models.DataSource.cluster_key == scope_cluster_key).all()
+        scope_datasources = (
+            _active_datasources_query(db)
+            .filter(models.DataSource.cluster_key == scope_cluster_key)
+            .all()
+        )
         if selected is not None and not scope_datasources:
             scope_datasources = [selected]
     else:
@@ -192,7 +203,9 @@ def _normalize_sql_list(rows: Iterable[dict]) -> dict[int, list[str]]:
     return by_session
 
 
-async def _fetch_transaction_sql_samples(ds: models.DataSource, session_ids: list[int]) -> dict[int, list[str]]:
+async def _fetch_transaction_sql_samples(
+    ds: models.DataSource, session_ids: list[int]
+) -> dict[int, list[str]]:
     unique_session_ids = sorted({session_id for session_id in session_ids if session_id > 0})
     if not unique_session_ids:
         return {}
@@ -209,7 +222,9 @@ async def _fetch_transaction_sql_samples(ds: models.DataSource, session_ids: lis
         ORDER BY REQUEST_TIME DESC
         LIMIT 1000
     """
-    result = await get_db_pool().execute_query(ds, sql, role=_query_role(ds), params=unique_session_ids)
+    result = await get_db_pool().execute_query(
+        ds, sql, role=_query_role(ds), params=unique_session_ids
+    )
     return _normalize_sql_list(result.get("rows", []))
 
 
@@ -221,7 +236,9 @@ async def list_live_sessions(
     db: Session = Depends(get_db),
 ) -> schemas.LiveSessionListResponse:
     if datasource_id is None and cluster_key is None:
-        active_datasource = db.query(models.DataSource.id).filter(models.DataSource.status == "active").first()
+        active_datasource = (
+            db.query(models.DataSource.id).filter(models.DataSource.status == "active").first()
+        )
         if active_datasource is None:
             return schemas.LiveSessionListResponse(
                 datasource_id=None,
@@ -326,7 +343,9 @@ async def list_live_transactions(
     db: Session = Depends(get_db),
 ) -> schemas.LiveTransactionListResponse:
     if datasource_id is None and cluster_key is None:
-        active_datasource = db.query(models.DataSource.id).filter(models.DataSource.status == "active").first()
+        active_datasource = (
+            db.query(models.DataSource.id).filter(models.DataSource.status == "active").first()
+        )
         if active_datasource is None:
             return schemas.LiveTransactionListResponse(
                 datasource_id=None,
@@ -378,10 +397,14 @@ async def list_live_transactions(
         for row in result.get("rows", []):
             row_tenant_id = _row_tenant_id(row)
             resolved_tenant_id = row_tenant_id if row_tenant_id is not None else fallback_tenant_id
-            if not _matches_tenant_scope(row_tenant_id=resolved_tenant_id, scope_tenant_id=tenant_id):
+            if not _matches_tenant_scope(
+                row_tenant_id=resolved_tenant_id, scope_tenant_id=tenant_id
+            ):
                 continue
             active_time_us = _coerce_active_time_us(_row_value(row, "ACTIVE_TIME", "active_time"))
-            elapsed_seconds = max(0, (now_us - active_time_us) // 1_000_000) if active_time_us else 0
+            elapsed_seconds = (
+                max(0, (now_us - active_time_us) // 1_000_000) if active_time_us else 0
+            )
             state_raw = str(_row_value(row, "STATE", "state") or "").upper()
             is_pending = state_raw not in ("ACTIVE", "")
             participants_raw = str(_row_value(row, "PARTICIPANTS", "participants") or "")
@@ -391,7 +414,11 @@ async def list_live_transactions(
             session_id = _row_value(row, "SESSION_ID", "session_id")
             normalized_session_id = int(session_id) if session_id not in (None, "") else None
             resolved_tenant_id = row_tenant_id if row_tenant_id is not None else fallback_tenant_id
-            dedupe_key = (str(_row_value(row, "TX_ID", "tx_id") or ""), resolved_tenant_id, str(normalized_session_id or ""))
+            dedupe_key = (
+                str(_row_value(row, "TX_ID", "tx_id") or ""),
+                resolved_tenant_id,
+                str(normalized_session_id or ""),
+            )
             if dedupe_key in dedupe_keys:
                 continue
             dedupe_keys.add(dedupe_key)
@@ -425,7 +452,11 @@ async def list_live_transactions(
             except Exception as exc:
                 logger.warning(
                     "list_live_transactions_sql_samples_failed %s error=%s",
-                    fmt_kv(datasource_id=datasource_id, cluster_key=cluster_key, source_datasource_id=ds.id),
+                    fmt_kv(
+                        datasource_id=datasource_id,
+                        cluster_key=cluster_key,
+                        source_datasource_id=ds.id,
+                    ),
                     str(exc),
                 )
         for txn in per_source_txns:
@@ -438,7 +469,9 @@ async def list_live_transactions(
             fmt_kv(datasource_id=datasource_id, cluster_key=cluster_key, tenant_id=tenant_id),
             "; ".join(query_errors),
         )
-        raise HTTPException(status_code=502, detail=f"Failed to query transactions: {query_errors[0]}")
+        raise HTTPException(
+            status_code=502, detail=f"Failed to query transactions: {query_errors[0]}"
+        )
 
     long_txns.sort(key=lambda item: item.elapsed_seconds, reverse=True)
     pending_txns.sort(key=lambda item: item.elapsed_seconds, reverse=True)
@@ -461,12 +494,16 @@ async def kill_session(
     try:
         await get_db_pool().execute_query(ds, f"KILL CONNECTION {session_id}", role="sys")
         logger.info("session_killed %s", fmt_kv(datasource_id=datasource_id, session_id=session_id))
-        return schemas.SessionKillResponse(session_id=session_id, killed=True, message="Session killed")
+        return schemas.SessionKillResponse(
+            session_id=session_id, killed=True, message="Session killed"
+        )
     except Exception as exc:
         err = str(exc)
         # Session may have already ended — treat as success
         if "Unknown thread id" in err or "not exist" in err.lower():
-            return schemas.SessionKillResponse(session_id=session_id, killed=True, message="Session already ended")
+            return schemas.SessionKillResponse(
+                session_id=session_id, killed=True, message="Session already ended"
+            )
         logger.warning("kill_session_failed %s error=%s", fmt_kv(session_id=session_id), err)
         raise HTTPException(status_code=502, detail=f"Kill failed: {err}") from exc
 
@@ -524,10 +561,16 @@ def _build_analysis_prompt(snapshot: schemas.SessionSnapshotForAI) -> str:
         for txn in snapshot.long_transactions[:5]:
             elapsed = _fmt_seconds(txn.get("elapsed_seconds", 0))
             sql_preview = "；".join((txn.get("sql_list") or [])[:3])
-            lines.append(f"  - 类型={txn.get('trans_type')}，已运行 {elapsed}，SQL：{sql_preview or '(无)'}")
+            lines.append(
+                f"  - 类型={txn.get('trans_type')}，已运行 {elapsed}，SQL：{sql_preview or '(无)'}"
+            )
 
     if snapshot.pending_transaction_count > 0:
-        lines.append(f"有 {snapshot.pending_transaction_count} 个事务卡在 commit 阶段，请重点关注是否存在锁等待。")
+        lines.append(
+            f"有 {snapshot.pending_transaction_count} 个事务卡在 commit 阶段，请重点关注是否存在锁等待。"
+        )
 
-    lines.append("\n请给出：1）一句话整体健康判断；2）最需要关注的问题（如有）；3）建议操作（如有）。")
+    lines.append(
+        "\n请给出：1）一句话整体健康判断；2）最需要关注的问题（如有）；3）建议操作（如有）。"
+    )
     return "\n".join(lines)

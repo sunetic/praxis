@@ -58,7 +58,10 @@ def test_function_schema_probe_collects_tables_and_columns(tmp_path: Path, monke
                 if normalized.startswith("show tables"):
                     return {
                         "columns": ["Tables_in_test"],
-                        "rows": [{"Tables_in_test": "orders"}, {"Tables_in_test": "stats_collection"}],
+                        "rows": [
+                            {"Tables_in_test": "orders"},
+                            {"Tables_in_test": "stats_collection"},
+                        ],
                         "row_count": 2,
                     }
                 if normalized.startswith("describe `orders`"):

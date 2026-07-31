@@ -13,9 +13,7 @@ from app.models import models
 logger = get_logger("services.datasource_probe")
 
 _VERSION_SQL = "SELECT @@version_comment AS v"
-_CLUSTER_ID_SQL = (
-    "SELECT value FROM oceanbase.GV$OB_PARAMETERS WHERE name='cluster_id' LIMIT 1"
-)
+_CLUSTER_ID_SQL = "SELECT value FROM oceanbase.GV$OB_PARAMETERS WHERE name='cluster_id' LIMIT 1"
 _TENANT_ID_SQL = "SELECT effective_tenant_id() AS v"
 _PROBE_TIMEOUT = 5
 
@@ -54,7 +52,10 @@ async def probe_ob_ids(
             )
             return {}
     except Exception as exc:
-        logger.warning("datasource_probe_version_check_failed %s", fmt_kv(datasource_id=datasource.id, error=exc))
+        logger.warning(
+            "datasource_probe_version_check_failed %s",
+            fmt_kv(datasource_id=datasource.id, error=exc),
+        )
         return {}
 
     result: dict[str, Any] = {}
@@ -65,7 +66,10 @@ async def probe_ob_ids(
             if raw is not None:
                 result["ob_cluster_id"] = int(raw)
         except Exception as exc:
-            logger.warning("datasource_probe_cluster_id_failed %s", fmt_kv(datasource_id=datasource.id, error=exc))
+            logger.warning(
+                "datasource_probe_cluster_id_failed %s",
+                fmt_kv(datasource_id=datasource.id, error=exc),
+            )
 
     async def fetch_tenant_id() -> None:
         try:
@@ -73,7 +77,10 @@ async def probe_ob_ids(
             if raw is not None:
                 result["ob_tenant_id"] = int(raw)
         except Exception as exc:
-            logger.warning("datasource_probe_tenant_id_failed %s", fmt_kv(datasource_id=datasource.id, error=exc))
+            logger.warning(
+                "datasource_probe_tenant_id_failed %s",
+                fmt_kv(datasource_id=datasource.id, error=exc),
+            )
 
     await asyncio.gather(fetch_cluster_id(), fetch_tenant_id())
     return result

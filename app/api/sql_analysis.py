@@ -35,7 +35,6 @@ router = APIRouter(prefix="/sql-analysis", tags=["SQLAnalysis"])
 logger = get_logger("app.api.sql_analysis")
 
 
-
 def _enrich_live_discovery_item(
     db: Session,
     source_datasource: models.DataSource,
@@ -57,6 +56,7 @@ def _enrich_live_discovery_item(
 
 
 # ── Live endpoints ──────────────────────────────────────────────────────────
+
 
 @router.get(
     "/live/discovery",
@@ -170,7 +170,6 @@ async def list_live_sql_category(
     datasource = db.query(models.DataSource).filter(models.DataSource.id == datasource_id).first()
     if not datasource:
         raise HTTPException(status_code=404, detail="DataSource not found")
-
 
     query = LiveCategoryQuery(
         category=category,
@@ -327,13 +326,13 @@ async def build_live_sql_context_api(
         raise HTTPException(status_code=404, detail="DataSource not found")
 
     try:
-            payload = await build_live_sql_context(
+        payload = await build_live_sql_context(
             datasource,
             sql_id=sql_id,
             start_time_us=start_time_us,
             end_time_us=end_time_us,
             tenant_id=tenant_id,
-            )
+        )
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return schemas.SqlLiveAnalysisContextResponse(
@@ -343,15 +342,22 @@ async def build_live_sql_context_api(
         end_time_us=end_time_us,
         facts=schemas.SqlLiveFactsResponse.model_validate(payload["facts"]),
         signals=[schemas.SqlAnalysisSignal.model_validate(item) for item in payload["signals"]],
-        current_plans=[schemas.SqlPlanHistoryItem.model_validate(item) for item in payload["current_plans"]],
+        current_plans=[
+            schemas.SqlPlanHistoryItem.model_validate(item) for item in payload["current_plans"]
+        ],
         window_plan_total=int(payload.get("window_plan_total") or 0),
         current_plan_id=payload.get("current_plan_id"),
         plan_explain=schemas.SqlPlanExplainResponse(
             datasource_id=datasource_id,
             sql_id=sql_id,
-            plan_id=(payload["current_plans"][0].get("plan_id") if payload["current_plans"] else None),
+            plan_id=(
+                payload["current_plans"][0].get("plan_id") if payload["current_plans"] else None
+            ),
             source=payload["plan_explain"]["source"],
-            items=[schemas.SqlPlanExplainItem.model_validate(item) for item in payload["plan_explain"]["items"]],
+            items=[
+                schemas.SqlPlanExplainItem.model_validate(item)
+                for item in payload["plan_explain"]["items"]
+            ],
         ),
         plan_details=[
             schemas.SqlLivePlanDetailResponse(
@@ -361,7 +367,10 @@ async def build_live_sql_context_api(
                 table_scan=item.get("table_scan"),
                 explain_source=str(item.get("explain_source") or "unavailable"),
                 objects=[str(obj) for obj in (item.get("objects") or [])],
-                explain_items=[schemas.SqlPlanExplainItem.model_validate(explain) for explain in item.get("explain_items") or []],
+                explain_items=[
+                    schemas.SqlPlanExplainItem.model_validate(explain)
+                    for explain in item.get("explain_items") or []
+                ],
             )
             for item in payload.get("plan_details") or []
         ],
@@ -382,13 +391,13 @@ async def explain_live_sql_with_ai_api(
         raise HTTPException(status_code=404, detail="DataSource not found")
 
     try:
-            payload = await explain_live_sql_with_ai(
+        payload = await explain_live_sql_with_ai(
             datasource,
             sql_id=sql_id,
             start_time_us=start_time_us,
             end_time_us=end_time_us,
             tenant_id=tenant_id,
-            )
+        )
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except Exception as exc:
@@ -404,15 +413,22 @@ async def explain_live_sql_with_ai_api(
             end_time_us=end_time_us,
             facts=schemas.SqlLiveFactsResponse.model_validate(context["facts"]),
             signals=[schemas.SqlAnalysisSignal.model_validate(item) for item in context["signals"]],
-            current_plans=[schemas.SqlPlanHistoryItem.model_validate(item) for item in context["current_plans"]],
+            current_plans=[
+                schemas.SqlPlanHistoryItem.model_validate(item) for item in context["current_plans"]
+            ],
             window_plan_total=int(context.get("window_plan_total") or 0),
             current_plan_id=context.get("current_plan_id"),
             plan_explain=schemas.SqlPlanExplainResponse(
                 datasource_id=datasource_id,
                 sql_id=sql_id,
-                plan_id=(context["current_plans"][0].get("plan_id") if context["current_plans"] else None),
+                plan_id=(
+                    context["current_plans"][0].get("plan_id") if context["current_plans"] else None
+                ),
                 source=context["plan_explain"]["source"],
-                items=[schemas.SqlPlanExplainItem.model_validate(item) for item in context["plan_explain"]["items"]],
+                items=[
+                    schemas.SqlPlanExplainItem.model_validate(item)
+                    for item in context["plan_explain"]["items"]
+                ],
             ),
             plan_details=[
                 schemas.SqlLivePlanDetailResponse(
@@ -423,7 +439,8 @@ async def explain_live_sql_with_ai_api(
                     explain_source=str(item.get("explain_source") or "unavailable"),
                     objects=[str(obj) for obj in (item.get("objects") or [])],
                     explain_items=[
-                        schemas.SqlPlanExplainItem.model_validate(explain) for explain in item.get("explain_items") or []
+                        schemas.SqlPlanExplainItem.model_validate(explain)
+                        for explain in item.get("explain_items") or []
                     ],
                 )
                 for item in context.get("plan_details") or []

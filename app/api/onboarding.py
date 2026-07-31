@@ -73,15 +73,16 @@ async def complete_onboarding(
     # Reset LLM singleton so next request picks up the new config
     try:
         import app.services.llm as _llm_mod
+
         _llm_mod._llm_client = None
     except Exception:
         pass
 
     # Trigger scheduler startup if not already running
     try:
+        from app.core.config import get_settings
         from app.services.scheduler.runtime_state import get_scheduler_worker, set_scheduler_worker
         from app.services.scheduler.worker import SchedulerWorker
-        from app.core.config import get_settings
 
         if get_scheduler_worker() is None:
             s = get_settings()
@@ -105,8 +106,8 @@ async def _init_monitordb() -> None:
     """Run init.sql against the configured monitordb. Idempotent (CREATE IF NOT EXISTS)."""
     from app.core.config import get_settings
     from app.db.connection import DBConnectionPool
-    from app.services.datasource.router import resolve_collector_datasource
     from app.db.database import SessionLocal
+    from app.services.datasource.router import resolve_collector_datasource
 
     s = get_settings()
     if not s.monitor_db_host:

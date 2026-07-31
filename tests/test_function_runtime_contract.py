@@ -21,7 +21,9 @@ def test_function_runtime_contract_block_contains_json():
     assert block.startswith("Fixed Runtime Contract (JSON):")
     payload = block.split(":\n", 1)[1]
     parsed = json.loads(payload)
-    assert parsed.get("entrypoints", {}).get("main", {}).get("signature") == "main(payload, context)"
+    assert (
+        parsed.get("entrypoints", {}).get("main", {}).get("signature") == "main(payload, context)"
+    )
     assert "get_function_runtime_contract" not in payload
 
 

@@ -5,9 +5,9 @@ from typing import Any
 from app.models import models
 from app.schemas import schemas
 from app.services.sql_analysis.live.queries import (
-    LiveSqlProfileQuery,
-    LiveDbNamesQuery,
     LiveCategoryQuery,
+    LiveDbNamesQuery,
+    LiveSqlProfileQuery,
     _get_live_db_pool,
 )
 
@@ -123,7 +123,10 @@ async def list_live_category(
         params.append(query.limit)
 
     result = await _get_live_db_pool().execute_query(
-        datasource, sql, role=datasource.tenant_role, params=params,
+        datasource,
+        sql,
+        role=datasource.tenant_role,
+        params=params,
     )
     items = [dict(row) for row in result.get("rows", [])]
     await _hydrate_real_sql_text(datasource, items)
@@ -151,7 +154,10 @@ async def _hydrate_real_sql_text(
         """
         try:
             result = await _get_live_db_pool().execute_query(
-                datasource, sql, role=datasource.tenant_role, params=list(unique_digests),
+                datasource,
+                sql,
+                role=datasource.tenant_role,
+                params=list(unique_digests),
             )
             for row in result.get("rows", []):
                 digest = row.get("DIGEST")
@@ -186,7 +192,10 @@ async def list_live_db_names(
         LIMIT 200
     """
     result = await _get_live_db_pool().execute_query(
-        datasource, sql, role=datasource.tenant_role, params=non_sys_params,
+        datasource,
+        sql,
+        role=datasource.tenant_role,
+        params=non_sys_params,
     )
     rows = result.get("rows", [])
     return [str(row.get("db_name")) for row in rows if row.get("db_name")]
@@ -225,7 +234,10 @@ async def get_live_sql_detail(
         LIMIT 1
     """
     result = await _get_live_db_pool().execute_query(
-        datasource, sql, role=datasource.tenant_role, params=[sql_id],
+        datasource,
+        sql,
+        role=datasource.tenant_role,
+        params=[sql_id],
     )
     rows = result.get("rows", [])
     if not rows:
@@ -266,6 +278,7 @@ def _normalize_digest_text(text: str) -> str:
     DIGEST_TEXT adds spaces around tokens: `SUM ( x )` → `SUM(x)`, `col ,` → `col,`
     """
     import re
+
     s = text.strip()
     s = re.sub(r"\s*\(\s*", "(", s)
     s = re.sub(r"\s*\)\s*", ") ", s)
@@ -291,13 +304,14 @@ async def get_live_plan_explain(
     if target_sql and target_sql.strip().lower().startswith("select"):
         try:
             result = await _get_live_db_pool().execute_explain(
-                datasource, target_sql, role=datasource.tenant_role, database=db_name,
+                datasource,
+                target_sql,
+                role=datasource.tenant_role,
+                database=db_name,
             )
             rows = [
                 {
-                    "operator": str(
-                        row.get("select_type") or row.get("id") or "EXPLAIN"
-                    ),
+                    "operator": str(row.get("select_type") or row.get("id") or "EXPLAIN"),
                     "object_name": row.get("table"),
                     "cost": None,
                     "cardinality": row.get("rows"),
@@ -341,7 +355,10 @@ async def _fetch_real_sql_text(
     """
     try:
         result = await _get_live_db_pool().execute_query(
-            datasource, sql, role=datasource.tenant_role, params=params,
+            datasource,
+            sql,
+            role=datasource.tenant_role,
+            params=params,
         )
         rows = result.get("rows", [])
         if rows:
@@ -399,6 +416,9 @@ async def list_live_sql_profiles(
     params.append(query.limit)
 
     result = await _get_live_db_pool().execute_query(
-        datasource, sql, role=datasource.tenant_role, params=params,
+        datasource,
+        sql,
+        role=datasource.tenant_role,
+        params=params,
     )
     return [dict(row) for row in result.get("rows", [])]

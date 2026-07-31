@@ -10,7 +10,6 @@ from datetime import UTC, datetime
 from typing import Any, Protocol
 
 from app.services.agent.core import summarize_build_goal
-
 from app.services.llm import LLMClient, get_llm_client
 from app.services.platform.prompt_loader import PromptLoader
 
@@ -55,8 +54,7 @@ class BuildResult:
 
 
 class AgentBuildStep(Protocol):
-    def __call__(self, *, goal: str, attempt_index: int, attempts: list[BuildAttempt]) -> Any:
-        ...
+    def __call__(self, *, goal: str, attempt_index: int, attempts: list[BuildAttempt]) -> Any: ...
 
 
 class AgentVerifyStep(Protocol):
@@ -67,8 +65,7 @@ class AgentVerifyStep(Protocol):
         goal: str,
         attempt_index: int,
         attempts: list[BuildAttempt],
-    ) -> VerificationOutcome:
-        ...
+    ) -> VerificationOutcome: ...
 
 
 def _compose_fix_first_goal(
@@ -123,7 +120,9 @@ class ReflectionPlanner:
                 next_goal="",
                 missing=[],
             )
-        fix_summary = "; ".join([item for item in diagnostics[:3] if item]) or (error or "verification_failed")
+        fix_summary = "; ".join([item for item in diagnostics[:3] if item]) or (
+            error or "verification_failed"
+        )
         initial_summary = str(initial_goal or "").strip().split("\n")[0][:200]
         guardrails_tail = _extract_guardrails_tail(initial_goal)
         if os.getenv("PYTEST_CURRENT_TEST"):
@@ -237,7 +236,9 @@ class ReflectionPlanner:
             break
         if response is None:
             raise ValueError("LLM reflection empty")
-        content = (((response.get("choices") or [{}])[0].get("message") or {}).get("content") or "").strip()
+        content = (
+            ((response.get("choices") or [{}])[0].get("message") or {}).get("content") or ""
+        ).strip()
         if not content:
             raise ValueError("LLM reflection missing content")
         return content
@@ -305,7 +306,9 @@ class BuildVerifyLoop:
                 payload={"attempt": attempt_index},
             )
             try:
-                build_result = build_step(goal=goal, attempt_index=attempt_index, attempts=list(attempts))
+                build_result = build_step(
+                    goal=goal, attempt_index=attempt_index, attempts=list(attempts)
+                )
                 final_build_result = build_result
             except Exception as exc:
                 build_error = str(exc)
@@ -313,7 +316,11 @@ class BuildVerifyLoop:
             # If the coding engine signals that clarification is needed, short-circuit
             # immediately rather than treating it as a build failure and retrying.
             if build_result is not None and not build_error:
-                _engine_status = str(getattr(build_result, "result_status", "completed") or "completed").strip().lower()
+                _engine_status = (
+                    str(getattr(build_result, "result_status", "completed") or "completed")
+                    .strip()
+                    .lower()
+                )
                 if _engine_status in ("too_complex", "needs_clarification"):
                     _engine_message = str(
                         getattr(build_result, "assistant_message", "") or _engine_status
@@ -321,7 +328,8 @@ class BuildVerifyLoop:
                     emit_event(
                         phase="observe",
                         status="needs_clarification",
-                        summary=_engine_message or "More information is needed to complete the build",
+                        summary=_engine_message
+                        or "More information is needed to complete the build",
                         payload={"attempt": attempt_index, "result_status": _engine_status},
                     )
                     return BuildResult(
@@ -361,12 +369,20 @@ class BuildVerifyLoop:
                     attempts=list(attempts),
                 )
             final_verification = verification
-            diagnostics = [str(item).strip() for item in (verification.diagnostics or []) if str(item).strip()]
-            changed_files_raw = getattr(build_result, "changed_files", []) if build_result is not None else []
+            diagnostics = [
+                str(item).strip() for item in (verification.diagnostics or []) if str(item).strip()
+            ]
+            changed_files_raw = (
+                getattr(build_result, "changed_files", []) if build_result is not None else []
+            )
             changed_files = [str(item) for item in changed_files_raw if str(item).strip()]
             summary = (
                 verification.summary
-                or (summarize_step(build_result) if (summarize_step is not None and build_result is not None) else "")
+                or (
+                    summarize_step(build_result)
+                    if (summarize_step is not None and build_result is not None)
+                    else ""
+                )
                 or ("build failed" if build_error else "verification failed")
             )
             current_code_snapshot = snapshot_step() if snapshot_step is not None else ""

@@ -7,7 +7,9 @@ logger = get_logger("collector.watchlist")
 _pool = DBConnectionPool()
 
 
-async def add_or_renew(target_ds: DataSource, datasource_id: int, tenant_id: int, sql_ids: list[str], added_by: str) -> None:
+async def add_or_renew(
+    target_ds: DataSource, datasource_id: int, tenant_id: int, sql_ids: list[str], added_by: str
+) -> None:
     if not sql_ids:
         return
     for sql_id in sql_ids:
@@ -21,7 +23,9 @@ async def add_or_renew(target_ds: DataSource, datasource_id: int, tenant_id: int
         )
 
 
-async def increment_idle(target_ds: DataSource, datasource_id: int, tenant_id: int, sql_ids: list[str]) -> None:
+async def increment_idle(
+    target_ds: DataSource, datasource_id: int, tenant_id: int, sql_ids: list[str]
+) -> None:
     if not sql_ids:
         return
     for batch_start in range(0, len(sql_ids), cfg.watchlist_batch_size):

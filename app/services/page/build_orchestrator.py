@@ -10,7 +10,6 @@ from app.services.agent.build_verify_loop import (
     BuildVerifyLoop,
     VerificationOutcome,
 )
-from app.services.platform.coding_engine import CodingEngineApplyResult
 from app.services.page.authoring_agent import (
     PageAuthoringAgent,
     PageAuthoringResult,
@@ -18,6 +17,7 @@ from app.services.page.authoring_agent import (
     PageVerificationResult,
 )
 from app.services.page.e2e_verifier import PageE2EVerificationResult, PageE2EVerifier
+from app.services.platform.coding_engine import CodingEngineApplyResult
 from app.services.platform.workspace_store import WorkspaceStore
 
 
@@ -85,14 +85,20 @@ class PageBuilderOrchestrator:
                 event_callback=event_callback,
                 existing_functions=existing_functions,
             ),
-            verify_step=lambda build_result, goal, attempt_index, attempts: self._verify_attempt_bundle(
-                build_result=build_result,
+            verify_step=lambda build_result, goal, attempt_index, attempts: (
+                self._verify_attempt_bundle(
+                    build_result=build_result,
+                )
             ),
-            summarize_step=lambda build_result: str(
-                build_result.authoring.apply.assistant_message or build_result.authoring.apply.diff_summary or ""
-            ).strip()
-            if isinstance(build_result, _PageBuildAttemptBundle)
-            else "",
+            summarize_step=lambda build_result: (
+                str(
+                    build_result.authoring.apply.assistant_message
+                    or build_result.authoring.apply.diff_summary
+                    or ""
+                ).strip()
+                if isinstance(build_result, _PageBuildAttemptBundle)
+                else ""
+            ),
             event_callback=event_callback,
         )
         attempts_payload = [
@@ -107,7 +113,11 @@ class PageBuilderOrchestrator:
             for item in runtime.attempts
         ]
 
-        bundle = runtime.final_build_result if isinstance(runtime.final_build_result, _PageBuildAttemptBundle) else None
+        bundle = (
+            runtime.final_build_result
+            if isinstance(runtime.final_build_result, _PageBuildAttemptBundle)
+            else None
+        )
         if bundle is None:
             return PageBuildOrchestratorResult(
                 status="needs_clarification",
@@ -129,10 +139,13 @@ class PageBuilderOrchestrator:
         if runtime.status != "done":
             verification_payload = (
                 runtime.final_verification.payload
-                if runtime.final_verification is not None and isinstance(runtime.final_verification.payload, dict)
+                if runtime.final_verification is not None
+                and isinstance(runtime.final_verification.payload, dict)
                 else {}
             )
-            reason = str(verification_payload.get("code") or runtime.reason or "needs_clarification")
+            reason = str(
+                verification_payload.get("code") or runtime.reason or "needs_clarification"
+            )
             summary = "页面草稿校验未通过，请补充约束后重试。"
             if str(reason).startswith("e2e_"):
                 summary = "Function 与 Page 联调未通过，请补充信息后继续。"
@@ -148,7 +161,10 @@ class PageBuilderOrchestrator:
                 attempts=attempts_payload,
             )
 
-        summary = str(apply_result.assistant_message or apply_result.diff_summary or "").strip() or "页面草稿已更新。"
+        summary = (
+            str(apply_result.assistant_message or apply_result.diff_summary or "").strip()
+            or "页面草稿已更新。"
+        )
         return PageBuildOrchestratorResult(
             status="done",
             reason="apply_done",
@@ -182,7 +198,9 @@ class PageBuilderOrchestrator:
             }
             for item in reversed(attempts[-4:])
         ]
-        merged_contexts = attempt_contexts + [item for item in (command.recent_contexts or []) if isinstance(item, dict)]
+        merged_contexts = attempt_contexts + [
+            item for item in (command.recent_contexts or []) if isinstance(item, dict)
+        ]
         authoring = self._authoring_agent.execute(
             page=page,
             command=PageBuildCommand(
@@ -217,7 +235,9 @@ class PageBuilderOrchestrator:
             )
         page_verification = build_result.authoring.verification
         if not bool(page_verification.passed):
-            diagnostics = [str(item) for item in (page_verification.diagnostics or []) if str(item).strip()]
+            diagnostics = [
+                str(item) for item in (page_verification.diagnostics or []) if str(item).strip()
+            ]
             return VerificationOutcome(
                 passed=False,
                 diagnostics=diagnostics,
@@ -230,7 +250,9 @@ class PageBuilderOrchestrator:
             )
         e2e_verification = build_result.e2e_verification
         if not bool(e2e_verification.passed):
-            diagnostics = [str(item) for item in (e2e_verification.diagnostics or []) if str(item).strip()]
+            diagnostics = [
+                str(item) for item in (e2e_verification.diagnostics or []) if str(item).strip()
+            ]
             return VerificationOutcome(
                 passed=False,
                 diagnostics=diagnostics,

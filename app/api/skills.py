@@ -1,5 +1,3 @@
-from typing import List
-
 from fastapi import APIRouter, HTTPException, Query, status
 
 from app.core.logging import fmt_kv, get_logger
@@ -21,7 +19,7 @@ def _to_skill_response(skill: Skill) -> schemas.SkillResponse:
     return schemas.SkillResponse(**payload)
 
 
-@router.get("", response_model=List[schemas.SkillResponse])
+@router.get("", response_model=list[schemas.SkillResponse])
 def list_skills(query: str | None = Query(default=None, max_length=100)):
     skill_store.load()
     records = skill_store.search(query=query)

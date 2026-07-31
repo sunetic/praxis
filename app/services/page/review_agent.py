@@ -35,10 +35,13 @@ class PageReviewAgent:
             findings.append(
                 ReviewFinding(
                     severity=str(item.get("severity") or "medium").strip() or "medium",
-                    category=str(item.get("category") or "purpose_drift").strip() or "purpose_drift",
+                    category=str(item.get("category") or "purpose_drift").strip()
+                    or "purpose_drift",
                     summary=str(item.get("summary") or "").strip(),
                     evidence=str(item.get("evidence") or "").strip(),
-                    why_it_conflicts_with_purpose=str(item.get("why_it_conflicts_with_purpose") or "").strip(),
+                    why_it_conflicts_with_purpose=str(
+                        item.get("why_it_conflicts_with_purpose") or ""
+                    ).strip(),
                     suggested_fix=str(item.get("suggested_fix") or "").strip(),
                 )
             )
@@ -65,9 +68,7 @@ class PageReviewAgent:
                 ],
             },
         }
-        has_design_spec = bool(
-            (packet.implementation_evidence.get("design_spec") or "").strip()
-        )
+        has_design_spec = bool((packet.implementation_evidence.get("design_spec") or "").strip())
         system_content = PromptLoader.render(
             "page/prompts/review_agent.tpl",
             has_design_spec=has_design_spec,
@@ -88,7 +89,9 @@ class PageReviewAgent:
             break
         if response is None:
             raise ValueError("page semantic review returned empty response")
-        content = (((response.get("choices") or [{}])[0].get("message") or {}).get("content") or "").strip()
+        content = (
+            ((response.get("choices") or [{}])[0].get("message") or {}).get("content") or ""
+        ).strip()
         if not content:
             raise ValueError("page semantic review missing content")
         return content

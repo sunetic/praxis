@@ -4,8 +4,8 @@ import inspect
 import json
 import os
 import signal
-from datetime import datetime
-from typing import Any, Callable, Awaitable
+from collections.abc import Awaitable, Callable
+from typing import Any
 
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -31,8 +31,12 @@ class ScheduleTargetRuntimeService:
         agent_runtime_service: ScheduledAgentRunner | None = None,
     ) -> None:
         self._session_factory = session_factory
-        self._function_runtime = function_runtime_service or FunctionRuntimeService(session_factory=session_factory)
-        self._agent_runtime = agent_runtime_service or ScheduledAgentRunner(session_factory=session_factory)
+        self._function_runtime = function_runtime_service or FunctionRuntimeService(
+            session_factory=session_factory
+        )
+        self._agent_runtime = agent_runtime_service or ScheduledAgentRunner(
+            session_factory=session_factory
+        )
 
     async def invoke_schedule(
         self,

@@ -1,7 +1,7 @@
+import re
 from datetime import datetime
 from enum import Enum
-import re
-from typing import Any, Optional
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -25,7 +25,7 @@ class DataSourceBase(BaseModel):
     db_type: str = "mysql"
     cluster_key: str
     tenant_role: str = "user"
-    attributes: Optional[dict] = None
+    attributes: dict | None = None
     user: str
     database: str = ""
 
@@ -45,21 +45,21 @@ class DataSourceCreate(DataSourceBase):
 
 
 class DataSourceUpdate(BaseModel):
-    name: Optional[str] = None
-    host: Optional[str] = None
-    port: Optional[int] = None
-    db_type: Optional[str] = None
-    cluster_key: Optional[str] = None
-    tenant_role: Optional[str] = None
-    attributes: Optional[dict] = None
-    user: Optional[str] = None
-    password: Optional[str] = None
-    database: Optional[str] = None
-    status: Optional[str] = None
+    name: str | None = None
+    host: str | None = None
+    port: int | None = None
+    db_type: str | None = None
+    cluster_key: str | None = None
+    tenant_role: str | None = None
+    attributes: dict | None = None
+    user: str | None = None
+    password: str | None = None
+    database: str | None = None
+    status: str | None = None
 
     @field_validator("tenant_role")
     @classmethod
-    def validate_update_tenant_role(cls, value: Optional[str]) -> Optional[str]:
+    def validate_update_tenant_role(cls, value: str | None) -> str | None:
         if value is None:
             return value
         normalized = value.strip().lower()
@@ -68,6 +68,7 @@ class DataSourceUpdate(BaseModel):
         if normalized not in {"sys", "user"}:
             raise ValueError("tenant_role must be one of: sys, user")
         return normalized
+
 
 class DataSourceResponse(DataSourceBase):
     model_config = ConfigDict(from_attributes=True)
@@ -98,8 +99,8 @@ class DataSourceConnectInfo(BaseModel):
 class ServiceBase(BaseModel):
     name: str
     service_type: str
-    config: Optional[dict] = None
-    resource_ref: Optional[str] = None
+    config: dict | None = None
+    resource_ref: str | None = None
 
 
 class ServiceCreate(ServiceBase):
@@ -107,11 +108,11 @@ class ServiceCreate(ServiceBase):
 
 
 class ServiceUpdate(BaseModel):
-    name: Optional[str] = None
-    service_type: Optional[str] = None
-    config: Optional[dict] = None
-    resource_ref: Optional[str] = None
-    status: Optional[str] = None
+    name: str | None = None
+    service_type: str | None = None
+    config: dict | None = None
+    resource_ref: str | None = None
+    status: str | None = None
 
 
 class ServiceResponse(ServiceBase):
@@ -125,8 +126,8 @@ class ServiceResponse(ServiceBase):
 
 class KnowledgeBaseBase(BaseModel):
     name: str
-    description: Optional[str] = None
-    tags: Optional[list[str]] = None
+    description: str | None = None
+    tags: list[str] | None = None
 
 
 class KnowledgeBaseCreate(KnowledgeBaseBase):
@@ -134,9 +135,9 @@ class KnowledgeBaseCreate(KnowledgeBaseBase):
 
 
 class KnowledgeBaseUpdate(BaseModel):
-    name: Optional[str] = None
-    description: Optional[str] = None
-    tags: Optional[list[str]] = None
+    name: str | None = None
+    description: str | None = None
+    tags: list[str] | None = None
 
 
 class KnowledgeBaseResponse(KnowledgeBaseBase):
@@ -144,8 +145,8 @@ class KnowledgeBaseResponse(KnowledgeBaseBase):
 
     id: int
     document_count: int = 0
-    source: Optional[str] = None
-    pack_id: Optional[str] = None
+    source: str | None = None
+    pack_id: str | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -174,21 +175,21 @@ class KnowledgePackResponse(BaseModel):
     name: str
     description: str
     tags: list[str] = []
-    db_type: Optional[str] = None
+    db_type: str | None = None
     type: str = "git"
     repo_url: str = ""
     branch: str = ""
     subdirectory: str = ""
     license: str = ""
-    source_url: Optional[str] = None
+    source_url: str | None = None
     estimated_doc_count: int = 0
     estimated_size_mb: float = 0.0
-    versions: Optional[list[PackVersion]] = None
-    default_version: Optional[str] = None
-    current_version: Optional[str] = None
+    versions: list[PackVersion] | None = None
+    default_version: str | None = None
+    current_version: str | None = None
     status: str = "available"
-    kb_id: Optional[int] = None
-    error_message: Optional[str] = None
+    kb_id: int | None = None
+    error_message: str | None = None
 
 
 class SwitchVersionRequest(BaseModel):
@@ -204,9 +205,9 @@ class SwitchVersionResponse(BaseModel):
 class KnowledgePackInstallStatus(BaseModel):
     pack_id: str
     status: str
-    progress_message: Optional[str] = None
-    kb_id: Optional[int] = None
-    error_message: Optional[str] = None
+    progress_message: str | None = None
+    kb_id: int | None = None
+    error_message: str | None = None
 
 
 class MonitorContractTableStatus(BaseModel):
@@ -223,7 +224,7 @@ class MonitorContractColumnStatus(BaseModel):
 
 class MonitorContractProbeResponse(BaseModel):
     connection_ok: bool
-    message: Optional[str] = None
+    message: str | None = None
     required_tables: list[MonitorContractTableStatus]
     missing_tables: list[str]
     required_columns: list[MonitorContractColumnStatus]
@@ -231,7 +232,7 @@ class MonitorContractProbeResponse(BaseModel):
     supported_features: dict[str, bool]
 
 
-class SqlMonitorCategory(str, Enum):
+class SqlMonitorCategory(str, Enum):  # noqa: UP042
     TOP_SQL = "top_sql"
     SLOW_SQL = "slow_sql"
     NEW_SQL = "new_sql"
@@ -240,23 +241,23 @@ class SqlMonitorCategory(str, Enum):
 
 
 class SqlMonitorCategoryItem(BaseModel):
-    datasource_id: Optional[int] = None
-    ob_tenant_id: Optional[int] = None
-    tenant_name: Optional[str] = None
-    ob_db_id: Optional[int] = None
-    sql_id: Optional[str] = None
-    sql_text: Optional[str] = None
-    db_name: Optional[str] = None
-    executions: Optional[float] = None
-    exec_ps: Optional[float] = None
-    sum_elapsed_time_us: Optional[float] = None
-    avg_elapsed_time_us: Optional[float] = None
-    avg_cpu_time_us: Optional[float] = None
-    max_elapsed_time_us: Optional[float] = None
-    regression_ratio: Optional[float] = None
-    plan_count: Optional[int] = None
-    current_plan_union_hash: Optional[str] = None
-    baseline_plan_union_hash: Optional[str] = None
+    datasource_id: int | None = None
+    ob_tenant_id: int | None = None
+    tenant_name: str | None = None
+    ob_db_id: int | None = None
+    sql_id: str | None = None
+    sql_text: str | None = None
+    db_name: str | None = None
+    executions: float | None = None
+    exec_ps: float | None = None
+    sum_elapsed_time_us: float | None = None
+    avg_elapsed_time_us: float | None = None
+    avg_cpu_time_us: float | None = None
+    max_elapsed_time_us: float | None = None
+    regression_ratio: float | None = None
+    plan_count: int | None = None
+    current_plan_union_hash: str | None = None
+    baseline_plan_union_hash: str | None = None
 
 
 class SqlMonitorCategoryResponse(BaseModel):
@@ -264,11 +265,11 @@ class SqlMonitorCategoryResponse(BaseModel):
     datasource_id: int | None
     start_time_us: int
     end_time_us: int
-    compare_start_time_us: Optional[int] = None
-    compare_end_time_us: Optional[int] = None
+    compare_start_time_us: int | None = None
+    compare_end_time_us: int | None = None
     limit: int
     items: list[SqlMonitorCategoryItem]
-    next_cursor: Optional[str] = None
+    next_cursor: str | None = None
     has_more: bool = False
 
 
@@ -285,46 +286,46 @@ class SqlDetailResponse(BaseModel):
     sql_id: str
     start_time_us: int
     end_time_us: int
-    db_name: Optional[str] = None
-    user_name: Optional[str] = None
-    sql_text: Optional[str] = None
+    db_name: str | None = None
+    user_name: str | None = None
+    sql_text: str | None = None
     executions: int
     avg_elapsed_time_us: float
     avg_execute_time_us: float | None = None
     max_elapsed_time_us: int
-    latest_request_time_us: Optional[int] = None
-    plan_count: Optional[int] = None
+    latest_request_time_us: int | None = None
+    plan_count: int | None = None
 
 
 class SqlPlanHistoryItem(BaseModel):
     tenant_id: int
     sql_id: str
     plan_id: int
-    plan_hash: Optional[int] = None
-    executions: Optional[int] = None
-    avg_exe_usec: Optional[float] = None
-    elapsed_time: Optional[int] = None
-    execute_time: Optional[int] = None
-    table_scan: Optional[int] = None
+    plan_hash: int | None = None
+    executions: int | None = None
+    avg_exe_usec: float | None = None
+    elapsed_time: int | None = None
+    execute_time: int | None = None
+    table_scan: int | None = None
     last_active_time: str
-    query_sql: Optional[str] = None
+    query_sql: str | None = None
 
 
 class SqlPlanExplainItem(BaseModel):
     operator: str
-    object_name: Optional[str] = None
-    cost: Optional[int] = None
-    cardinality: Optional[int] = None
-    plan_line_id: Optional[int] = None
-    parent_id: Optional[int] = None
-    depth: Optional[int] = None
-    property: Optional[str] = None
+    object_name: str | None = None
+    cost: int | None = None
+    cardinality: int | None = None
+    plan_line_id: int | None = None
+    parent_id: int | None = None
+    depth: int | None = None
+    property: str | None = None
 
 
 class SqlPlanExplainResponse(BaseModel):
     datasource_id: int
     sql_id: str
-    plan_id: Optional[int] = None
+    plan_id: int | None = None
     source: str
     items: list[SqlPlanExplainItem]
 
@@ -335,32 +336,32 @@ class SqlFactWindow(BaseModel):
 
 
 class SqlFactOwnership(BaseModel):
-    datasource_id: Optional[int] = None
-    ob_tenant_id: Optional[int] = None
-    tenant_name: Optional[str] = None
-    db_name: Optional[str] = None
-    user_name: Optional[str] = None
+    datasource_id: int | None = None
+    ob_tenant_id: int | None = None
+    tenant_name: str | None = None
+    db_name: str | None = None
+    user_name: str | None = None
 
 
 class SqlExecutionFact(BaseModel):
     executions: int
     avg_elapsed_time_us: float
     max_elapsed_time_us: int
-    latest_request_time_us: Optional[int] = None
+    latest_request_time_us: int | None = None
 
 
 class SqlResourceFact(BaseModel):
-    avg_cpu_time_us: Optional[float] = None
+    avg_cpu_time_us: float | None = None
     total_elapsed_time_us: int
-    total_cpu_time_us: Optional[int] = None
+    total_cpu_time_us: int | None = None
 
 
 class SqlPlanFact(BaseModel):
     plan_count: int = 0
-    latest_plan_id: Optional[int] = None
-    latest_plan_hash: Optional[int] = None
-    latest_plan_last_active_time: Optional[str] = None
-    latest_table_scan: Optional[int] = None
+    latest_plan_id: int | None = None
+    latest_plan_hash: int | None = None
+    latest_plan_last_active_time: str | None = None
+    latest_table_scan: int | None = None
     explain_source: str
     explain_item_count: int
 
@@ -370,7 +371,7 @@ class SqlFactsResponse(BaseModel):
     sql_id: str
     window: SqlFactWindow
     ownership: SqlFactOwnership
-    sql_text: Optional[str] = None
+    sql_text: str | None = None
     execution: SqlExecutionFact
     resource: SqlResourceFact
     plan: SqlPlanFact
@@ -381,7 +382,7 @@ class SqlRollupBucket(BaseModel):
     executions: int
     avg_elapsed_time_us: float
     total_elapsed_time_us: int
-    avg_cpu_time_us: Optional[float] = None
+    avg_cpu_time_us: float | None = None
 
 
 class SqlRollupSummary(BaseModel):
@@ -389,9 +390,9 @@ class SqlRollupSummary(BaseModel):
     sampled_bucket_count: int
     total_executions: int
     total_elapsed_time_us: int
-    total_cpu_time_us: Optional[int] = None
+    total_cpu_time_us: int | None = None
     avg_elapsed_time_us: float
-    avg_cpu_time_us: Optional[float] = None
+    avg_cpu_time_us: float | None = None
     max_avg_elapsed_time_us: float
     latest_avg_elapsed_time_us: float
 
@@ -410,7 +411,7 @@ class SqlAnalysisSignal(BaseModel):
     key: str
     severity: str
     summary: str
-    evidence: Optional[str] = None
+    evidence: str | None = None
 
 
 class SqlAnalysisContextResponse(BaseModel):
@@ -419,12 +420,12 @@ class SqlAnalysisContextResponse(BaseModel):
     category: SqlMonitorCategory
     start_time_us: int
     end_time_us: int
-    ob_tenant_id: Optional[int] = None
+    ob_tenant_id: int | None = None
     matched_categories: list[str]
     signals: list[SqlAnalysisSignal]
-    facts: Optional[SqlFactsResponse] = None
-    rollup: Optional[SqlRollupResponse] = None
-    detail: Optional[SqlDetailResponse] = None
+    facts: SqlFactsResponse | None = None
+    rollup: SqlRollupResponse | None = None
+    detail: SqlDetailResponse | None = None
     trend: list[SqlTrendPoint]
     plan_history: list[SqlPlanHistoryItem]
     plan_explain: SqlPlanExplainResponse
@@ -442,16 +443,16 @@ class SqlAnalysisAiExplainResponse(BaseModel):
 
 
 class SqlLiveDiscoveryItem(BaseModel):
-    source_datasource_id: Optional[int] = None
-    preferred_execution_datasource_id: Optional[int] = None
-    tenant_id: Optional[int] = None
-    tenant_name: Optional[str] = None
-    db_name: Optional[str] = None
-    user_name: Optional[str] = None
+    source_datasource_id: int | None = None
+    preferred_execution_datasource_id: int | None = None
+    tenant_id: int | None = None
+    tenant_name: str | None = None
+    db_name: str | None = None
+    user_name: str | None = None
     sql_id: str
-    sql_text: Optional[str] = None
-    latest_request_time_us: Optional[int] = None
-    plan_count: Optional[int] = None
+    sql_text: str | None = None
+    latest_request_time_us: int | None = None
+    plan_count: int | None = None
 
 
 class SqlLiveDiscoveryResponse(BaseModel):
@@ -476,10 +477,10 @@ class SqlUnavailableDimension(BaseModel):
 
 
 class SqlLiveCurrentPlanFact(BaseModel):
-    plan_id: Optional[int] = None
-    plan_hash: Optional[int] = None
-    last_active_time: Optional[str] = None
-    table_scan: Optional[int] = None
+    plan_id: int | None = None
+    plan_hash: int | None = None
+    last_active_time: str | None = None
+    table_scan: int | None = None
     explain_source: str
     explain_item_count: int
 
@@ -489,25 +490,25 @@ class SqlLiveFactsResponse(BaseModel):
     sql_id: str
     start_time_us: int
     end_time_us: int
-    cluster_key: Optional[str] = None
-    tenant_id: Optional[int] = None
-    db_name: Optional[str] = None
-    user_name: Optional[str] = None
-    sql_text: Optional[str] = None
-    latest_request_time_us: Optional[int] = None
+    cluster_key: str | None = None
+    tenant_id: int | None = None
+    db_name: str | None = None
+    user_name: str | None = None
+    sql_text: str | None = None
+    latest_request_time_us: int | None = None
     current_plan: SqlLiveCurrentPlanFact
     current_plans: list[SqlPlanHistoryItem]
     window_plan_total: int = 0
-    current_plan_id: Optional[int] = None
+    current_plan_id: int | None = None
     objects: list[str]
     unavailable_dimensions: list[SqlUnavailableDimension]
 
 
 class SqlLivePlanDetailResponse(BaseModel):
-    plan_id: Optional[int] = None
-    plan_hash: Optional[int] = None
-    last_active_time: Optional[str] = None
-    table_scan: Optional[int] = None
+    plan_id: int | None = None
+    plan_hash: int | None = None
+    last_active_time: str | None = None
+    table_scan: int | None = None
     explain_source: str
     objects: list[str]
     explain_items: list[SqlPlanExplainItem]
@@ -522,7 +523,7 @@ class SqlLiveAnalysisContextResponse(BaseModel):
     signals: list[SqlAnalysisSignal]
     current_plans: list[SqlPlanHistoryItem]
     window_plan_total: int = 0
-    current_plan_id: Optional[int] = None
+    current_plan_id: int | None = None
     plan_explain: SqlPlanExplainResponse
     plan_details: list[SqlLivePlanDetailResponse] = Field(default_factory=list)
 
@@ -543,17 +544,19 @@ _VALID_CONVERSATION_CATEGORIES = {"primary", "scene", "agent_run", "scheduler_ru
 def _normalize_conversation_category(value: str) -> str:
     normalized = value.strip().lower()
     if normalized not in _VALID_CONVERSATION_CATEGORIES:
-        raise ValueError(f"category must be one of: {', '.join(sorted(_VALID_CONVERSATION_CATEGORIES))}")
+        raise ValueError(
+            f"category must be one of: {', '.join(sorted(_VALID_CONVERSATION_CATEGORIES))}"
+        )
     return normalized
 
 
 class ConversationBase(BaseModel):
     title: str = "New Conversation"
-    datasource_id: Optional[int] = None
-    agent_id: Optional[int] = None
-    active_skills: Optional[list[str]] = None
+    datasource_id: int | None = None
+    agent_id: int | None = None
+    active_skills: list[str] | None = None
     category: str = "primary"
-    scene_key: Optional[str] = None
+    scene_key: str | None = None
     read_only: bool = False
 
     @field_validator("category")
@@ -563,7 +566,7 @@ class ConversationBase(BaseModel):
 
     @field_validator("scene_key")
     @classmethod
-    def validate_scene_key(cls, value: Optional[str]) -> Optional[str]:
+    def validate_scene_key(cls, value: str | None) -> str | None:
         if value is None:
             return value
         normalized = value.strip()
@@ -575,24 +578,24 @@ class ConversationCreate(ConversationBase):
 
 
 class ConversationUpdate(BaseModel):
-    title: Optional[str] = None
-    datasource_id: Optional[int] = None
-    agent_id: Optional[int] = None
-    active_skills: Optional[list[str]] = None
-    category: Optional[str] = None
-    scene_key: Optional[str] = None
-    read_only: Optional[bool] = None
+    title: str | None = None
+    datasource_id: int | None = None
+    agent_id: int | None = None
+    active_skills: list[str] | None = None
+    category: str | None = None
+    scene_key: str | None = None
+    read_only: bool | None = None
 
     @field_validator("category")
     @classmethod
-    def validate_update_conversation_category(cls, value: Optional[str]) -> Optional[str]:
+    def validate_update_conversation_category(cls, value: str | None) -> str | None:
         if value is None:
             return value
         return _normalize_conversation_category(value)
 
     @field_validator("scene_key")
     @classmethod
-    def validate_update_scene_key(cls, value: Optional[str]) -> Optional[str]:
+    def validate_update_scene_key(cls, value: str | None) -> str | None:
         if value is None:
             return value
         normalized = value.strip()
@@ -637,11 +640,11 @@ class BuildSessionCreate(BaseModel):
 
 
 class BuildSessionHeartbeat(BaseModel):
-    ttl_seconds: Optional[int] = None
+    ttl_seconds: int | None = None
 
     @field_validator("ttl_seconds")
     @classmethod
-    def validate_ttl_seconds(cls, value: Optional[int]) -> Optional[int]:
+    def validate_ttl_seconds(cls, value: int | None) -> int | None:
         if value is None:
             return value
         if value < 60 or value > 24 * 3600:
@@ -653,7 +656,7 @@ class BuildSessionResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
-    conversation_id: Optional[int] = None
+    conversation_id: int | None = None
     scope_type: str
     scope_object_type: str
     scope_object_id: str
@@ -680,8 +683,8 @@ class MessageResponse(MessageBase):
 
     id: int
     agent_name: str | None = None
-    tool_calls: Optional[list] = None
-    content_parts: Optional[list] = None
+    tool_calls: list | None = None
+    content_parts: list | None = None
     created_at: datetime
 
 
@@ -691,13 +694,13 @@ class ChatEventResponse(BaseModel):
     id: int
     conversation_id: int
     event_type: str
-    phase: Optional[str] = None
-    turn_id: Optional[str] = None
-    turn_seq: Optional[int] = None
-    part_seq: Optional[int] = None
-    role: Optional[str] = None
-    agent_name: Optional[str] = None
-    payload: Optional[dict] = None
+    phase: str | None = None
+    turn_id: str | None = None
+    turn_seq: int | None = None
+    part_seq: int | None = None
+    role: str | None = None
+    agent_name: str | None = None
+    payload: dict | None = None
     created_at: datetime
 
 
@@ -709,7 +712,7 @@ class ChatHandoffFact(BaseModel):
 class ChatHandoffSource(BaseModel):
     page: str
     entry: str
-    label: Optional[str] = None
+    label: str | None = None
 
 
 class ChatHandoffPacket(BaseModel):
@@ -717,7 +720,7 @@ class ChatHandoffPacket(BaseModel):
     version: int = 1
     source: ChatHandoffSource
     title: str
-    summary: Optional[str] = None
+    summary: str | None = None
     facts: list[ChatHandoffFact] = Field(default_factory=list)
     suggested_prompts: list[str] = Field(default_factory=list)
     context: dict[str, Any] = Field(default_factory=dict)
@@ -740,10 +743,10 @@ class ChatHandoffPacket(BaseModel):
 
 
 class ChatHandoffCreate(BaseModel):
-    conversation_id: Optional[int] = None
-    title: Optional[str] = None
-    datasource_id: Optional[int] = None
-    preferred_execution_datasource_id: Optional[int] = None
+    conversation_id: int | None = None
+    title: str | None = None
+    datasource_id: int | None = None
+    preferred_execution_datasource_id: int | None = None
     packet: ChatHandoffPacket
 
 
@@ -751,7 +754,7 @@ class ChatHandoffResponse(BaseModel):
     id: int
     conversation_id: int
     status: str
-    consumed_at: Optional[datetime] = None
+    consumed_at: datetime | None = None
     packet: ChatHandoffPacket
     created_at: datetime
 
@@ -772,10 +775,10 @@ def _normalize_agent_type(value: str) -> str:
 
 class AgentBase(BaseModel):
     name: str
-    description: Optional[str] = None
+    description: str | None = None
     prompt: str
-    tools: Optional[list[str]] = None
-    skills: Optional[list[str]] = None
+    tools: list[str] | None = None
+    skills: list[str] | None = None
     agent_type: str = "custom"
 
     @field_validator("agent_type")
@@ -836,16 +839,16 @@ class SkillCreate(SkillBase):
 
 
 class SkillUpdate(BaseModel):
-    name: Optional[str] = None
-    version: Optional[str] = None
-    description: Optional[str] = None
-    database: Optional[str] = None
-    always_apply: Optional[bool] = None
-    prompt: Optional[str] = None
+    name: str | None = None
+    version: str | None = None
+    description: str | None = None
+    database: str | None = None
+    always_apply: bool | None = None
+    prompt: str | None = None
 
     @field_validator("name")
     @classmethod
-    def validate_name(cls, value: Optional[str]) -> Optional[str]:
+    def validate_name(cls, value: str | None) -> str | None:
         if value is None:
             return value
         normalized = value.strip()
@@ -857,7 +860,7 @@ class SkillUpdate(BaseModel):
 
     @field_validator("version")
     @classmethod
-    def validate_version(cls, value: Optional[str]) -> Optional[str]:
+    def validate_version(cls, value: str | None) -> str | None:
         if value is None:
             return value
         if not SKILL_VERSION_REGEX.match(value):
@@ -866,7 +869,7 @@ class SkillUpdate(BaseModel):
 
     @field_validator("description")
     @classmethod
-    def validate_description(cls, value: Optional[str]) -> Optional[str]:
+    def validate_description(cls, value: str | None) -> str | None:
         if value is None:
             return value
         if len(value.strip()) < 8:
@@ -875,7 +878,7 @@ class SkillUpdate(BaseModel):
 
     @field_validator("database")
     @classmethod
-    def validate_database(cls, value: Optional[str]) -> Optional[str]:
+    def validate_database(cls, value: str | None) -> str | None:
         if value is None:
             return value
         if value not in SKILL_DATABASES:
@@ -884,7 +887,7 @@ class SkillUpdate(BaseModel):
 
     @field_validator("prompt")
     @classmethod
-    def validate_prompt(cls, value: Optional[str]) -> Optional[str]:
+    def validate_prompt(cls, value: str | None) -> str | None:
         if value is None:
             return value
         if not value.strip():
@@ -907,17 +910,17 @@ class AgentCreate(AgentBase):
 
 
 class AgentUpdate(BaseModel):
-    name: Optional[str] = None
-    description: Optional[str] = None
-    prompt: Optional[str] = None
-    tools: Optional[list[str]] = None
-    skills: Optional[list[str]] = None
-    agent_type: Optional[str] = None
-    status: Optional[str] = None
+    name: str | None = None
+    description: str | None = None
+    prompt: str | None = None
+    tools: list[str] | None = None
+    skills: list[str] | None = None
+    agent_type: str | None = None
+    status: str | None = None
 
     @field_validator("agent_type")
     @classmethod
-    def validate_agent_type(cls, value: Optional[str]) -> Optional[str]:
+    def validate_agent_type(cls, value: str | None) -> str | None:
         if value is None:
             return value
         return _normalize_agent_type(value)
@@ -934,7 +937,7 @@ class AgentResponse(AgentBase):
 
 class AgentRunRequest(BaseModel):
     datasource_ids: list[int] = Field(default_factory=list)
-    title: Optional[str] = None
+    title: str | None = None
 
     @field_validator("datasource_ids")
     @classmethod
@@ -952,7 +955,7 @@ class AgentRunRequest(BaseModel):
 
     @field_validator("title")
     @classmethod
-    def validate_title(cls, value: Optional[str]) -> Optional[str]:
+    def validate_title(cls, value: str | None) -> str | None:
         if value is None:
             return value
         normalized = value.strip()
@@ -967,10 +970,10 @@ class AgentRunResponse(BaseModel):
 
 
 class ToolExecutionBase(BaseModel):
-    agent_id: Optional[int] = None
-    conversation_id: Optional[int] = None
+    agent_id: int | None = None
+    conversation_id: int | None = None
     tool_name: str
-    parameters: Optional[dict] = None
+    parameters: dict | None = None
 
 
 class ToolExecutionCreate(ToolExecutionBase):
@@ -978,20 +981,21 @@ class ToolExecutionCreate(ToolExecutionBase):
 
 
 class ToolExecutionUpdate(BaseModel):
-    result: Optional[str] = None
-    error: Optional[str] = None
+    result: str | None = None
+    error: str | None = None
 
 
 class ToolExecutionResponse(ToolExecutionBase):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
-    result: Optional[str] = None
-    error: Optional[str] = None
+    result: str | None = None
+    error: str | None = None
     created_at: datetime
 
 
 # ── Session & Transaction Analysis ──────────────────────────────────────────
+
 
 class LiveSession(BaseModel):
     datasource_id: int
@@ -1057,18 +1061,18 @@ class SessionSnapshotForAI(BaseModel):
 class SceneAgentRequest(BaseModel):
     key: str
     context: dict[str, Any] = Field(default_factory=dict)
-    focus_object: Optional[dict[str, Any]] = None
+    focus_object: dict[str, Any] | None = None
     tools: list[str] = Field(default_factory=list)
     skills: list[str] = Field(default_factory=list)
 
 
 class ChatStreamRequest(BaseModel):
     content: str = ""
-    run_datasource_ids: Optional[list[int]] = None
-    handoff_id: Optional[int] = None
-    scene_agent: Optional[SceneAgentRequest] = None
-    conversation_context: Optional[str] = None
-    locale: Optional[str] = None
+    run_datasource_ids: list[int] | None = None
+    handoff_id: int | None = None
+    scene_agent: SceneAgentRequest | None = None
+    conversation_context: str | None = None
+    locale: str | None = None
 
     @model_validator(mode="before")
     @classmethod

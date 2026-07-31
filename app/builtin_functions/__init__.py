@@ -89,7 +89,9 @@ def register_builtin_functions(db: Session) -> list[str]:
             )
             fn.releases.append(release)
             fn.current_release = release
-            logger.info("builtin_function_release_synced %s", fmt_kv(slug=slug, version=release.version))
+            logger.info(
+                "builtin_function_release_synced %s", fmt_kv(slug=slug, version=release.version)
+            )
 
         registered.append(slug)
 

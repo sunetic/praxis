@@ -21,14 +21,16 @@ class BuildGoalRequest:
 
 
 class BuildScopeAdapter(Protocol):
-    def resolve_primary_requirement(self, *, prompt: str, history: list[BuildAttemptContext]) -> str:
-        ...
+    def resolve_primary_requirement(
+        self, *, prompt: str, history: list[BuildAttemptContext]
+    ) -> str: ...
 
-    def guardrails(self) -> str:
-        ...
+    def guardrails(self) -> str: ...
 
 
-def normalize_build_attempts(raw_contexts: list[dict[str, Any]] | None) -> list[BuildAttemptContext]:
+def normalize_build_attempts(
+    raw_contexts: list[dict[str, Any]] | None,
+) -> list[BuildAttemptContext]:
     normalized: list[BuildAttemptContext] = []
     for item in raw_contexts or []:
         if not isinstance(item, dict):
@@ -78,7 +80,9 @@ class AgentCore:
         prompt = str(request.user_prompt or "").strip()
         history = request.recent_contexts or []
         latest = history[0] if history else BuildAttemptContext()
-        effective_prompt = adapter.resolve_primary_requirement(prompt=prompt, history=history) or prompt
+        effective_prompt = (
+            adapter.resolve_primary_requirement(prompt=prompt, history=history) or prompt
+        )
 
         sections = [f"Primary Requirement:\n{effective_prompt}" if effective_prompt else ""]
         compact_context = str(request.conversation_context or "").strip()

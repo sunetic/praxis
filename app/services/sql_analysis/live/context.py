@@ -4,18 +4,18 @@ import json
 from typing import Any
 
 from app.models import models
-from app.services.sql_analysis.utils import (
-    _normalize_json_value,
-    _parse_llm_json_object,
-    _truncate_text,
-)
+from app.services.llm import get_llm_client
 from app.services.sql_analysis.live.queries import (
     get_live_plan_explain,
     get_live_sql_detail,
     list_live_plan_history,
 )
 from app.services.sql_analysis.live.signals import build_live_signals
-from app.services.llm import get_llm_client
+from app.services.sql_analysis.utils import (
+    _normalize_json_value,
+    _parse_llm_json_object,
+    _truncate_text,
+)
 
 _UNAVAILABLE_DIMENSIONS = [
     {
@@ -121,7 +121,9 @@ async def build_live_sql_context(
             sql_id=sql_id,
             plan_id=latest_plan.get("plan_id"),
             plan_hash=latest_plan.get("plan_hash"),
-            tenant_id=latest_plan.get("tenant_id") if latest_plan.get("tenant_id") is not None else tenant_id,
+            tenant_id=latest_plan.get("tenant_id")
+            if latest_plan.get("tenant_id") is not None
+            else tenant_id,
             sql_text=detail.get("sql_text"),
         )
     objects = _unique_strings([str(item.get("object_name") or "") for item in plan_explain])
@@ -215,9 +217,12 @@ async def explain_live_sql_with_ai(
         "3) Must reflect the boundary that this is a realtime perspective with insufficient historical evidence.\n"
         "4) Do not output markdown or extra fields."
     )
-    user_prompt = "Based on the following realtime SQL analysis context, produce a diagnostic explanation:\n" + json.dumps(
-        _build_live_llm_context(context),
-        ensure_ascii=False,
+    user_prompt = (
+        "Based on the following realtime SQL analysis context, produce a diagnostic explanation:\n"
+        + json.dumps(
+            _build_live_llm_context(context),
+            ensure_ascii=False,
+        )
     )
     client = get_llm_client()
     response: dict[str, Any] | None = None
@@ -235,18 +240,26 @@ async def explain_live_sql_with_ai(
         break
     if response is None:
         raise ValueError("LLM returned no response payload")
-    content = (((response.get("choices") or [{}])[0].get("message") or {}).get("content") or "").strip()
+    content = (
+        ((response.get("choices") or [{}])[0].get("message") or {}).get("content") or ""
+    ).strip()
     payload = _parse_llm_json_object(content)
     return {
         "datasource_id": datasource.id,
         "sql_id": sql_id,
         "context": context,
         "summary": str(payload.get("summary") or "").strip(),
-        "risk_points": [str(item).strip() for item in (payload.get("risk_points") or []) if str(item).strip()],
+        "risk_points": [
+            str(item).strip() for item in (payload.get("risk_points") or []) if str(item).strip()
+        ],
         "investigation_steps": [
-            str(item).strip() for item in (payload.get("investigation_steps") or []) if str(item).strip()
+            str(item).strip()
+            for item in (payload.get("investigation_steps") or [])
+            if str(item).strip()
         ],
         "optimization_directions": [
-            str(item).strip() for item in (payload.get("optimization_directions") or []) if str(item).strip()
+            str(item).strip()
+            for item in (payload.get("optimization_directions") or [])
+            if str(item).strip()
         ],
     }

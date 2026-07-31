@@ -57,11 +57,14 @@ class MonitorTableResolution:
     columns: list[dict[str, Any]]
 
 
-async def _inspect_monitor_schema(datasource: models.DataSource | None = None) -> tuple[set[str], set[tuple[str, str]]]:
+async def _inspect_monitor_schema(
+    datasource: models.DataSource | None = None,
+) -> tuple[set[str], set[tuple[str, str]]]:
     from app.db.connection import get_db_pool
 
     if datasource is None:
         from app.services.sql_analysis.history.queries import _get_monitor_datasource
+
         datasource = _get_monitor_datasource()
     schema_name = datasource.database or ""
     pool = get_db_pool()
@@ -123,7 +126,10 @@ def _resolve_requirement(
         if not table_present:
             continue
         chosen = candidate
-        if all((table_name.lower(), column.lower()) in available_columns for column in candidate["columns"]):
+        if all(
+            (table_name.lower(), column.lower()) in available_columns
+            for column in candidate["columns"]
+        ):
             break
 
     table_name = chosen["table_name"]

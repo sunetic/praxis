@@ -278,7 +278,9 @@ def test_verification_harness_rejects_invalid_db_role_and_undeclared_platform_pa
     )
     assert failed["passed"] is False
     assert any("db.query.role" in detail for detail in failed["diagnostics"])
-    assert any("platform.crud(scheduler.create).payload" in detail for detail in failed["diagnostics"])
+    assert any(
+        "platform.crud(scheduler.create).payload" in detail for detail in failed["diagnostics"]
+    )
 
 
 def test_verification_harness_accepts_canonical_platform_scheduler_create_payload():

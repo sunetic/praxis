@@ -1,7 +1,28 @@
 #!/bin/sh
-# Block pushes that include a tag if the frontend build fails.
-# Runs the same "tsc -b && vite build" used in the Docker CI pipeline.
+# Runs on every push:
+#   - ruff lint + format check (always)
+# Runs only on tag pushes:
+#   - frontend build check
 
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+
+# ── ruff lint + format (every push) ─────────────────────────────────────────
+if command -v uv >/dev/null 2>&1; then
+  echo "[pre-push] Running ruff check..."
+  if ! uv tool run ruff check "$REPO_ROOT"; then
+    echo "[pre-push] ruff check FAILED. Run 'uv tool run ruff check --fix .' to auto-fix."
+    exit 1
+  fi
+  if ! uv tool run ruff format --check "$REPO_ROOT"; then
+    echo "[pre-push] ruff format check FAILED. Run 'uv tool run ruff format .' to fix."
+    exit 1
+  fi
+  echo "[pre-push] ruff OK."
+else
+  echo "[pre-push] uv not found — skipping ruff checks."
+fi
+
+# ── tag push: frontend build ─────────────────────────────────────────────────
 pushing_tag=0
 while read local_ref _local_sha _remote_ref _remote_sha; do
   case "$local_ref" in refs/tags/*) pushing_tag=1; break;; esac
@@ -11,7 +32,7 @@ if [ "$pushing_tag" -eq 0 ]; then
   exit 0
 fi
 
-# Load nvm if npm isn't already on PATH (git hooks don't inherit shell startup files)
+# Load nvm if npm isn't already on PATH
 if ! command -v npm >/dev/null 2>&1; then
   export NVM_DIR="${NVM_DIR:-$HOME/.nvm}"
   # shellcheck disable=SC1090,SC1091
@@ -25,9 +46,7 @@ if ! command -v npm >/dev/null 2>&1; then
   exit 0
 fi
 
-REPO_ROOT="$(git rev-parse --show-toplevel)"
 echo "[pre-push] Tag push detected — running frontend build check..."
-
 cd "$REPO_ROOT/frontend" || exit 1
 
 if ! npm run build; then

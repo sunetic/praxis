@@ -94,6 +94,7 @@ def _instrument_httpx() -> None:
 def _instrument_sqlalchemy(settings) -> None:
     try:
         from opentelemetry.instrumentation.sqlalchemy import SQLAlchemyInstrumentor
+
         from app.db.database import engine
 
         SQLAlchemyInstrumentor().instrument(

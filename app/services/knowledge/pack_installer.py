@@ -35,9 +35,12 @@ class PackInstallProgress:
 progress = PackInstallProgress()
 
 
-async def _run_git(args: list[str], cwd: str | Path, timeout: int = _CHECKOUT_TIMEOUT) -> tuple[int, str, str]:
+async def _run_git(
+    args: list[str], cwd: str | Path, timeout: int = _CHECKOUT_TIMEOUT
+) -> tuple[int, str, str]:
     proc = await asyncio.create_subprocess_exec(
-        "git", *args,
+        "git",
+        *args,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
         cwd=str(cwd),
@@ -53,13 +56,14 @@ async def _run_git(args: list[str], cwd: str | Path, timeout: int = _CHECKOUT_TI
 async def _check_git_available() -> bool:
     try:
         proc = await asyncio.create_subprocess_exec(
-            "git", "--version",
+            "git",
+            "--version",
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
         await asyncio.wait_for(proc.communicate(), timeout=5)
         return proc.returncode == 0
-    except (FileNotFoundError, asyncio.TimeoutError):
+    except (TimeoutError, FileNotFoundError):
         return False
 
 
@@ -103,12 +107,15 @@ async def _discover_versions(repo_url: str, version_pattern: str) -> list[dict[s
     """Run git ls-remote to discover branches matching version_pattern."""
     try:
         proc = await asyncio.create_subprocess_exec(
-            "git", "ls-remote", "--heads", repo_url,
+            "git",
+            "ls-remote",
+            "--heads",
+            repo_url,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
         stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=_LS_REMOTE_TIMEOUT)
-    except (asyncio.TimeoutError, OSError) as e:
+    except (TimeoutError, OSError) as e:
         logger.warning("ls-remote failed for %s: %s", repo_url, e)
         return []
 
@@ -182,8 +189,17 @@ class PackInstaller:
 
             kb_dir.parent.mkdir(parents=True, exist_ok=True)
             rc, _, err = await _run_git(
-                ["clone", "--filter=blob:none", "--no-checkout", "--depth", "1",
-                 "--branch", branch, pack["repo_url"], str(kb_dir.resolve())],
+                [
+                    "clone",
+                    "--filter=blob:none",
+                    "--no-checkout",
+                    "--depth",
+                    "1",
+                    "--branch",
+                    branch,
+                    pack["repo_url"],
+                    str(kb_dir.resolve()),
+                ],
                 cwd=str(self._data_root),
                 timeout=_CLONE_TIMEOUT,
             )
@@ -220,19 +236,24 @@ class PackInstaller:
             if not src_dir.is_dir():
                 raise RuntimeError(f"Subdirectory not found after checkout: {subdirectory}")
 
-            md_files = sorted(
-                p for p in src_dir.rglob("*.md")
-                if p.name.lower() != "readme.md"
-            )
+            md_files = sorted(p for p in src_dir.rglob("*.md") if p.name.lower() != "readme.md")
             if not md_files:
                 raise RuntimeError("No .md files found in the specified subdirectory")
 
             progress.set(
-                pack_id, "downloading",
+                pack_id,
+                "downloading",
                 progress_message=f"Creating knowledge base ({len(md_files)} documents)",
             )
 
-            _write_kb_meta(kb_dir, pack_id, pack.get("db_type"), version_label, subdirectory, discovered_versions)
+            _write_kb_meta(
+                kb_dir,
+                pack_id,
+                pack.get("db_type"),
+                version_label,
+                subdirectory,
+                discovered_versions,
+            )
 
             for md_path in md_files:
                 rel = md_path.relative_to(src_dir)
@@ -285,10 +306,7 @@ class PackInstaller:
         kb = None
         kb_dir: Path | None = None
         try:
-            md_files = sorted(
-                p for p in local_path.rglob("*.md")
-                if p.name.lower() != "readme.md"
-            )
+            md_files = sorted(p for p in local_path.rglob("*.md") if p.name.lower() != "readme.md")
             if not md_files:
                 raise RuntimeError("No .md files found in local path")
 
@@ -377,16 +395,20 @@ class PackInstaller:
         try:
             kb = (
                 db.query(models.KnowledgeBase)
-                .filter(models.KnowledgeBase.pack_id == pack_id, models.KnowledgeBase.source == "pack")
+                .filter(
+                    models.KnowledgeBase.pack_id == pack_id, models.KnowledgeBase.source == "pack"
+                )
                 .first()
             )
             if not kb:
                 raise ValueError(f"Pack '{pack_id}' is not installed")
 
             if kb.version == target_version:
-                doc_count = db.query(models.KnowledgeDocument).filter(
-                    models.KnowledgeDocument.kb_id == kb.id
-                ).count()
+                doc_count = (
+                    db.query(models.KnowledgeDocument)
+                    .filter(models.KnowledgeDocument.kb_id == kb.id)
+                    .count()
+                )
                 return {"pack_id": pack_id, "version": target_version, "doc_count": doc_count}
 
             kb_dir = self._data_root / str(kb.id)
@@ -404,7 +426,7 @@ class PackInstaller:
                     cwd=kb_dir,
                     timeout=_CLONE_TIMEOUT,
                 )
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 raise RuntimeError(
                     f"Network timeout while fetching version '{target_version}'. "
                     "Please check your internet connection and try again."
@@ -426,10 +448,7 @@ class PackInstaller:
                 raise RuntimeError(f"git checkout failed: {err[:500]}")
 
             src_dir = kb_dir / subdirectory if subdirectory else kb_dir
-            md_files = sorted(
-                p for p in src_dir.rglob("*.md")
-                if p.name.lower() != "readme.md"
-            )
+            md_files = sorted(p for p in src_dir.rglob("*.md") if p.name.lower() != "readme.md")
 
             db.query(models.KnowledgeDocument).filter(
                 models.KnowledgeDocument.kb_id == kb.id
@@ -452,7 +471,11 @@ class PackInstaller:
             existing_meta = read_kb_meta(kb_dir)
             existing_versions = existing_meta.get("versions") if existing_meta else None
             _write_kb_meta(
-                kb_dir, pack_id, manifest_pack.get("db_type"), target_version, subdirectory,
+                kb_dir,
+                pack_id,
+                manifest_pack.get("db_type"),
+                target_version,
+                subdirectory,
                 existing_versions,
             )
 
@@ -475,7 +498,9 @@ class PackInstaller:
         try:
             kb = (
                 db.query(models.KnowledgeBase)
-                .filter(models.KnowledgeBase.pack_id == pack_id, models.KnowledgeBase.source == "pack")
+                .filter(
+                    models.KnowledgeBase.pack_id == pack_id, models.KnowledgeBase.source == "pack"
+                )
                 .first()
             )
             if not kb:

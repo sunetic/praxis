@@ -1,6 +1,5 @@
 import asyncio
 import json
-from pathlib import Path
 
 from app.services.pi_lite_engine import PiLiteEngine
 
@@ -133,7 +132,11 @@ def test_pi_lite_engine_retries_after_probe_failure(tmp_path):
     async def fake_chat_completion(messages: list[dict], tools: list[dict]) -> dict:
         _ = tools
         calls["count"] += 1
-        if any('"ok": false' in str(item.get("content") or "") for item in messages if item.get("role") == "tool"):
+        if any(
+            '"ok": false' in str(item.get("content") or "")
+            for item in messages
+            if item.get("role") == "tool"
+        ):
             probe_failure_seen["value"] = True
 
         if calls["count"] == 1:
@@ -462,10 +465,7 @@ def test_pi_lite_engine_runtime_probe_rejects_system_role_value(tmp_path):
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
     (workspace / "main.py").write_text(
-        (
-            "def main(payload, context):\n"
-            "    return db.query('select 1', role='system')\n"
-        ),
+        ("def main(payload, context):\n    return db.query('select 1', role='system')\n"),
         encoding="utf-8",
     )
 
@@ -612,7 +612,9 @@ def test_pi_lite_engine_runtime_probe_rejects_row_index_access_on_mapping_rows(t
 def test_pi_lite_engine_get_runtime_contract_tool(tmp_path):
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
-    (workspace / "main.py").write_text("def main(payload, context):\n    return {'ok': True}\n", encoding="utf-8")
+    (workspace / "main.py").write_text(
+        "def main(payload, context):\n    return {'ok': True}\n", encoding="utf-8"
+    )
 
     calls = {"count": 0}
     contract_seen = {"value": False}
@@ -620,7 +622,11 @@ def test_pi_lite_engine_get_runtime_contract_tool(tmp_path):
     async def fake_chat_completion(messages: list[dict], tools: list[dict]) -> dict:
         _ = tools
         calls["count"] += 1
-        if any('"context_contract"' in str(item.get("content") or "") for item in messages if item.get("role") == "tool"):
+        if any(
+            '"context_contract"' in str(item.get("content") or "")
+            for item in messages
+            if item.get("role") == "tool"
+        ):
             contract_seen["value"] = True
 
         if calls["count"] == 1:
@@ -849,7 +855,9 @@ def test_pi_lite_engine_function_prompt_mentions_scheduler_history_guidance(tmp_
 def test_pi_lite_engine_requires_preview_sync_for_page_workspace(tmp_path):
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
-    (workspace / "main.tsx").write_text("export default function Page(){return <main>a</main>}\n", encoding="utf-8")
+    (workspace / "main.tsx").write_text(
+        "export default function Page(){return <main>a</main>}\n", encoding="utf-8"
+    )
     (workspace / "preview.html").write_text(
         "<!doctype html><html><body><main>a</main></body></html>\n",
         encoding="utf-8",
@@ -978,10 +986,14 @@ def test_pi_lite_engine_probe_repair_hint_for_common_failures():
     )
     assert "main(payload, context)" in signature_hint
 
-    context_hint = engine._build_probe_repair_hint("AttributeError: 'dict' object has no attribute 'get_db'")
+    context_hint = engine._build_probe_repair_hint(
+        "AttributeError: 'dict' object has no attribute 'get_db'"
+    )
     assert "context.get" in context_hint
 
-    datasource_hint = engine._build_probe_repair_hint("RuntimeDatasourceAccessError: No default datasource bound")
+    datasource_hint = engine._build_probe_repair_hint(
+        "RuntimeDatasourceAccessError: No default datasource bound"
+    )
     assert "explicit datasource_id" in datasource_hint
 
     rows_hint = engine._build_probe_repair_hint(

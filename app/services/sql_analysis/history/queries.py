@@ -52,7 +52,10 @@ class MonitorCategoryQuery:
 def _derive_compare_window(query: MonitorCategoryQuery) -> tuple[int | None, int | None]:
     if query.compare_start_time_us is not None and query.compare_end_time_us is not None:
         return query.compare_start_time_us, query.compare_end_time_us
-    if query.category not in {schemas.SqlMonitorCategory.NEW_SQL, schemas.SqlMonitorCategory.REGRESSED_SQL}:
+    if query.category not in {
+        schemas.SqlMonitorCategory.NEW_SQL,
+        schemas.SqlMonitorCategory.REGRESSED_SQL,
+    }:
         return None, None
     window = query.end_time_us - query.start_time_us
     if window <= 0:
@@ -88,6 +91,7 @@ def _encode_cursor(v: Any, sql_id: str) -> str:
 # Common filter builders (praxis collector schema)
 # ---------------------------------------------------------------------------
 
+
 def _build_common_filters(alias: str, query: MonitorCategoryQuery) -> tuple[list[str], list[Any]]:
     """Build WHERE clauses for datasource_id / sql_id."""
     clauses: list[str] = []
@@ -118,6 +122,7 @@ def _build_detail_filters(alias: str, **kwargs: Any) -> tuple[list[str], list[An
 # ---------------------------------------------------------------------------
 # SQL text subquery (from sql_audit_samples)
 # ---------------------------------------------------------------------------
+
 
 def _sqltext_subquery(
     start_time_us: int,
@@ -156,6 +161,7 @@ def _sqltext_subquery(
 # ---------------------------------------------------------------------------
 # Category list queries
 # ---------------------------------------------------------------------------
+
 
 async def list_monitor_category(
     query: MonitorCategoryQuery,
@@ -199,6 +205,7 @@ async def list_monitor_category(
 # Detail / Trend / Plan queries
 # ---------------------------------------------------------------------------
 
+
 async def get_monitor_sql_detail(
     *,
     sql_id: str,
@@ -213,7 +220,9 @@ async def get_monitor_sql_detail(
     filters: list[str] = ["a.sql_id = %s"]
     params: list[Any] = [sql_id]
     extra_filters, extra_params = _build_detail_filters(
-        "a", datasource_id=datasource_id, tenant_id=tenant_id,
+        "a",
+        datasource_id=datasource_id,
+        tenant_id=tenant_id,
     )
     filters.extend(extra_filters)
     params.extend(extra_params)
@@ -278,7 +287,9 @@ async def get_monitor_sql_trend(
     filters: list[str] = ["a.sql_id = %s"]
     params: list[Any] = [sql_id]
     extra_filters, extra_params = _build_detail_filters(
-        "a", datasource_id=datasource_id, tenant_id=tenant_id,
+        "a",
+        datasource_id=datasource_id,
+        tenant_id=tenant_id,
     )
     filters.extend(extra_filters)
     params.extend(extra_params)
@@ -473,16 +484,18 @@ async def get_monitor_plan_explain(
     for item in items:
         if not isinstance(item, dict):
             continue
-        normalized.append({
-            "operator": item.get("operator") or "",
-            "object_name": item.get("name") or item.get("object_name"),
-            "cost": item.get("cost"),
-            "cardinality": item.get("rows") or item.get("cardinality"),
-            "plan_line_id": item.get("plan_line_id"),
-            "parent_id": item.get("parent_id"),
-            "depth": item.get("plan_depth") or item.get("depth"),
-            "property": item.get("property"),
-        })
+        normalized.append(
+            {
+                "operator": item.get("operator") or "",
+                "object_name": item.get("name") or item.get("object_name"),
+                "cost": item.get("cost"),
+                "cardinality": item.get("rows") or item.get("cardinality"),
+                "plan_line_id": item.get("plan_line_id"),
+                "parent_id": item.get("parent_id"),
+                "depth": item.get("plan_depth") or item.get("depth"),
+                "property": item.get("property"),
+            }
+        )
     return "collector_plan_explain", normalized
 
 
@@ -499,6 +512,7 @@ _CATEGORY_SORT_KEY: dict[schemas.SqlMonitorCategory, str] = {
     schemas.SqlMonitorCategory.REGRESSED_SQL: "regression_ratio",
     schemas.SqlMonitorCategory.PLAN_CHANGED_SQL: "plan_count",
 }
+
 
 def _build_top_sql_query(
     query: MonitorCategoryQuery,
@@ -521,7 +535,9 @@ def _build_top_sql_query(
     cursor_params: list[Any] = []
     cp = _decode_cursor(query.cursor)
     if cp:
-        cursor_clause = "HAVING sum_elapsed_time_us < %s OR (sum_elapsed_time_us = %s AND a.sql_id > %s)"
+        cursor_clause = (
+            "HAVING sum_elapsed_time_us < %s OR (sum_elapsed_time_us = %s AND a.sql_id > %s)"
+        )
         cursor_params = [cp["v"], cp["v"], cp["id"]]
 
     window_seconds = max((query.end_time_us - query.start_time_us) / 1_000_000, 1)
@@ -556,7 +572,14 @@ def _build_top_sql_query(
         ORDER BY sum_elapsed_time_us DESC, a.sql_id ASC
         LIMIT %s
     """
-    return sql, [*sqltext_params, query.start_time_us, query.end_time_us, *params, *cursor_params, query.limit + 1]
+    return sql, [
+        *sqltext_params,
+        query.start_time_us,
+        query.end_time_us,
+        *params,
+        *cursor_params,
+        query.limit + 1,
+    ]
 
 
 def _build_slow_sql_query(
@@ -620,7 +643,14 @@ def _build_slow_sql_query(
         ORDER BY avg_elapsed_time_us DESC, a.sql_id ASC
         LIMIT %s
     """
-    return sql, [*sqltext_params, query.start_time_us, query.end_time_us, *params, *cursor_params, query.limit + 1]
+    return sql, [
+        *sqltext_params,
+        query.start_time_us,
+        query.end_time_us,
+        *params,
+        *cursor_params,
+        query.limit + 1,
+    ]
 
 
 def _build_new_sql_query(
@@ -844,4 +874,11 @@ def _build_plan_changed_sql_query(
         ORDER BY plan_count DESC, pd.sql_id ASC
         LIMIT %s
     """
-    return sql, [*sqltext_params, query.start_time_us, query.end_time_us, *params, *cursor_params, query.limit + 1]
+    return sql, [
+        *sqltext_params,
+        query.start_time_us,
+        query.end_time_us,
+        *params,
+        *cursor_params,
+        query.limit + 1,
+    ]

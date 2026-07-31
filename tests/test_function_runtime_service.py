@@ -14,14 +14,14 @@ from app.services.function.runtime import (
     FunctionRunStatus,
     FunctionRuntimeService,
     RuntimeDatasourceAccessError,
-    RuntimeErrorCode,
     RuntimeErrorClass,
+    RuntimeErrorCode,
     RuntimePlatformAccessError,
+    _execute_code_snapshot,
     _RuntimeDatabaseCapability,
     _RuntimeDatasourceBroker,
     _RuntimePlatformCapability,
     _RuntimeSchedulerHistoryCapability,
-    _execute_code_snapshot,
 )
 
 
@@ -573,7 +573,9 @@ def test_runtime_db_capability_get_conn_by_id_strict_signature(session_factory):
         capability.get_session_by_id(ds_id, "user")  # type: ignore[call-arg]
 
 
-def test_runtime_db_capability_get_conn_by_id_targets_exact_datasource(session_factory, monkeypatch):
+def test_runtime_db_capability_get_conn_by_id_targets_exact_datasource(
+    session_factory, monkeypatch
+):
     db = session_factory()
     business_ds = _create_datasource(
         db,
@@ -710,7 +712,10 @@ def test_runtime_platform_capability_rejects_undeclared_scheduler_payload_fields
     probe_db.close()
     platform = _RuntimePlatformCapability(control_db_url=control_db_url, execution_mode="apply")
 
-    with pytest.raises(RuntimePlatformAccessError, match="platform.crud\\[scheduler.create\\]\\.payload 包含未声明字段: function_id"):
+    with pytest.raises(
+        RuntimePlatformAccessError,
+        match="platform.crud\\[scheduler.create\\]\\.payload 包含未声明字段: function_id",
+    ):
         platform.crud(
             object_type="scheduler",
             action="create",
@@ -761,7 +766,10 @@ def test_runtime_platform_list_rejects_invalid_filter_enum(session_factory):
     probe_db.close()
     platform = _RuntimePlatformCapability(control_db_url=control_db_url, execution_mode="plan")
 
-    with pytest.raises(RuntimePlatformAccessError, match="platform.list\\[datasource\\]\\.filters.status 包含未声明值: archived"):
+    with pytest.raises(
+        RuntimePlatformAccessError,
+        match="platform.list\\[datasource\\]\\.filters.status 包含未声明值: archived",
+    ):
         platform.list("datasource", filters={"status": "archived"})
 
 
@@ -790,7 +798,9 @@ def test_runtime_scheduler_history_delete_requires_dry_run_in_plan_mode(session_
         )
 
 
-def test_runtime_scheduler_history_delete_dry_run_returns_candidates_without_removal(session_factory):
+def test_runtime_scheduler_history_delete_dry_run_returns_candidates_without_removal(
+    session_factory,
+):
     db = session_factory()
     schedule = _create_schedule(db, name="dry-run-job")
     schedule_id = schedule.id
@@ -825,7 +835,11 @@ def test_runtime_scheduler_history_delete_dry_run_returns_candidates_without_rem
     assert result["sample_runs"][0]["id"] == old_run_id
 
     verify_db = session_factory()
-    remaining = verify_db.query(models.ScheduleRun).filter(models.ScheduleRun.schedule_id == schedule_id).count()
+    remaining = (
+        verify_db.query(models.ScheduleRun)
+        .filter(models.ScheduleRun.schedule_id == schedule_id)
+        .count()
+    )
     assert remaining == 2
     verify_db.close()
 

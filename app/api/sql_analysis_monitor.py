@@ -253,11 +253,17 @@ async def build_monitor_sql_context_api(
         category=category,
         start_time_us=start_time_us,
         end_time_us=end_time_us,
-        ob_tenant_id=payload.get("facts", {}).get("ownership", {}).get("ob_tenant_id") if payload.get("facts") else None,
+        ob_tenant_id=payload.get("facts", {}).get("ownership", {}).get("ob_tenant_id")
+        if payload.get("facts")
+        else None,
         matched_categories=payload["matched_categories"],
         signals=[schemas.SqlAnalysisSignal.model_validate(item) for item in payload["signals"]],
-        facts=schemas.SqlFactsResponse.model_validate(payload["facts"]) if payload.get("facts") else None,
-        rollup=schemas.SqlRollupResponse.model_validate(payload["rollup"]) if payload.get("rollup") else None,
+        facts=schemas.SqlFactsResponse.model_validate(payload["facts"])
+        if payload.get("facts")
+        else None,
+        rollup=schemas.SqlRollupResponse.model_validate(payload["rollup"])
+        if payload.get("rollup")
+        else None,
         detail=schemas.SqlDetailResponse(
             datasource_id=datasource_id,
             sql_id=sql_id,
@@ -268,13 +274,20 @@ async def build_monitor_sql_context_api(
         if payload.get("detail")
         else None,
         trend=[schemas.SqlTrendPoint.model_validate(item) for item in payload["trend"]],
-        plan_history=[schemas.SqlPlanHistoryItem.model_validate(item) for item in payload["plan_history"]],
+        plan_history=[
+            schemas.SqlPlanHistoryItem.model_validate(item) for item in payload["plan_history"]
+        ],
         plan_explain=schemas.SqlPlanExplainResponse(
             datasource_id=datasource_id,
             sql_id=sql_id,
-            plan_id=(payload["plan_history"][0].get("plan_id") if payload["plan_history"] else None),
+            plan_id=(
+                payload["plan_history"][0].get("plan_id") if payload["plan_history"] else None
+            ),
             source=payload["plan_explain"]["source"],
-            items=[schemas.SqlPlanExplainItem.model_validate(item) for item in payload["plan_explain"]["items"]],
+            items=[
+                schemas.SqlPlanExplainItem.model_validate(item)
+                for item in payload["plan_explain"]["items"]
+            ],
         ),
     )
 
@@ -310,11 +323,17 @@ async def explain_monitor_sql_with_ai_api(
             category=category,
             start_time_us=start_time_us,
             end_time_us=end_time_us,
-            ob_tenant_id=context.get("facts", {}).get("ownership", {}).get("ob_tenant_id") if context.get("facts") else None,
+            ob_tenant_id=context.get("facts", {}).get("ownership", {}).get("ob_tenant_id")
+            if context.get("facts")
+            else None,
             matched_categories=context["matched_categories"],
             signals=[schemas.SqlAnalysisSignal.model_validate(item) for item in context["signals"]],
-            facts=schemas.SqlFactsResponse.model_validate(context["facts"]) if context.get("facts") else None,
-            rollup=schemas.SqlRollupResponse.model_validate(context["rollup"]) if context.get("rollup") else None,
+            facts=schemas.SqlFactsResponse.model_validate(context["facts"])
+            if context.get("facts")
+            else None,
+            rollup=schemas.SqlRollupResponse.model_validate(context["rollup"])
+            if context.get("rollup")
+            else None,
             detail=schemas.SqlDetailResponse(
                 datasource_id=datasource_id,
                 sql_id=sql_id,
@@ -325,13 +344,20 @@ async def explain_monitor_sql_with_ai_api(
             if context.get("detail")
             else None,
             trend=[schemas.SqlTrendPoint.model_validate(item) for item in context["trend"]],
-            plan_history=[schemas.SqlPlanHistoryItem.model_validate(item) for item in context["plan_history"]],
+            plan_history=[
+                schemas.SqlPlanHistoryItem.model_validate(item) for item in context["plan_history"]
+            ],
             plan_explain=schemas.SqlPlanExplainResponse(
                 datasource_id=datasource_id,
                 sql_id=sql_id,
-                plan_id=(context["plan_history"][0].get("plan_id") if context["plan_history"] else None),
+                plan_id=(
+                    context["plan_history"][0].get("plan_id") if context["plan_history"] else None
+                ),
                 source=context["plan_explain"]["source"],
-                items=[schemas.SqlPlanExplainItem.model_validate(item) for item in context["plan_explain"]["items"]],
+                items=[
+                    schemas.SqlPlanExplainItem.model_validate(item)
+                    for item in context["plan_explain"]["items"]
+                ],
             ),
         ),
         summary=payload["summary"],

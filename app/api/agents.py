@@ -1,5 +1,3 @@
-from typing import List
-
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
@@ -30,7 +28,7 @@ def _validate_skill_names(skill_names: list[str] | None) -> None:
         )
 
 
-@router.get("", response_model=List[schemas.AgentResponse])
+@router.get("", response_model=list[schemas.AgentResponse])
 def list_agents(db: Session = Depends(get_db)):
     agents = db.query(models.Agent).all()
     logger.info("list_agents %s", fmt_kv(count=len(agents)))
@@ -94,7 +92,9 @@ def update_agent(
     return _to_agent_response(db_agent)
 
 
-@router.post("/{agent_id}/run", response_model=schemas.AgentRunResponse, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/{agent_id}/run", response_model=schemas.AgentRunResponse, status_code=status.HTTP_201_CREATED
+)
 def run_agent(
     agent_id: int,
     request: schemas.AgentRunRequest,
@@ -113,9 +113,7 @@ def run_agent(
     selected_ids: list[int] = []
     if datasource_ids:
         selected_records = (
-            db.query(models.DataSource)
-            .filter(models.DataSource.id.in_(datasource_ids))
-            .all()
+            db.query(models.DataSource).filter(models.DataSource.id.in_(datasource_ids)).all()
         )
         by_id = {record.id: record for record in selected_records}
         missing_ids = [item for item in datasource_ids if item not in by_id]

@@ -33,10 +33,7 @@ def test_all_builtin_skills_parse_successfully():
 
 def test_builtin_skill_metadata_snapshot():
     _, skills = _load_builtin()
-    actual = {
-        s.name: (s.database, s.always_apply, s.source)
-        for s in skills
-    }
+    actual = {s.name: (s.database, s.always_apply, s.source) for s in skills}
     assert actual == EXPECTED_SKILLS
 
 
@@ -81,5 +78,6 @@ def test_description_min_length():
 def test_all_versions_are_semver():
     _, skills = _load_builtin()
     import re
+
     for s in skills:
         assert re.match(r"^\d+\.\d+\.\d+$", s.version), f"{s.name} version={s.version!r}"

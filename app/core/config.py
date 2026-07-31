@@ -27,10 +27,11 @@ def _normalize_sqlite_url(url: str) -> str:
     prefix = "sqlite:///"
     if not text.startswith(prefix):
         return text
-    raw_path = text[len(prefix):]
+    raw_path = text[len(prefix) :]
     if raw_path in {"", ":memory:"}:
         return text
     return f"{prefix}{_resolve_project_path(raw_path)}"
+
 
 _ENV_LINE_RE = re.compile(
     r"^(?:export\s+)?(?P<key>[A-Za-z_]\w*)=(?P<value>[^\"'\r\n]*)$",

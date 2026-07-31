@@ -33,8 +33,13 @@ async def upsert_plan_details(
             VALUES (%s, %s, %s, %s, %s, %s, %s)
             """,
             params=[
-                datasource_id, plan_id, row["SQL_ID"], row["TENANT_ID"],
-                row["PLAN_HASH"], plan_explain, query_sql,
+                datasource_id,
+                plan_id,
+                row["SQL_ID"],
+                row["TENANT_ID"],
+                row["PLAN_HASH"],
+                plan_explain,
+                query_sql,
             ],
         )
         count += 1
@@ -120,13 +125,16 @@ async def collect_plans_for_sql_ids(
 
     logger.info(
         "plan_collect sql_ids=%s total_plans=%s new_plans=%s",
-        len(sql_ids), len(all_plan_rows), new_detail_count,
+        len(sql_ids),
+        len(all_plan_rows),
+        new_detail_count,
     )
     return new_detail_count
 
 
 async def _fetch_explains_batch(
-    source_ds: DataSource, plan_ids: list[int],
+    source_ds: DataSource,
+    plan_ids: list[int],
 ) -> dict[int, str | None]:
     """Fetch plan explains for multiple plan_ids in one query."""
     if not plan_ids:
@@ -156,12 +164,9 @@ async def _fetch_explains_batch(
     for r in raw:
         row = r if isinstance(r, dict) else dict(zip(cols, r))
         pid = row["plan_id"]
-        grouped.setdefault(pid, []).append(
-            {k: v for k, v in row.items() if k != "plan_id"}
-        )
+        grouped.setdefault(pid, []).append({k: v for k, v in row.items() if k != "plan_id"})
 
     return {
         pid: json.dumps(grouped[pid], ensure_ascii=False, default=str) if pid in grouped else None
         for pid in plan_ids
     }
-

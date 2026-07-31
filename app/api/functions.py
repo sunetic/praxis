@@ -20,16 +20,16 @@ from app.core.logging import fmt_kv, get_logger
 from app.db.database import get_db
 from app.models import models
 from app.services.agent.core import summarize_build_goal
+from app.services.chat.agent import ChatScope, ScopedChatContext
+from app.services.chat.scene_agents import SceneAgentPayload, SceneAgentRegistry
+from app.services.function.authoring_agent import FunctionInvokeCommand
+from app.services.function.build_orchestrator import StagedFunctionBuildOrchestrator
 from app.services.function.builder import (
     FunctionBuilderService,  # noqa: F401 - kept for test monkeypatch hook
     FunctionBuildRunEvent,
     FunctionBuildRunResult,
 )
-from app.services.chat.agent import ChatScope, ScopedChatContext
-from app.services.chat.scene_agents import SceneAgentPayload, SceneAgentRegistry
 from app.services.function.chat_agent import FunctionChatAgent
-from app.services.function.authoring_agent import FunctionInvokeCommand
-from app.services.function.build_orchestrator import StagedFunctionBuildOrchestrator
 from app.services.function.identity import (
     compact_whitespace,
     generate_unique_function_slug,
@@ -58,11 +58,13 @@ _BUSINESS_FAILURE_HINTS = ("fail", "失败", "异常", "error", "invalid", "缺�
 
 
 def _serialize(record: Any) -> dict[str, Any]:
-    return json.loads(json.dumps(
-        {column.name: getattr(record, column.name) for column in record.__table__.columns},
-        default=str,
-        ensure_ascii=False,
-    ))
+    return json.loads(
+        json.dumps(
+            {column.name: getattr(record, column.name) for column in record.__table__.columns},
+            default=str,
+            ensure_ascii=False,
+        )
+    )
 
 
 def _utc_now_naive() -> datetime:
@@ -117,10 +119,18 @@ def _resolve_function_scene_agent(
     raw_key = str(raw_scene_agent.get("key") or "").strip()
     normalized_key = raw_key or FunctionChatAgent.key
     if normalized_key != FunctionChatAgent.key:
-        raise HTTPException(status_code=400, detail=f"scene_agent.key must be {FunctionChatAgent.key}")
+        raise HTTPException(
+            status_code=400, detail=f"scene_agent.key must be {FunctionChatAgent.key}"
+        )
 
-    context = raw_scene_agent.get("context") if isinstance(raw_scene_agent.get("context"), dict) else {}
-    focus_object = raw_scene_agent.get("focus_object") if isinstance(raw_scene_agent.get("focus_object"), dict) else None
+    context = (
+        raw_scene_agent.get("context") if isinstance(raw_scene_agent.get("context"), dict) else {}
+    )
+    focus_object = (
+        raw_scene_agent.get("focus_object")
+        if isinstance(raw_scene_agent.get("focus_object"), dict)
+        else None
+    )
 
     referenced_ids: list[int] = []
     for raw_value in (
@@ -132,7 +142,9 @@ def _resolve_function_scene_agent(
         elif isinstance(raw_value, str) and raw_value.strip().isdigit():
             referenced_ids.append(int(raw_value.strip()))
     if any(item != function_id for item in referenced_ids):
-        raise HTTPException(status_code=400, detail="scene_agent.function_id must match request path")
+        raise HTTPException(
+            status_code=400, detail="scene_agent.function_id must match request path"
+        )
 
     normalized_payload = SceneAgentPayload(
         key=normalized_key,
@@ -144,8 +156,12 @@ def _resolve_function_scene_agent(
     )
     resolved = SceneAgentRegistry().resolve(normalized_payload.key)
     if resolved is not None and not isinstance(resolved, FunctionChatAgent):
-        raise HTTPException(status_code=400, detail="scene_agent.key resolved to a non-function agent")
-    return (resolved if isinstance(resolved, FunctionChatAgent) else FunctionChatAgent()), normalized_payload
+        raise HTTPException(
+            status_code=400, detail="scene_agent.key resolved to a non-function agent"
+        )
+    return (
+        resolved if isinstance(resolved, FunctionChatAgent) else FunctionChatAgent()
+    ), normalized_payload
 
 
 def _merge_function_scene_context(
@@ -201,8 +217,7 @@ def _serialize_function_build_run_record(
     payload = _serialize(run)
     if with_events:
         payload["events"] = [
-            _serialize(item)
-            for item in sorted(run.events, key=lambda event: event.created_at)
+            _serialize(item) for item in sorted(run.events, key=lambda event: event.created_at)
         ]
     return payload
 
@@ -272,13 +287,19 @@ def _run_legacy_function_build(
     builder = FunctionBuilderService()
     build = builder.apply_prompt(
         current_code=str(function.draft_code or ""),
-        current_dependencies=function.draft_dependencies if isinstance(function.draft_dependencies, dict) else {},
+        current_dependencies=function.draft_dependencies
+        if isinstance(function.draft_dependencies, dict)
+        else {},
         prompt=prompt,
         function_name=str(function.slug or function.name or f"function-{function.id}"),
     )
-    summary_text = str(build.summary or "Function draft updated.").strip() or "Function draft updated."
+    summary_text = (
+        str(build.summary or "Function draft updated.").strip() or "Function draft updated."
+    )
     function.draft_code = build.draft_code
-    function.draft_dependencies = build.draft_dependencies if isinstance(build.draft_dependencies, dict) else {}
+    function.draft_dependencies = (
+        build.draft_dependencies if isinstance(build.draft_dependencies, dict) else {}
+    )
     function.updated_at = _utc_now_naive()
     build_run = FunctionBuildRunResult(
         run_id=f"fbr_{uuid.uuid4().hex[:16]}",
@@ -286,7 +307,9 @@ def _run_legacy_function_build(
         phase="apply",
         summary=summary_text,
         draft_code=str(function.draft_code or ""),
-        draft_dependencies=function.draft_dependencies if isinstance(function.draft_dependencies, dict) else {},
+        draft_dependencies=function.draft_dependencies
+        if isinstance(function.draft_dependencies, dict)
+        else {},
         events=[
             FunctionBuildRunEvent(
                 phase="apply",
@@ -327,7 +350,11 @@ def _normalize_function_core_phase(phase: str) -> str:
     if normalized in _FUNCTION_CORE_PHASES:
         return normalized
     if normalized in {"intent_parsed", "clarification", "reuse_recommendation", "suggest_input"}:
-        return "plan" if normalized in {"intent_parsed", "clarification", "reuse_recommendation"} else "act"
+        return (
+            "plan"
+            if normalized in {"intent_parsed", "clarification", "reuse_recommendation"}
+            else "act"
+        )
     if normalized in {"draft_built", "apply", "invoke_started"}:
         return "act"
     if normalized in {"verified", "verify_failed", "failed", "invoke_finished"}:
@@ -384,7 +411,9 @@ def _normalize_business_verification_checks(raw: Any) -> list[str]:
     return [str(item).strip() for item in raw if str(item).strip()]
 
 
-def _extract_business_verification_checks_from_dependencies(dependencies: dict[str, Any]) -> list[str]:
+def _extract_business_verification_checks_from_dependencies(
+    dependencies: dict[str, Any],
+) -> list[str]:
     business = dependencies.get("business_verification")
     if isinstance(business, dict):
         checks = _normalize_business_verification_checks(business.get("checks"))
@@ -398,11 +427,15 @@ def _extract_business_verification_checks_from_dependencies(dependencies: dict[s
     return []
 
 
-def _derive_default_business_verification_checks(*, prompt: str, function: models.Function) -> list[str]:
+def _derive_default_business_verification_checks(
+    *, prompt: str, function: models.Function
+) -> list[str]:
     title = str(function.name or "Function").strip() or "Function"
     normalized_prompt = _compact_whitespace(prompt)
     success_case = f"Success path: executing `{title}` returns business fields with `ok=true`."
-    failure_case = "Failure path: returns a clear error when required input parameters are missing or invalid."
+    failure_case = (
+        "Failure path: returns a clear error when required input parameters are missing or invalid."
+    )
     if normalized_prompt:
         success_case = f"Success path: returns business-ready data for '{normalized_prompt[:36]}'."
     return [success_case, failure_case]
@@ -410,21 +443,27 @@ def _derive_default_business_verification_checks(*, prompt: str, function: model
 
 def _business_verification_checks_cover_success_failure(checks: list[str]) -> bool:
     normalized = [str(item or "").casefold() for item in checks]
-    has_success = any(any(token in item for token in _BUSINESS_SUCCESS_HINTS) for item in normalized)
-    has_failure = any(any(token in item for token in _BUSINESS_FAILURE_HINTS) for item in normalized)
+    has_success = any(
+        any(token in item for token in _BUSINESS_SUCCESS_HINTS) for item in normalized
+    )
+    has_failure = any(
+        any(token in item for token in _BUSINESS_FAILURE_HINTS) for item in normalized
+    )
     return has_success and has_failure
 
 
 def _normalize_capability_profile(raw: Any) -> dict[str, Any]:
     payload = raw if isinstance(raw, dict) else {}
-    db_methods = [str(item).strip() for item in (payload.get("db_methods") or []) if str(item).strip()]
+    db_methods = [
+        str(item).strip() for item in (payload.get("db_methods") or []) if str(item).strip()
+    ]
     scheduler_history_calls = [
         str(item).strip()
         for item in (payload.get("scheduler_history_calls") or [])
         if str(item).strip()
     ]
     platform_calls: list[dict[str, Any]] = []
-    for item in (payload.get("platform_calls") or []):
+    for item in payload.get("platform_calls") or []:
         if not isinstance(item, dict):
             continue
         platform_calls.append(
@@ -435,7 +474,7 @@ def _normalize_capability_profile(raw: Any) -> dict[str, Any]:
             }
         )
     input_contract: list[dict[str, Any]] = []
-    for item in (payload.get("input_contract") or []):
+    for item in payload.get("input_contract") or []:
         if not isinstance(item, dict):
             continue
         name = str(item.get("name") or "").strip()
@@ -449,7 +488,7 @@ def _normalize_capability_profile(raw: Any) -> dict[str, Any]:
             }
         )
     output_fields: list[dict[str, Any]] = []
-    for item in (payload.get("output_fields") or []):
+    for item in payload.get("output_fields") or []:
         if not isinstance(item, dict):
             continue
         name = str(item.get("name") or "").strip()
@@ -461,7 +500,9 @@ def _normalize_capability_profile(raw: Any) -> dict[str, Any]:
                 "kind": str(item.get("kind") or "constant").strip(),
             }
         )
-    business_verification_checks = _normalize_business_verification_checks(payload.get("business_verification_checks"))
+    business_verification_checks = _normalize_business_verification_checks(
+        payload.get("business_verification_checks")
+    )
     return {
         "db_methods": sorted(set(db_methods)),
         "platform_calls": sorted(
@@ -497,7 +538,7 @@ def _derive_contract_from_dependency_manifest(
     uses_db = None
     if isinstance(builder_spec, dict):
         uses_db = bool(builder_spec.get("uses_db"))
-        for field in (builder_spec.get("input_contract") or []):
+        for field in builder_spec.get("input_contract") or []:
             if not isinstance(field, dict):
                 continue
             name = str(field.get("name") or "").strip()
@@ -510,7 +551,7 @@ def _derive_contract_from_dependency_manifest(
                     "required": bool(field.get("required")),
                 }
             )
-        for field in (builder_spec.get("output_fields") or []):
+        for field in builder_spec.get("output_fields") or []:
             if not isinstance(field, dict):
                 continue
             name = str(field.get("name") or "").strip()
@@ -529,7 +570,11 @@ def _derive_contract_from_dependency_manifest(
         contract["input_contract"] = input_contract
     if output_fields:
         contract["output_fields"] = output_fields
-    profile = _normalize_capability_profile(capability_profile if capability_profile is not None else dependency_manifest.get("capability_profile"))
+    profile = _normalize_capability_profile(
+        capability_profile
+        if capability_profile is not None
+        else dependency_manifest.get("capability_profile")
+    )
     if profile:
         contract["capability_profile"] = profile
     return contract
@@ -578,7 +623,9 @@ def _apply_verification_governance_to_dependencies(
     verification_type = str(verification.get("verification_type") or "pre_release_harness")
     capability_fingerprint = _compute_capability_fingerprint(capability_profile)
     governance = {
-        "capability_profile_version": str(verification.get("capability_profile_version") or _CAPABILITY_PROFILE_VERSION),
+        "capability_profile_version": str(
+            verification.get("capability_profile_version") or _CAPABILITY_PROFILE_VERSION
+        ),
         "capability_fingerprint": capability_fingerprint,
         "verified_at": verified_at,
         "verification_type": verification_type,
@@ -589,10 +636,15 @@ def _apply_verification_governance_to_dependencies(
     return next_dependencies, {"business_verification": business_verification, **governance}
 
 
-def _load_recent_build_contexts(db: Session, *, function_id: int, limit: int = 6) -> list[dict[str, str]]:
+def _load_recent_build_contexts(
+    db: Session, *, function_id: int, limit: int = 6
+) -> list[dict[str, str]]:
     rows = (
         db.query(models.FunctionBuildRun)
-        .filter(models.FunctionBuildRun.function_id == function_id, models.FunctionBuildRun.action == "build")
+        .filter(
+            models.FunctionBuildRun.function_id == function_id,
+            models.FunctionBuildRun.action == "build",
+        )
         .order_by(models.FunctionBuildRun.created_at.desc())
         .limit(max(1, min(int(limit or 1), 20)))
         .all()
@@ -763,14 +815,18 @@ def _coerce_generated_function_name(candidate: str) -> str:
     return normalized if detail is None else ""
 
 
-def _coerce_generated_function_description(candidate: str, *, function: models.Function, prompt: str) -> str:
+def _coerce_generated_function_description(
+    candidate: str, *, function: models.Function, prompt: str
+) -> str:
     normalized = _compact_whitespace(candidate)
     if normalized:
         return normalized[:500].rstrip()
     return _derive_function_semantic_description(function=function, prompt=prompt)
 
 
-def _derive_function_semantic_title(*, prompt: str, build_summary: str, function: models.Function) -> str:
+def _derive_function_semantic_title(
+    *, prompt: str, build_summary: str, function: models.Function
+) -> str:
     candidates = [
         _compact_whitespace(build_summary).rstrip("。.!?，,；;：:"),
         _compact_whitespace(prompt).rstrip("。.!?，,；;：:"),
@@ -803,7 +859,9 @@ def _parse_llm_json_object(raw: str) -> dict[str, Any]:
     return parsed if isinstance(parsed, dict) else {}
 
 
-def _generate_initial_function_metadata_via_llm(*, prompt: str, build_summary: str) -> tuple[str, str]:
+def _generate_initial_function_metadata_via_llm(
+    *, prompt: str, build_summary: str
+) -> tuple[str, str]:
     system_prompt = (
         "You are responsible for generating one-time user-visible metadata for a newly created Function.\n"
         "Return JSON with exactly two fields: title, description.\n"
@@ -835,7 +893,9 @@ def _generate_initial_function_metadata_via_llm(*, prompt: str, build_summary: s
             break
         if response is None:
             return "", ""
-        content = (((response.get("choices") or [{}])[0].get("message") or {}).get("content") or "").strip()
+        content = (
+            ((response.get("choices") or [{}])[0].get("message") or {}).get("content") or ""
+        ).strip()
         payload = _parse_llm_json_object(content)
         return (
             _compact_whitespace(str(payload.get("title") or "")),
@@ -941,7 +1001,9 @@ def _compose_no_change_build_summary() -> str:
 
 def _classify_lifecycle_error_code(message: str) -> str:
     detail = str(message or "").strip()
-    if _contains_text_ci(detail, "no released version for production path") or _contains_text_ci(detail, "release must be persisted"):
+    if _contains_text_ci(detail, "no released version for production path") or _contains_text_ci(
+        detail, "release must be persisted"
+    ):
         return "release_required"
     if _contains_text_ci(detail, "runtime_path must be production or draft"):
         return "invalid_runtime_path"
@@ -962,7 +1024,9 @@ def _raise_lifecycle_http_error(err: LifecycleValidationError) -> None:
 def _friendly_invoke_error_message(message: str, *, error_code: str | None = None) -> str:
     raw = _compact_whitespace(message)
     code = str(error_code or "").strip()
-    if code == "release_required" or _contains_text_ci(raw, "no released version for production path"):
+    if code == "release_required" or _contains_text_ci(
+        raw, "no released version for production path"
+    ):
         return "The current draft has no released version. Please release first before production execution."
     if (
         _contains_text_ci(raw, "scheduler_history.delete 使用 dry_run=true")
@@ -970,7 +1034,9 @@ def _friendly_invoke_error_message(message: str, *, error_code: str | None = Non
         or _contains_text_ci(raw, "dry_run=True")
     ):
         return "The current test execution only supports dry-run. Keep dry_run=true when cleaning history; for actual cleanup, use production execution after release or delegate to Scheduler."
-    if _contains_text_ci(raw, "plan 模式禁止控制面写操作") or _contains_text_ci(raw, "请先确认后使用 apply 模式执行"):
+    if _contains_text_ci(raw, "plan 模式禁止控制面写操作") or _contains_text_ci(
+        raw, "请先确认后使用 apply 模式执行"
+    ):
         return "The current test execution only supports dry-run and cannot directly modify platform objects. After release, changes can take effect through production execution or Scheduler."
     if _contains_text_ci(raw, "plan 模式禁止控制面 operate 操作"):
         return "The current test execution only supports dry-run and cannot directly perform platform operations. After release, operations can take effect through production execution or Scheduler."
@@ -983,16 +1049,23 @@ def _friendly_invoke_success_message(output: Any) -> str:
     if isinstance(output, dict):
         object_type = str(output.get("object_type") or "").strip()
         action = str(output.get("action") or "").strip()
-        if _contains_text_ci(object_type, "scheduler_history") and _contains_text_ci(action, "delete"):
+        if _contains_text_ci(object_type, "scheduler_history") and _contains_text_ci(
+            action, "delete"
+        ):
             candidate_count = int(output.get("candidate_count") or 0)
             deleted_count = int(output.get("deleted_count") or 0)
             if bool(output.get("dry_run")):
                 return f"History cleanup dry-run completed, matched {candidate_count} records."
             return f"History cleanup completed, {deleted_count} records removed."
-        if any(key in output for key in ("execution_mode", "runtime_path", "write_mode", "confirm_apply")):
+        if any(
+            key in output
+            for key in ("execution_mode", "runtime_path", "write_mode", "confirm_apply")
+        ):
             return "Test execution completed. You can view the results in the right panel."
     raw = _compact_whitespace(str(output or ""))
-    if _contains_any_text_ci(raw, ("execution_mode", "runtime_path", "write_mode", "confirm_apply")):
+    if _contains_any_text_ci(
+        raw, ("execution_mode", "runtime_path", "write_mode", "confirm_apply")
+    ):
         return "Test execution completed. You can view the results in the right panel."
     if raw and len(raw) <= 120 and not raw.startswith("{"):
         return raw
@@ -1011,7 +1084,9 @@ def _build_function_apply_failed_run(
         phase="apply",
         summary=summary,
         draft_code=str(function.draft_code or ""),
-        draft_dependencies=function.draft_dependencies if isinstance(function.draft_dependencies, dict) else {},
+        draft_dependencies=function.draft_dependencies
+        if isinstance(function.draft_dependencies, dict)
+        else {},
         events=[
             FunctionBuildRunEvent(
                 phase="apply",
@@ -1031,20 +1106,26 @@ def _build_function_verify_failed_run(
     verification: dict[str, Any],
     changed_files: list[str],
 ) -> FunctionBuildRunResult:
-    diagnostics = [str(item) for item in (verification.get("diagnostics") or []) if str(item).strip()]
+    diagnostics = [
+        str(item) for item in (verification.get("diagnostics") or []) if str(item).strip()
+    ]
     checks = [item for item in (verification.get("checks") or []) if isinstance(item, dict)]
     failed_check_names = {
-        str(item.get("name") or "")
-        for item in checks
-        if bool(item.get("passed")) is False
+        str(item.get("name") or "") for item in checks if bool(item.get("passed")) is False
     }
     mapping_row_failed = (
         "mapping_row_access_valid" in failed_check_names
         or "mapping_row_access_detail" in failed_check_names
     )
     if mapping_row_failed and not any("db.query" in item for item in diagnostics):
-        diagnostics.append("Process rows returned by db.query/query_by_id using row.get(...) key access for dict-style fields.")
-    brief = "; ".join(diagnostics[:3]) if diagnostics else "Draft did not pass runtime contract verification"
+        diagnostics.append(
+            "Process rows returned by db.query/query_by_id using row.get(...) key access for dict-style fields."
+        )
+    brief = (
+        "; ".join(diagnostics[:3])
+        if diagnostics
+        else "Draft did not pass runtime contract verification"
+    )
     summary = f"Function build failed contract verification: {brief}"
     return FunctionBuildRunResult(
         run_id=f"fbr_{uuid.uuid4().hex[:16]}",
@@ -1052,7 +1133,9 @@ def _build_function_verify_failed_run(
         phase="verify_failed",
         summary=summary,
         draft_code=str(function.draft_code or ""),
-        draft_dependencies=function.draft_dependencies if isinstance(function.draft_dependencies, dict) else {},
+        draft_dependencies=function.draft_dependencies
+        if isinstance(function.draft_dependencies, dict)
+        else {},
         events=[
             FunctionBuildRunEvent(
                 phase="verify_failed",
@@ -1132,8 +1215,13 @@ def _should_short_circuit_build_for_reuse(
 
 
 def _compose_reuse_recommendation_summary(decision: dict[str, Any]) -> str:
-    top_candidate = decision.get("top_candidate") if isinstance(decision.get("top_candidate"), dict) else {}
-    candidate_name = str(top_candidate.get("name") or "").strip() or f"Function#{int(top_candidate.get('function_id') or 0)}"
+    top_candidate = (
+        decision.get("top_candidate") if isinstance(decision.get("top_candidate"), dict) else {}
+    )
+    candidate_name = (
+        str(top_candidate.get("name") or "").strip()
+        or f"Function#{int(top_candidate.get('function_id') or 0)}"
+    )
     score = float(top_candidate.get("score") or 0.0)
     return f"Detected a highly matching reusable capability `{candidate_name}` (score={score:.2f}); recommend reusing to avoid fragmentation."
 
@@ -1176,7 +1264,9 @@ def _run_function_build_action(
     build_applied = False
     previous_draft_code = str(function.draft_code or "")
     previous_draft_dependencies = (
-        copy.deepcopy(function.draft_dependencies) if isinstance(function.draft_dependencies, dict) else function.draft_dependencies
+        copy.deepcopy(function.draft_dependencies)
+        if isinstance(function.draft_dependencies, dict)
+        else function.draft_dependencies
     )
     requirement_contract = _derive_contract_from_dependency_manifest(
         previous_draft_dependencies if isinstance(previous_draft_dependencies, dict) else {},
@@ -1232,7 +1322,9 @@ def _run_function_build_action(
             phase="reuse_recommendation",
             summary=summary,
             draft_code=previous_draft_code,
-            draft_dependencies=previous_draft_dependencies if isinstance(previous_draft_dependencies, dict) else {},
+            draft_dependencies=previous_draft_dependencies
+            if isinstance(previous_draft_dependencies, dict)
+            else {},
             events=[
                 FunctionBuildRunEvent(
                     phase="reuse_recommendation",
@@ -1269,10 +1361,16 @@ def _run_function_build_action(
         # do NOT restore workspace (nothing was written), do NOT treat as build failure.
         # Only triggers for early-stage exits (final_stage 1 or 2); Stage 4 Kernel failures
         # fall through to the normal verification/failed path below.
-        if orchestrated.status in ("needs_clarification", "too_complex") and getattr(orchestrated, "final_stage", 4) in (1, 2):
+        if orchestrated.status in ("needs_clarification", "too_complex") and getattr(
+            orchestrated, "final_stage", 4
+        ) in (1, 2):
             stage_results_list = getattr(orchestrated, "stage_results", [])
             last_stage_msg = next(
-                (sr.assistant_message for sr in reversed(stage_results_list) if sr.assistant_message),
+                (
+                    sr.assistant_message
+                    for sr in reversed(stage_results_list)
+                    if sr.assistant_message
+                ),
                 "Additional information is needed to complete the build",
             )
             clarification_run = FunctionBuildRunResult(
@@ -1313,7 +1411,11 @@ def _run_function_build_action(
             return clarification_run, run_record
 
         result = orchestrated.apply_result
-        changed_files = [str(item) for item in ((result.changed_files if result is not None else []) or []) if str(item)]
+        changed_files = [
+            str(item)
+            for item in ((result.changed_files if result is not None else []) or [])
+            if str(item)
+        ]
         current_draft_code = str(function.draft_code or "")
         build_applied = ("main.py" in changed_files) or (current_draft_code != previous_draft_code)
         verification = orchestrated.verification
@@ -1350,7 +1452,9 @@ def _run_function_build_action(
         governed_dependencies, governance_snapshot = _apply_verification_governance_to_dependencies(
             function=function,
             prompt=prompt,
-            dependencies=function.draft_dependencies if isinstance(function.draft_dependencies, dict) else {},
+            dependencies=function.draft_dependencies
+            if isinstance(function.draft_dependencies, dict)
+            else {},
             verification=verification,
             tests_suggested=result.tests_suggested,
         )
@@ -1368,7 +1472,9 @@ def _run_function_build_action(
             phase="apply",
             summary=build_summary or "Function draft updated.",
             draft_code=str(function.draft_code or ""),
-            draft_dependencies=function.draft_dependencies if isinstance(function.draft_dependencies, dict) else {},
+            draft_dependencies=function.draft_dependencies
+            if isinstance(function.draft_dependencies, dict)
+            else {},
             events=[
                 FunctionBuildRunEvent(
                     phase="apply",
@@ -1424,9 +1530,14 @@ def _run_function_build_action(
                 prompt=prompt,
                 build_summary=str(build_run.summary or ""),
                 generated_title=str(result.generated_title or "") if "result" in locals() else "",
-                generated_description=str(result.generated_description or "") if "result" in locals() else "",
+                generated_description=str(result.generated_description or "")
+                if "result" in locals()
+                else "",
             )
-        draft_iteration_started = build_applied or metadata_before != (function.name, function.description)
+        draft_iteration_started = build_applied or metadata_before != (
+            function.name,
+            function.description,
+        )
         if draft_iteration_started and function.status == FunctionState.RELEASED.value:
             FunctionLifecycleService().transition(function, target_state=FunctionState.DRAFT)
         function.updated_at = _utc_now_naive()
@@ -1523,7 +1634,6 @@ def get_function(function_id: int, db: Session = Depends(get_db)):
     return _serialize(_get_function_or_404(db, function_id))
 
 
-
 @router.get("/by-slug/{function_slug}")
 def get_function_by_slug(function_slug: str, db: Session = Depends(get_db)):
     normalized_slug = normalize_function_slug(function_slug)
@@ -1613,7 +1723,9 @@ def build_function(function_id: int, payload: dict[str, Any], db: Session = Depe
 
 
 @router.post("/{function_id}/chat")
-async def run_function_chat_action(function_id: int, payload: dict[str, Any], db: Session = Depends(get_db)):
+async def run_function_chat_action(
+    function_id: int, payload: dict[str, Any], db: Session = Depends(get_db)
+):
     function = _get_function_or_404(db, function_id)
     action = str(payload.get("action") or "build").strip().lower()
     context = ScopedChatContext(scope=ChatScope.FUNCTION_BUILD)
@@ -1667,7 +1779,10 @@ async def run_function_chat_action(function_id: int, payload: dict[str, Any], db
         }
 
     if action == "suggest_input":
-        prompt = str(payload.get("prompt") or "").strip() or "Generate directly runnable test input based on the current Function."
+        prompt = (
+            str(payload.get("prompt") or "").strip()
+            or "Generate directly runnable test input based on the current Function."
+        )
         conversation_context = str(payload.get("conversation_context") or "")
         suggestion = chat_agent.suggest_function_input(
             function=function,
@@ -1682,7 +1797,9 @@ async def run_function_chat_action(function_id: int, payload: dict[str, Any], db
             phase="suggest_input",
             summary=rationale or "Test input suggestion generated.",
             draft_code=str(function.draft_code or ""),
-            draft_dependencies=function.draft_dependencies if isinstance(function.draft_dependencies, dict) else {},
+            draft_dependencies=function.draft_dependencies
+            if isinstance(function.draft_dependencies, dict)
+            else {},
             events=[
                 FunctionBuildRunEvent(
                     phase="suggest_input",
@@ -1721,7 +1838,12 @@ async def run_function_chat_action(function_id: int, payload: dict[str, Any], db
                         "payload": item.get("payload"),
                         "created_at": item["created_at"],
                     }
-                    for item in (_serialize_function_build_run_record(run_record, with_events=True).get("events") or [])
+                    for item in (
+                        _serialize_function_build_run_record(run_record, with_events=True).get(
+                            "events"
+                        )
+                        or []
+                    )
                     if isinstance(item, dict)
                 ]
             ),
@@ -1751,7 +1873,11 @@ async def run_function_chat_action(function_id: int, payload: dict[str, Any], db
             raise HTTPException(status_code=400, detail="execution_mode must be plan or apply")
         if runtime_path not in {"production", "draft"}:
             raise HTTPException(status_code=400, detail="runtime_path must be production or draft")
-        if write_mode == "write" and execution_mode == "apply" and not bool(invoke_payload.get("confirm_apply")):
+        if (
+            write_mode == "write"
+            and execution_mode == "apply"
+            and not bool(invoke_payload.get("confirm_apply"))
+        ):
             raise HTTPException(
                 status_code=400,
                 detail="Writable Function requires explicit confirmation before apply execution (confirm_apply=true)",
@@ -1798,7 +1924,9 @@ async def run_function_chat_action(function_id: int, payload: dict[str, Any], db
             phase="invoke_finished",
             summary=assistant_message,
             draft_code=str(function.draft_code or ""),
-            draft_dependencies=function.draft_dependencies if isinstance(function.draft_dependencies, dict) else {},
+            draft_dependencies=function.draft_dependencies
+            if isinstance(function.draft_dependencies, dict)
+            else {},
             events=[
                 FunctionBuildRunEvent(
                     phase="invoke_finished",
@@ -1863,7 +1991,9 @@ async def run_function_chat_action(function_id: int, payload: dict[str, Any], db
 
 
 @router.post("/{function_id}/chat/stream")
-async def run_function_chat_action_stream(function_id: int, payload: dict[str, Any], db: Session = Depends(get_db)):
+async def run_function_chat_action_stream(
+    function_id: int, payload: dict[str, Any], db: Session = Depends(get_db)
+):
     _get_function_or_404(db, function_id)
     action = str(payload.get("action") or "build").strip().lower()
     if action not in {"build", "suggest_input", "invoke"}:
@@ -1922,11 +2052,15 @@ async def run_function_chat_action_stream(function_id: int, payload: dict[str, A
                 if agent_id:
                     db_agent = local_db.get(models.Agent, agent_id)
                     if db_agent and isinstance(db_agent.skills, list):
-                        configured_skill_names = [str(s) for s in db_agent.skills if isinstance(s, str)]
+                        configured_skill_names = [
+                            str(s) for s in db_agent.skills if isinstance(s, str)
+                        ]
                 configured_skill_names = list(
                     dict.fromkeys(
                         configured_skill_names
-                        + _resolve_function_scene_skills(scene_agent=scene_agent, scene_payload=scene_payload)
+                        + _resolve_function_scene_skills(
+                            scene_agent=scene_agent, scene_payload=scene_payload
+                        )
                     )
                 )
                 skill_result = _run_async_safely(
@@ -1971,11 +2105,15 @@ async def run_function_chat_action_stream(function_id: int, payload: dict[str, A
                             "event_group": "core",
                             "event_name": "assistant",
                             "phase": "responding",
-                            "data": {"text": assistant_message, "source": "llm", "agent": "FunctionBuilderAgent"},
+                            "data": {
+                                "text": assistant_message,
+                                "source": "llm",
+                                "agent": "FunctionBuilderAgent",
+                            },
                         }
                     )
                 verification_payload: dict[str, Any] | None = None
-                for event in (build_run.events or []):
+                for event in build_run.events or []:
                     if not isinstance(event.payload, dict):
                         continue
                     if str(event.phase or "").strip().lower() not in {"apply", "verify_failed"}:
@@ -1991,7 +2129,9 @@ async def run_function_chat_action_stream(function_id: int, payload: dict[str, A
                             "event_group": "extension",
                             "event_name": "verify_result",
                             "data": {
-                                "summary": "Business result verification passed" if verify_passed else "Business result verification failed",
+                                "summary": "Business result verification passed"
+                                if verify_passed
+                                else "Business result verification failed",
                                 "verification": verification_payload,
                                 "source": "verifier",
                                 "agent": "FunctionVerifier",
@@ -2012,7 +2152,9 @@ async def run_function_chat_action_stream(function_id: int, payload: dict[str, A
                             "source": "runtime",
                             "agent": "FunctionBuildOrchestrator",
                             "function": _serialize(function),
-                            "build_run": _serialize_function_build_run_record(run_record, with_events=True),
+                            "build_run": _serialize_function_build_run_record(
+                                run_record, with_events=True
+                            ),
                         },
                     }
                 )
@@ -2032,7 +2174,9 @@ async def run_function_chat_action_stream(function_id: int, payload: dict[str, A
                                 phase=str(item.get("phase") or ""),
                                 status=str(item.get("status") or ""),
                                 summary=str(item.get("summary") or ""),
-                                payload=item.get("payload") if isinstance(item.get("payload"), dict) else None,
+                                payload=item.get("payload")
+                                if isinstance(item.get("payload"), dict)
+                                else None,
                                 created_at=str(item.get("created_at") or ""),
                             )
                         )
@@ -2044,7 +2188,11 @@ async def run_function_chat_action_stream(function_id: int, payload: dict[str, A
                             "event_group": "core",
                             "event_name": "assistant",
                             "phase": "responding",
-                            "data": {"text": assistant_message, "source": "llm", "agent": "FunctionBuilderAgent"},
+                            "data": {
+                                "text": assistant_message,
+                                "source": "llm",
+                                "agent": "FunctionBuilderAgent",
+                            },
                         }
                     )
                 enqueue(
@@ -2060,11 +2208,7 @@ async def run_function_chat_action_stream(function_id: int, payload: dict[str, A
                             "assistant_message": assistant_message,
                             "source": "runtime",
                             "agent": "FunctionBuildOrchestrator",
-                            **(
-                                result.get("data")
-                                if isinstance(result.get("data"), dict)
-                                else {}
-                            ),
+                            **(result.get("data") if isinstance(result.get("data"), dict) else {}),
                         },
                     }
                 )
@@ -2125,7 +2269,9 @@ async def run_function_chat_action_stream(function_id: int, payload: dict[str, A
 
 
 @router.post("/{function_id}/suggest-input")
-def suggest_function_input(function_id: int, payload: dict[str, Any], db: Session = Depends(get_db)):
+def suggest_function_input(
+    function_id: int, payload: dict[str, Any], db: Session = Depends(get_db)
+):
     function = _get_function_or_404(db, function_id)
     prompt = str(payload.get("prompt") or "").strip()
     if not prompt:
@@ -2162,7 +2308,9 @@ def duplicate_function(function_id: int, db: Session = Depends(get_db)):
         kind="custom",
         status="draft",
         draft_code=source.draft_code,
-        draft_dependencies=copy.deepcopy(source.draft_dependencies) if isinstance(source.draft_dependencies, dict) else source.draft_dependencies,
+        draft_dependencies=copy.deepcopy(source.draft_dependencies)
+        if isinstance(source.draft_dependencies, dict)
+        else source.draft_dependencies,
     )
     db.add(copy_fn)
     db.commit()
@@ -2206,7 +2354,10 @@ def get_function_build_run(function_id: int, run_id: str, db: Session = Depends(
     _get_function_or_404(db, function_id)
     row = (
         db.query(models.FunctionBuildRun)
-        .filter(models.FunctionBuildRun.function_id == function_id, models.FunctionBuildRun.run_id == run_id)
+        .filter(
+            models.FunctionBuildRun.function_id == function_id,
+            models.FunctionBuildRun.run_id == run_id,
+        )
         .first()
     )
     if row is None:
@@ -2219,7 +2370,10 @@ def list_function_build_run_events(function_id: int, run_id: str, db: Session = 
     _get_function_or_404(db, function_id)
     row = (
         db.query(models.FunctionBuildRun)
-        .filter(models.FunctionBuildRun.function_id == function_id, models.FunctionBuildRun.run_id == run_id)
+        .filter(
+            models.FunctionBuildRun.function_id == function_id,
+            models.FunctionBuildRun.run_id == run_id,
+        )
         .first()
     )
     if row is None:
@@ -2243,7 +2397,9 @@ def list_function_runs(function_id: int, limit: int = 20, db: Session = Depends(
 
 
 @router.post("/{function_id}/strategy")
-def decide_function_strategy(function_id: int, payload: dict[str, Any], db: Session = Depends(get_db)):
+def decide_function_strategy(
+    function_id: int, payload: dict[str, Any], db: Session = Depends(get_db)
+):
     function = _get_function_or_404(db, function_id)
     default_contract = _derive_contract_from_dependency_manifest(
         function.draft_dependencies if isinstance(function.draft_dependencies, dict) else {},
@@ -2252,10 +2408,16 @@ def decide_function_strategy(function_id: int, payload: dict[str, Any], db: Sess
     decider = FunctionStrategyDecider()
     decision = decider.decide(
         db,
-        requirement_text=str(payload.get("requirement") or function.description or function.name or ""),
-        contract=input_contract if input_contract is not None else (default_contract if default_contract else None),
+        requirement_text=str(
+            payload.get("requirement") or function.description or function.name or ""
+        ),
+        contract=input_contract
+        if input_contract is not None
+        else (default_contract if default_contract else None),
         exclude_function_id=function.id,
-        force_strategy=payload.get("force_strategy") if isinstance(payload.get("force_strategy"), str) else None,
+        force_strategy=payload.get("force_strategy")
+        if isinstance(payload.get("force_strategy"), str)
+        else None,
         thresholds=StrategyThresholds(
             reuse=float(payload.get("reuse_threshold", 0.82)),
             extend=float(payload.get("extend_threshold", 0.45)),
@@ -2323,14 +2485,18 @@ def release_function(function_id: int, payload: dict[str, Any], db: Session = De
 
     decision = decider.decide(
         db,
-        requirement_text=str(payload.get("requirement") or function.description or function.name or ""),
+        requirement_text=str(
+            payload.get("requirement") or function.description or function.name or ""
+        ),
         contract=(
             payload.get("contract")
             if isinstance(payload.get("contract"), dict)
             else (derived_contract if derived_contract else None)
         ),
         exclude_function_id=function.id,
-        force_strategy=payload.get("force_strategy") if isinstance(payload.get("force_strategy"), str) else None,
+        force_strategy=payload.get("force_strategy")
+        if isinstance(payload.get("force_strategy"), str)
+        else None,
         thresholds=StrategyThresholds(
             reuse=float(payload.get("reuse_threshold", 0.82)),
             extend=float(payload.get("extend_threshold", 0.45)),
@@ -2344,7 +2510,9 @@ def release_function(function_id: int, payload: dict[str, Any], db: Session = De
         raise HTTPException(status_code=400, detail="release_metadata must be an object")
     release_metadata = {
         **release_metadata,
-        "contract": release_metadata.get("contract") if isinstance(release_metadata.get("contract"), dict) else derived_contract,
+        "contract": release_metadata.get("contract")
+        if isinstance(release_metadata.get("contract"), dict)
+        else derived_contract,
         "strategy_decision": decision,
         "verification": verification,
         "capability_profile": verification.get("capability_profile"),
@@ -2400,12 +2568,18 @@ async def invoke_function(function_id: int, payload: dict[str, Any], db: Session
         raise HTTPException(status_code=400, detail="execution_mode must be plan or apply")
     if runtime_path not in {"production", "draft"}:
         raise HTTPException(status_code=400, detail="runtime_path must be production or draft")
-    if write_mode == "write" and execution_mode == "apply" and not bool(payload.get("confirm_apply")):
+    if (
+        write_mode == "write"
+        and execution_mode == "apply"
+        and not bool(payload.get("confirm_apply"))
+    ):
         raise HTTPException(
             status_code=400,
             detail="Writable Function requires explicit confirmation before apply execution (confirm_apply=true)",
         )
-    scope_metadata = payload.get("scope_metadata") if isinstance(payload.get("scope_metadata"), dict) else {}
+    scope_metadata = (
+        payload.get("scope_metadata") if isinstance(payload.get("scope_metadata"), dict) else {}
+    )
     scope_metadata = {
         **scope_metadata,
         "execution_mode": execution_mode,

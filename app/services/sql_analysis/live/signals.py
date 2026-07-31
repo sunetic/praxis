@@ -21,7 +21,11 @@ def build_live_signals(
     explain_rows = [dict(item) for item in plan_explain]
     operators = [str(item.get("operator") or "").lower() for item in explain_rows]
     properties = [str(item.get("property") or "").lower() for item in explain_rows]
-    object_names = [str(item.get("object_name") or "").strip() for item in explain_rows if item.get("object_name")]
+    object_names = [
+        str(item.get("object_name") or "").strip()
+        for item in explain_rows
+        if item.get("object_name")
+    ]
     text = str(sql_text or "").lower()
 
     has_table_scan = any(
@@ -41,7 +45,10 @@ def build_live_signals(
             }
         )
 
-    has_index_signal = any("index" in operator or "index" in property for operator, property in zip(operators, properties, strict=False))
+    has_index_signal = any(
+        "index" in operator or "index" in property
+        for operator, property in zip(operators, properties, strict=False)
+    )
     if has_table_scan and not has_index_signal:
         signals.append(
             {
@@ -97,7 +104,9 @@ def build_live_signals(
             }
         )
 
-    if any(func in text for func in ("substr(", "substring(", "lower(", "upper(", "date(", "cast(")):
+    if any(
+        func in text for func in ("substr(", "substring(", "lower(", "upper(", "date(", "cast(")
+    ):
         signals.append(
             {
                 "key": "predicate_not_sargable",

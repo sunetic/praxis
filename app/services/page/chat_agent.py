@@ -6,8 +6,8 @@ from app.models import models
 from app.services.agent.core import AgentCore, BuildGoalRequest, normalize_build_attempts
 from app.services.chat import ChatService
 from app.services.chat.agent import ChatCoreAgent
-from app.services.platform.coding_engine import CodingEngineApplyResult
 from app.services.page.scope_adapter import PageBuildScopeAdapter
+from app.services.platform.coding_engine import CodingEngineApplyResult
 from app.services.platform.workspace_store import WorkspaceStore
 
 

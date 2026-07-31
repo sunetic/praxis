@@ -24,6 +24,7 @@ from app.services.platform.object_tools import ObjectToolError, ObjectToolServic
 router = APIRouter(prefix="/chat", tags=["Chat"])
 logger = get_logger("chat.pending")
 
+
 def _json_dumps_safe(payload: dict) -> str:
     return json.dumps(payload, default=str, ensure_ascii=False)
 
@@ -120,7 +121,11 @@ def _find_message_with_pending_token(
         # Prefer content_parts (new format), fall back to tool_calls (legacy)
         parts = msg.content_parts if isinstance(msg.content_parts, list) else []
         for idx, part in enumerate(parts):
-            if isinstance(part, dict) and part.get("type") == "tool_use" and part.get("pending_action_token") == token:
+            if (
+                isinstance(part, dict)
+                and part.get("type") == "tool_use"
+                and part.get("pending_action_token") == token
+            ):
                 return (msg, idx)
         if not parts:
             tool_calls = msg.tool_calls if isinstance(msg.tool_calls, list) else []
@@ -143,10 +148,7 @@ def _build_confirmed_sql_result_summary(result: dict[str, Any]) -> dict[str, Any
         if not isinstance(row, dict):
             continue
         sample_rows.append(
-            {
-                str(key): _truncate_handoff_text(value, limit=120)
-                for key, value in row.items()
-            }
+            {str(key): _truncate_handoff_text(value, limit=120) for key, value in row.items()}
         )
     return {
         "row_count": int(result.get("row_count") or 0),
@@ -256,7 +258,9 @@ async def _build_confirmed_sql_resume_message(
     )
 
 
-def _build_confirmed_sql_failure_resume_fallback(*, intent: str, sql: str, error_message: str) -> str:
+def _build_confirmed_sql_failure_resume_fallback(
+    *, intent: str, sql: str, error_message: str
+) -> str:
     prefix = f"Executed as confirmed: {intent}." if intent else "Confirmed action executed."
     normalized_sql = normalize_sql(sql)
     return (
@@ -276,7 +280,9 @@ async def _build_confirmed_sql_failure_resume_message(
     resolved_role: str,
     cluster_key: str,
 ) -> str:
-    fallback = _build_confirmed_sql_failure_resume_fallback(intent=intent, sql=sql, error_message=error_message)
+    fallback = _build_confirmed_sql_failure_resume_fallback(
+        intent=intent, sql=sql, error_message=error_message
+    )
     prompt_payload = {
         "intent": intent,
         "sql": normalize_sql(sql),
@@ -373,7 +379,9 @@ def cancel_pending_action(conversation_id: int, token: str, db: Session = Depend
             token=token,
         )
         if pending_tool_event:
-            base_payload = pending_tool_event.payload if isinstance(pending_tool_event.payload, dict) else {}
+            base_payload = (
+                pending_tool_event.payload if isinstance(pending_tool_event.payload, dict) else {}
+            )
             payload = dict(base_payload)
             payload["result"] = {
                 "success": False,
@@ -394,7 +402,11 @@ def cancel_pending_action(conversation_id: int, token: str, db: Session = Depend
             token=token,
         )
         if pending_action_event:
-            base_payload = pending_action_event.payload if isinstance(pending_action_event.payload, dict) else {}
+            base_payload = (
+                pending_action_event.payload
+                if isinstance(pending_action_event.payload, dict)
+                else {}
+            )
             payload = dict(base_payload)
             if pending_action_event.event_type == "step_result":
                 result = payload.get("result") if isinstance(payload.get("result"), dict) else {}
@@ -466,7 +478,9 @@ async def confirm_pending_action(conversation_id: int, token: str, db: Session =
         capability_key = str(payload.get("capability_key") or "object.crud").strip()
 
         if not mode or not object_type or not operation:
-            raise HTTPException(status_code=400, detail="Pending object action payload is incomplete")
+            raise HTTPException(
+                status_code=400, detail="Pending object action payload is incomplete"
+            )
 
         object_service = ObjectToolService(session_factory=_build_object_tool_session_factory(db))
         now = datetime.now(UTC).replace(tzinfo=None)
@@ -482,7 +496,9 @@ async def confirm_pending_action(conversation_id: int, token: str, db: Session =
                 )
             elif mode == "operate":
                 if object_id is None:
-                    raise HTTPException(status_code=400, detail="object_id is required for operate confirmation")
+                    raise HTTPException(
+                        status_code=400, detail="object_id is required for operate confirmation"
+                    )
                 result = await object_service.operate(
                     object_type=object_type,
                     action=operation,
@@ -491,7 +507,9 @@ async def confirm_pending_action(conversation_id: int, token: str, db: Session =
                     actor="user_confirmed",
                 )
             else:
-                raise HTTPException(status_code=400, detail=f"Unsupported object action mode: {mode}")
+                raise HTTPException(
+                    status_code=400, detail=f"Unsupported object action mode: {mode}"
+                )
 
             action.status = "executed"
             action.executed_at = now
@@ -505,12 +523,22 @@ async def confirm_pending_action(conversation_id: int, token: str, db: Session =
                 token=token,
             )
             if pending_action_event:
-                base_payload = pending_action_event.payload if isinstance(pending_action_event.payload, dict) else {}
+                base_payload = (
+                    pending_action_event.payload
+                    if isinstance(pending_action_event.payload, dict)
+                    else {}
+                )
                 event_payload = dict(base_payload)
                 if pending_action_event.event_type == "step_result":
-                    existing_result = event_payload.get("result") if isinstance(event_payload.get("result"), dict) else {}
+                    existing_result = (
+                        event_payload.get("result")
+                        if isinstance(event_payload.get("result"), dict)
+                        else {}
+                    )
                     existing_data = (
-                        existing_result.get("data") if isinstance(existing_result.get("data"), dict) else {}
+                        existing_result.get("data")
+                        if isinstance(existing_result.get("data"), dict)
+                        else {}
                     )
                     event_payload["result"] = {
                         "success": True,
@@ -530,7 +558,11 @@ async def confirm_pending_action(conversation_id: int, token: str, db: Session =
                         "error": None,
                     }
                 else:
-                    existing_data = event_payload.get("data") if isinstance(event_payload.get("data"), dict) else {}
+                    existing_data = (
+                        event_payload.get("data")
+                        if isinstance(event_payload.get("data"), dict)
+                        else {}
+                    )
                     event_payload["data"] = {
                         **existing_data,
                         "requires_confirmation": False,
@@ -595,20 +627,34 @@ async def confirm_pending_action(conversation_id: int, token: str, db: Session =
                     content=assistant_message,
                 )
             )
-            msg_result = _find_message_with_pending_token(db, conversation_id=conversation_id, token=token)
+            msg_result = _find_message_with_pending_token(
+                db, conversation_id=conversation_id, token=token
+            )
             if msg_result:
                 pending_msg, tc_idx = msg_result
                 if isinstance(pending_msg.content_parts, list):
                     updated_parts = list(pending_msg.content_parts)
-                    updated_parts[tc_idx] = {**updated_parts[tc_idx], "pending_action_status": "confirmed"}
+                    updated_parts[tc_idx] = {
+                        **updated_parts[tc_idx],
+                        "pending_action_status": "confirmed",
+                    }
                     pending_msg.content_parts = updated_parts
                     # Keep legacy tool_calls in sync
-                    tool_use_parts = [p for p in updated_parts if isinstance(p, dict) and p.get("type") == "tool_use"]
+                    tool_use_parts = [
+                        p
+                        for p in updated_parts
+                        if isinstance(p, dict) and p.get("type") == "tool_use"
+                    ]
                     if tool_use_parts:
-                        pending_msg.tool_calls = [{k: v for k, v in p.items() if k != "type"} for p in tool_use_parts]
+                        pending_msg.tool_calls = [
+                            {k: v for k, v in p.items() if k != "type"} for p in tool_use_parts
+                        ]
                 else:
                     updated_tool_calls = list(pending_msg.tool_calls or [])
-                    updated_tool_calls[tc_idx] = {**updated_tool_calls[tc_idx], "pending_action_status": "confirmed"}
+                    updated_tool_calls[tc_idx] = {
+                        **updated_tool_calls[tc_idx],
+                        "pending_action_status": "confirmed",
+                    }
                     pending_msg.tool_calls = updated_tool_calls
                 db.add(pending_msg)
             db.commit()
@@ -631,12 +677,22 @@ async def confirm_pending_action(conversation_id: int, token: str, db: Session =
             )
             error_payload = {"code": exc.code, "message": str(exc), "details": exc.details or {}}
             if pending_action_event:
-                base_payload = pending_action_event.payload if isinstance(pending_action_event.payload, dict) else {}
+                base_payload = (
+                    pending_action_event.payload
+                    if isinstance(pending_action_event.payload, dict)
+                    else {}
+                )
                 event_payload = dict(base_payload)
                 if pending_action_event.event_type == "step_result":
-                    existing_result = event_payload.get("result") if isinstance(event_payload.get("result"), dict) else {}
+                    existing_result = (
+                        event_payload.get("result")
+                        if isinstance(event_payload.get("result"), dict)
+                        else {}
+                    )
                     existing_data = (
-                        existing_result.get("data") if isinstance(existing_result.get("data"), dict) else {}
+                        existing_result.get("data")
+                        if isinstance(existing_result.get("data"), dict)
+                        else {}
                     )
                     event_payload["result"] = {
                         "success": False,
@@ -650,7 +706,11 @@ async def confirm_pending_action(conversation_id: int, token: str, db: Session =
                         "error": error_payload,
                     }
                 else:
-                    existing_data = event_payload.get("data") if isinstance(event_payload.get("data"), dict) else {}
+                    existing_data = (
+                        event_payload.get("data")
+                        if isinstance(event_payload.get("data"), dict)
+                        else {}
+                    )
                     event_payload["data"] = {
                         **existing_data,
                         "requires_confirmation": False,
@@ -669,16 +729,22 @@ async def confirm_pending_action(conversation_id: int, token: str, db: Session =
             action.updated_at = now
             db.add(action)
             db.commit()
-            raise HTTPException(status_code=500, detail=f"Object action execution error: {str(exc)}") from exc
+            raise HTTPException(
+                status_code=500, detail=f"Object action execution error: {str(exc)}"
+            ) from exc
 
     if action.action_type != "execute_sql":
-        raise HTTPException(status_code=400, detail=f"Unsupported action type: {action.action_type}")
+        raise HTTPException(
+            status_code=400, detail=f"Unsupported action type: {action.action_type}"
+        )
 
     sql = str(payload.get("sql") or "").strip()
     resolved_role = str(payload.get("resolved_role") or "").strip().lower()
     resolved_datasource_id = payload.get("resolved_datasource_id")
     raw_expected_fingerprint = payload.get("tenant_fingerprint")
-    expected_fingerprint = raw_expected_fingerprint if isinstance(raw_expected_fingerprint, dict) else {}
+    expected_fingerprint = (
+        raw_expected_fingerprint if isinstance(raw_expected_fingerprint, dict) else {}
+    )
     expected_execution_fingerprint = str(payload.get("execution_fingerprint") or "")
 
     if not sql or not isinstance(resolved_datasource_id, int) or not resolved_role:
@@ -715,7 +781,10 @@ async def confirm_pending_action(conversation_id: int, token: str, db: Session =
         resolved_role=resolved_role,
         tenant_fingerprint=expected_fingerprint,
     )
-    if expected_execution_fingerprint and current_execution_fingerprint != expected_execution_fingerprint:
+    if (
+        expected_execution_fingerprint
+        and current_execution_fingerprint != expected_execution_fingerprint
+    ):
         raise HTTPException(status_code=409, detail="Execution fingerprint mismatch")
 
     now = datetime.now(UTC).replace(tzinfo=None)
@@ -737,7 +806,9 @@ async def confirm_pending_action(conversation_id: int, token: str, db: Session =
             token=token,
         )
         if pending_tool_event:
-            base_payload = pending_tool_event.payload if isinstance(pending_tool_event.payload, dict) else {}
+            base_payload = (
+                pending_tool_event.payload if isinstance(pending_tool_event.payload, dict) else {}
+            )
             event_payload = dict(base_payload)
             event_payload["result"] = {
                 "success": True,
@@ -794,19 +865,31 @@ async def confirm_pending_action(conversation_id: int, token: str, db: Session =
                     content=assistant_message,
                 )
             )
-        msg_result = _find_message_with_pending_token(db, conversation_id=conversation_id, token=token)
+        msg_result = _find_message_with_pending_token(
+            db, conversation_id=conversation_id, token=token
+        )
         if msg_result:
             pending_msg, tc_idx = msg_result
             if isinstance(pending_msg.content_parts, list):
                 updated_parts = list(pending_msg.content_parts)
-                updated_parts[tc_idx] = {**updated_parts[tc_idx], "pending_action_status": "confirmed"}
+                updated_parts[tc_idx] = {
+                    **updated_parts[tc_idx],
+                    "pending_action_status": "confirmed",
+                }
                 pending_msg.content_parts = updated_parts
-                tool_use_parts = [p for p in updated_parts if isinstance(p, dict) and p.get("type") == "tool_use"]
+                tool_use_parts = [
+                    p for p in updated_parts if isinstance(p, dict) and p.get("type") == "tool_use"
+                ]
                 if tool_use_parts:
-                    pending_msg.tool_calls = [{k: v for k, v in p.items() if k != "type"} for p in tool_use_parts]
+                    pending_msg.tool_calls = [
+                        {k: v for k, v in p.items() if k != "type"} for p in tool_use_parts
+                    ]
             else:
                 updated_tool_calls = list(pending_msg.tool_calls or [])
-                updated_tool_calls[tc_idx] = {**updated_tool_calls[tc_idx], "pending_action_status": "confirmed"}
+                updated_tool_calls[tc_idx] = {
+                    **updated_tool_calls[tc_idx],
+                    "pending_action_status": "confirmed",
+                }
                 pending_msg.tool_calls = updated_tool_calls
             db.add(pending_msg)
         db.commit()
@@ -856,13 +939,23 @@ async def confirm_pending_action(conversation_id: int, token: str, db: Session =
             },
         }
         if pending_tool_event:
-            base_payload = pending_tool_event.payload if isinstance(pending_tool_event.payload, dict) else {}
+            base_payload = (
+                pending_tool_event.payload if isinstance(pending_tool_event.payload, dict) else {}
+            )
             event_payload = dict(base_payload)
-            existing_result = event_payload.get("result") if isinstance(event_payload.get("result"), dict) else {}
-            existing_data = existing_result.get("data") if isinstance(existing_result.get("data"), dict) else {}
+            existing_result = (
+                event_payload.get("result") if isinstance(event_payload.get("result"), dict) else {}
+            )
+            existing_data = (
+                existing_result.get("data") if isinstance(existing_result.get("data"), dict) else {}
+            )
             error_result_payload["data"] = {
                 **existing_data,
-                **(error_result_payload.get("data") if isinstance(error_result_payload.get("data"), dict) else {}),
+                **(
+                    error_result_payload.get("data")
+                    if isinstance(error_result_payload.get("data"), dict)
+                    else {}
+                ),
             }
             event_payload["result"] = error_result_payload
             event_payload["message"] = f"SQL execution failed: {error_message}"
@@ -904,7 +997,9 @@ async def confirm_pending_action(conversation_id: int, token: str, db: Session =
                 content=assistant_message,
             )
         )
-        msg_result = _find_message_with_pending_token(db, conversation_id=conversation_id, token=token)
+        msg_result = _find_message_with_pending_token(
+            db, conversation_id=conversation_id, token=token
+        )
         if msg_result:
             pending_msg, tc_idx = msg_result
             if isinstance(pending_msg.content_parts, list):
@@ -915,9 +1010,13 @@ async def confirm_pending_action(conversation_id: int, token: str, db: Session =
                     "result": error_result_payload,
                 }
                 pending_msg.content_parts = updated_parts
-                tool_use_parts = [p for p in updated_parts if isinstance(p, dict) and p.get("type") == "tool_use"]
+                tool_use_parts = [
+                    p for p in updated_parts if isinstance(p, dict) and p.get("type") == "tool_use"
+                ]
                 if tool_use_parts:
-                    pending_msg.tool_calls = [{k: v for k, v in p.items() if k != "type"} for p in tool_use_parts]
+                    pending_msg.tool_calls = [
+                        {k: v for k, v in p.items() if k != "type"} for p in tool_use_parts
+                    ]
             else:
                 updated_tool_calls = list(pending_msg.tool_calls or [])
                 updated_tool_calls[tc_idx] = {
@@ -963,4 +1062,3 @@ def _build_action_result_text(action: str, data: dict[str, Any]) -> str:
         item_id = data.get("id") or data.get("object_id")
         return f"{object_type} action `{operation}` executed (#{item_id})."
     return "Action executed."
-

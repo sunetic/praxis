@@ -17,7 +17,9 @@ class _ContinuationTrueLLM:
 
 
 def test_chat_agent_compose_function_goal_uses_retry_history():
-    agent = FunctionChatAgent(function_scope_adapter=FunctionBuildScopeAdapter(llm_client=_ContinuationTrueLLM()))
+    agent = FunctionChatAgent(
+        function_scope_adapter=FunctionBuildScopeAdapter(llm_client=_ContinuationTrueLLM())
+    )
     goal = agent.compose_function_build_goal(
         prompt="再次构建",
         recent_contexts=[

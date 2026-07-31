@@ -12,16 +12,14 @@ from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from app.api import chat as chat_api
 from app.api import chat_pending as chat_pending_api
 from app.api import functions as functions_api
 from app.api import schedules as schedules_api
-from app.api import sql_analysis as sql_analysis_api
 from app.db import database as db_module
 from app.db.database import Base
 from app.models import models
-from app.services.platform.coding_engine import CodingEngineApplyResult
 from app.services.function.builder import FunctionBuildResult
+from app.services.platform.coding_engine import CodingEngineApplyResult
 
 
 def _datasource_payload(
@@ -91,14 +89,12 @@ def api_client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     Base.metadata.create_all(bind=engine)
 
     import app.main as main_module
-    from app.api import chat as chat_api_module
     from app.services.scheduler.runtime_state import set_scheduler_worker
 
     main_module.settings.scheduler_autostart = False
     main_module.settings.builder_runtime_enabled = True
     set_scheduler_worker(None)
     monkeypatch.setattr("app.main.configure_logging", lambda debug: None)
-
 
     with TestClient(main_module.app) as client:
         yield client, session_local
@@ -109,7 +105,9 @@ def api_client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
 
 @pytest.fixture(autouse=True)
 def patch_runtime_stubs(monkeypatch: pytest.MonkeyPatch):
-    def fake_apply_function_goal(self, *, function, goal, workspace_store=None, datasource_schema=None, datasource_id=None):  # noqa: ARG001
+    def fake_apply_function_goal(
+        self, *, function, goal, workspace_store=None, datasource_schema=None, datasource_id=None
+    ):  # noqa: ARG001
         function.draft_code = (
             "def main(payload, context):\n"
             "    data = payload if isinstance(payload, dict) else {}\n"
@@ -145,7 +143,9 @@ def patch_runtime_stubs(monkeypatch: pytest.MonkeyPatch):
             stream: bool = True,
             **kwargs: Any,  # noqa: ARG002
         ) -> AsyncGenerator[dict[str, Any], None]:
-            system_text = " ".join(str(item.get("content") or "") for item in messages if item.get("role") == "system")
+            system_text = " ".join(
+                str(item.get("content") or "") for item in messages if item.get("role") == "system"
+            )
             if not stream:
                 # pi_lite_engine: detect by tool presence in system prompt
                 if "write_file" in system_text or "function_runtime_probe" in system_text:
@@ -153,21 +153,26 @@ def patch_runtime_stubs(monkeypatch: pytest.MonkeyPatch):
                     # After a tool result, return final JSON
                     if last_role == "tool":
                         yield {
-                            "choices": [{
-                                "message": {
-                                    "content": json.dumps({
-                                        "summary": "函数已生成",
-                                        "changed_files": ["main.py"],
-                                        "diff_summary": "added main.py",
-                                        "tests_suggested": [],
-                                        "risk_notes": [],
-                                        "assistant_message": "Function 草稿已更新",
-                                        "generated_title": "函数回显",
-                                        "generated_description": "返回基础结果",
-                                    }, ensure_ascii=False),
-                                    "tool_calls": None,
+                            "choices": [
+                                {
+                                    "message": {
+                                        "content": json.dumps(
+                                            {
+                                                "summary": "函数已生成",
+                                                "changed_files": ["main.py"],
+                                                "diff_summary": "added main.py",
+                                                "tests_suggested": [],
+                                                "risk_notes": [],
+                                                "assistant_message": "Function 草稿已更新",
+                                                "generated_title": "函数回显",
+                                                "generated_description": "返回基础结果",
+                                            },
+                                            ensure_ascii=False,
+                                        ),
+                                        "tool_calls": None,
+                                    }
                                 }
-                            }]
+                            ]
                         }
                         return
                     # Count how many tool results are already in messages
@@ -175,43 +180,61 @@ def patch_runtime_stubs(monkeypatch: pytest.MonkeyPatch):
                     if tool_result_count == 0:
                         # First call: write the file
                         yield {
-                            "choices": [{
-                                "message": {
-                                    "content": None,
-                                    "tool_calls": [{
-                                        "id": "call_write_1",
-                                        "type": "function",
-                                        "function": {
-                                            "name": "write_file",
-                                            "arguments": json.dumps({
-                                                "path": "main.py",
-                                                "content": "def main(payload, context):\n    return {'ok': True}\n",
-                                            }),
-                                        },
-                                    }],
+                            "choices": [
+                                {
+                                    "message": {
+                                        "content": None,
+                                        "tool_calls": [
+                                            {
+                                                "id": "call_write_1",
+                                                "type": "function",
+                                                "function": {
+                                                    "name": "write_file",
+                                                    "arguments": json.dumps(
+                                                        {
+                                                            "path": "main.py",
+                                                            "content": "def main(payload, context):\n    return {'ok': True}\n",
+                                                        }
+                                                    ),
+                                                },
+                                            }
+                                        ],
+                                    }
                                 }
-                            }]
+                            ]
                         }
                         return
                     # After write, probe
                     yield {
-                        "choices": [{
-                            "message": {
-                                "content": None,
-                                "tool_calls": [{
-                                    "id": "call_probe_1",
-                                    "type": "function",
-                                    "function": {
-                                        "name": "function_runtime_probe",
-                                        "arguments": json.dumps({"payload": {}}),
-                                    },
-                                }],
+                        "choices": [
+                            {
+                                "message": {
+                                    "content": None,
+                                    "tool_calls": [
+                                        {
+                                            "id": "call_probe_1",
+                                            "type": "function",
+                                            "function": {
+                                                "name": "function_runtime_probe",
+                                                "arguments": json.dumps({"payload": {}}),
+                                            },
+                                        }
+                                    ],
+                                }
                             }
-                        }]
+                        ]
                     }
                     return
                 if "strict skill selector" in system_text:
-                    yield {"choices": [{"message": {"content": '{"add":[],"remove":[],"reason":"e2e-selector"}'}}]}
+                    yield {
+                        "choices": [
+                            {
+                                "message": {
+                                    "content": '{"add":[],"remove":[],"reason":"e2e-selector"}'
+                                }
+                            }
+                        ]
+                    }
                     return
                 if "Action Fabric pre-router planner" in system_text:
                     yield {"choices": [{"message": {"content": '{"actions":[]}'}}]}
@@ -227,10 +250,16 @@ def patch_runtime_stubs(monkeypatch: pytest.MonkeyPatch):
                         ]
                     }
                     return
-                yield {"choices": [{"message": {"content": '{"add":[],"remove":[],"reason":"e2e-default"}'}}]}
+                yield {
+                    "choices": [
+                        {"message": {"content": '{"add":[],"remove":[],"reason":"e2e-default"}'}}
+                    ]
+                }
                 return
 
-            yield {"choices": [{"delta": {"content": "E2E assistant response"}, "finish_reason": None}]}
+            yield {
+                "choices": [{"delta": {"content": "E2E assistant response"}, "finish_reason": None}]
+            }
             yield {"choices": [{"delta": {}, "finish_reason": "stop"}]}
 
     fake_llm = _FakeLLM()
@@ -250,22 +279,30 @@ def patch_runtime_stubs(monkeypatch: pytest.MonkeyPatch):
             "_FakeFunctionBuilderService",
             (),
             {
-                "apply_prompt": lambda self, *, current_code, current_dependencies, prompt, function_name: FunctionBuildResult(  # noqa: ARG005
-                    draft_code=(
-                        "def main(payload, context):\n"
-                        "    data = payload if isinstance(payload, dict) else {}\n"
-                        "    return {'ok': True, 'echo': data}\n"
-                    ),
-                    draft_dependencies={},
-                    summary="Function 草稿已更新",
+                "apply_prompt": lambda self, *, current_code, current_dependencies, prompt, function_name: (
+                    FunctionBuildResult(  # noqa: ARG005
+                        draft_code=(
+                            "def main(payload, context):\n"
+                            "    data = payload if isinstance(payload, dict) else {}\n"
+                            "    return {'ok': True, 'echo': data}\n"
+                        ),
+                        draft_dependencies={},
+                        summary="Function 草稿已更新",
+                    )
                 )
             },
         )(),
     )
 
-    monkeypatch.setattr(functions_api.FunctionChatAgent, "apply_function_goal", fake_apply_function_goal)
-    monkeypatch.setattr(functions_api.FunctionChatAgent, "suggest_function_input", fake_suggest_input)
-    monkeypatch.setattr(functions_api.WorkspaceStore, "commit_publish", lambda self, **kwargs: "e2e-commit")
+    monkeypatch.setattr(
+        functions_api.FunctionChatAgent, "apply_function_goal", fake_apply_function_goal
+    )
+    monkeypatch.setattr(
+        functions_api.FunctionChatAgent, "suggest_function_input", fake_suggest_input
+    )
+    monkeypatch.setattr(
+        functions_api.WorkspaceStore, "commit_publish", lambda self, **kwargs: "e2e-commit"
+    )
 
 
 def test_p0_function_mainline_build_release_invoke(api_client):
@@ -316,7 +353,9 @@ def test_p0_function_release_blocked_by_verification(api_client, monkeypatch: py
             "checks": [{"name": "mock", "passed": False, "detail": "mock verification failed"}],
         }
 
-    monkeypatch.setattr(functions_api.FunctionVerificationHarness, "verify_draft", always_fail_verify)
+    monkeypatch.setattr(
+        functions_api.FunctionVerificationHarness, "verify_draft", always_fail_verify
+    )
     release = client.post(
         f"/api/v1/functions/{function['id']}/release",
         json={"requirement": "should fail"},
@@ -647,7 +686,9 @@ def test_p0_build_session_lifecycle(api_client):
     assert heartbeat.status_code == 200, heartbeat.text
     assert heartbeat.json()["ttl_seconds"] == 3600
 
-    closed = client.delete(f"/api/v1/conversations/{conversation_id}/build-sessions/{session['id']}")
+    closed = client.delete(
+        f"/api/v1/conversations/{conversation_id}/build-sessions/{session['id']}"
+    )
     assert closed.status_code == 204, closed.text
     not_found = client.get(f"/api/v1/conversations/{conversation_id}/build-sessions/active")
     assert not_found.status_code == 404
@@ -697,7 +738,9 @@ def test_p0_conversation_source_defaults_and_category_filter(api_client):
     assert scene_key_match.status_code == 200, scene_key_match.text
     assert [item["id"] for item in scene_key_match.json()] == [scene_payload["id"]]
 
-    scene_key_no_match = client.get("/api/v1/conversations", params={"scene_key": "nonexistent_key"})
+    scene_key_no_match = client.get(
+        "/api/v1/conversations", params={"scene_key": "nonexistent_key"}
+    )
     assert scene_key_no_match.status_code == 200, scene_key_no_match.text
     assert scene_key_no_match.json() == []
 
@@ -714,13 +757,21 @@ def test_p0_chat_stream_function_builder_scene_ingress(api_client, monkeypatch: 
 
     session = client.post(
         f"/api/v1/conversations/{conversation_id}/build-sessions",
-        json={"scope_object_type": "function", "scope_object_id": str(function_id), "ttl_seconds": 1800},
+        json={
+            "scope_object_type": "function",
+            "scope_object_id": str(function_id),
+            "ttl_seconds": 1800,
+        },
     )
     assert session.status_code == 201, session.text
 
     user_message = client.post(
         "/api/v1/messages",
-        json={"conversation_id": conversation_id, "role": "user", "content": "构建一个返回 ok 的函数"},
+        json={
+            "conversation_id": conversation_id,
+            "role": "user",
+            "content": "构建一个返回 ok 的函数",
+        },
     )
     assert user_message.status_code == 201, user_message.text
 
@@ -728,7 +779,9 @@ def test_p0_chat_stream_function_builder_scene_ingress(api_client, monkeypatch: 
         assert function_id > 0
         assert str(payload.get("action") or "") == "build"
         assert str(payload.get("prompt") or "") == "构建一个返回 ok 的函数"
-        scene_agent = payload.get("scene_agent") if isinstance(payload.get("scene_agent"), dict) else {}
+        scene_agent = (
+            payload.get("scene_agent") if isinstance(payload.get("scene_agent"), dict) else {}
+        )
         assert str(scene_agent.get("key") or "") == "function_build"
 
         async def generate():
@@ -736,22 +789,26 @@ def test_p0_chat_stream_function_builder_scene_ingress(api_client, monkeypatch: 
                 'data: {"type":"phase","phase":"plan","data":{"status":"running","summary":"Plan · 已解析 Function 需求。"}}\n\n'
             )
             yield 'data: {"type":"assistant","data":{"text":"返回 ok 的函数"}}\n\n'
-            yield "data: " + json.dumps(
-                {
-                    "type": "done",
-                    "data": {
-                        "action": "build",
-                        "status": "done",
-                        "assistant_message": "返回 ok 的函数",
-                        "function": {
-                            "id": function_id,
-                            "name": "fn-builder-scene-ingress",
-                            "status": "draft",
+            yield (
+                "data: "
+                + json.dumps(
+                    {
+                        "type": "done",
+                        "data": {
+                            "action": "build",
+                            "status": "done",
+                            "assistant_message": "返回 ok 的函数",
+                            "function": {
+                                "id": function_id,
+                                "name": "fn-builder-scene-ingress",
+                                "status": "draft",
+                            },
                         },
                     },
-                },
-                ensure_ascii=False,
-            ) + "\n\n"
+                    ensure_ascii=False,
+                )
+                + "\n\n"
+            )
 
         return StreamingResponse(generate(), media_type="text/event-stream")
 
@@ -814,7 +871,9 @@ def test_p0_chat_stream_persists_messages_and_events(api_client):
             if line:
                 vds_lines.append(line)
     assert vds_lines, "stream should return at least one VDS line"
-    assert any(line.startswith("d:") for line in vds_lines), "stream should end with finish_message (d:)"
+    assert any(line.startswith("d:") for line in vds_lines), (
+        "stream should end with finish_message (d:)"
+    )
 
     chat_events = client.get(f"/api/v1/chat/{conversation_id}/events")
     assert chat_events.status_code == 200, chat_events.text
@@ -929,7 +988,9 @@ def test_p0_datasource_test_and_agent_reference(api_client, monkeypatch: pytest.
         },
     )
     assert agent.status_code == 201, agent.text
-    run = client.post(f"/api/v1/agents/{agent.json()['id']}/run", json={"datasource_ids": [ds["id"]]})
+    run = client.post(
+        f"/api/v1/agents/{agent.json()['id']}/run", json={"datasource_ids": [ds["id"]]}
+    )
     assert run.status_code == 201, run.text
     assert run.json()["conversation"]["datasource_id"] == ds["id"]
 
@@ -978,7 +1039,10 @@ def test_p0_live_sql_analysis_endpoints(api_client, monkeypatch: pytest.MonkeyPa
                     ],
                     "row_count": 1,
                 }
-            if "from oceanbase.gv$ob_sql_audit" in normalized_sql and "group by tenant_id, sql_id limit 1" in normalized_sql:
+            if (
+                "from oceanbase.gv$ob_sql_audit" in normalized_sql
+                and "group by tenant_id, sql_id limit 1" in normalized_sql
+            ):
                 return {
                     "columns": [],
                     "rows": [
@@ -997,7 +1061,10 @@ def test_p0_live_sql_analysis_endpoints(api_client, monkeypatch: pytest.MonkeyPa
                     ],
                     "row_count": 1,
                 }
-            if "from oceanbase.gv$ob_sql_audit" in normalized_sql and "group by tenant_id, sql_id, plan_id" in normalized_sql:
+            if (
+                "from oceanbase.gv$ob_sql_audit" in normalized_sql
+                and "group by tenant_id, sql_id, plan_id" in normalized_sql
+            ):
                 return {
                     "columns": [],
                     "rows": [
@@ -1054,7 +1121,13 @@ def test_p0_live_sql_analysis_endpoints(api_client, monkeypatch: pytest.MonkeyPa
                 return {
                     "columns": [],
                     "rows": [
-                        {"id": 1, "select_type": "SIMPLE", "table": "t_top", "rows": 10, "Extra": "Full scan"}
+                        {
+                            "id": 1,
+                            "select_type": "SIMPLE",
+                            "table": "t_top",
+                            "rows": 10,
+                            "Extra": "Full scan",
+                        }
                     ],
                     "row_count": 1,
                 }
@@ -1086,7 +1159,9 @@ def test_p0_live_sql_analysis_endpoints(api_client, monkeypatch: pytest.MonkeyPa
             }
 
     monkeypatch.setattr("app.db.connection.get_db_pool", lambda: _FakePool())
-    monkeypatch.setattr("app.services.sql_analysis.live.context.get_llm_client", lambda: _FakeLiveSqlExplainLLM())
+    monkeypatch.setattr(
+        "app.services.sql_analysis.live.context.get_llm_client", lambda: _FakeLiveSqlExplainLLM()
+    )
 
     created_sys = client.post(
         "/api/v1/datasources",
@@ -1131,7 +1206,9 @@ def test_p0_live_sql_analysis_endpoints(api_client, monkeypatch: pytest.MonkeyPa
     assert discovery.json()["items"][0]["db_name"] == "app_db"
     assert discovery.json()["items"][0]["user_name"] == "root"
     assert discovery.json()["items"][0]["source_datasource_id"] == source_datasource_id
-    assert discovery.json()["items"][0]["preferred_execution_datasource_id"] == preferred_datasource_id
+    assert (
+        discovery.json()["items"][0]["preferred_execution_datasource_id"] == preferred_datasource_id
+    )
 
     context = client.get(
         "/api/v1/sql-analysis/live/build-context",
@@ -1142,7 +1219,10 @@ def test_p0_live_sql_analysis_endpoints(api_client, monkeypatch: pytest.MonkeyPa
     assert context_payload["window_plan_total"] == 2
     assert context_payload["current_plan_id"] == 10001
     assert context_payload["facts"]["current_plan"]["plan_id"] == 10001
-    assert {item["key"] for item in context_payload["signals"]} >= {"table_scan_risk", "history_unavailable"}
+    assert {item["key"] for item in context_payload["signals"]} >= {
+        "table_scan_risk",
+        "history_unavailable",
+    }
     assert context_payload["facts"]["unavailable_dimensions"][0]["key"] == "executions"
     assert context_payload["plan_explain"]["source"] == "explain_sql"
 
@@ -1154,7 +1234,9 @@ def test_p0_live_sql_analysis_endpoints(api_client, monkeypatch: pytest.MonkeyPa
     explanation_payload = explanation.json()
     assert "实时视角" in explanation_payload["summary"]
     assert explanation_payload["risk_points"] == ["表扫描可能导致读取放大"]
-    assert explanation_payload["context"]["facts"]["current_plan"]["explain_source"] == "explain_sql"
+    assert (
+        explanation_payload["context"]["facts"]["current_plan"]["explain_source"] == "explain_sql"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1206,7 +1288,13 @@ def test_p0_onboarding_status_and_complete(api_client):
 
     complete = client.post(
         "/api/v1/onboarding/complete",
-        json={"llm_config": {"llm_provider": "test", "llm_api_key": "sk-test", "llm_model": "gpt-test"}},
+        json={
+            "llm_config": {
+                "llm_provider": "test",
+                "llm_api_key": "sk-test",
+                "llm_model": "gpt-test",
+            }
+        },
     )
     assert complete.status_code == 200
     assert complete.json()["completed"] is True
@@ -1219,9 +1307,7 @@ def test_p0_skills_list(api_client, monkeypatch: pytest.MonkeyPatch, tmp_path: P
     client, _ = api_client
     skills_dir = tmp_path / "skills"
     skills_dir.mkdir()
-    (skills_dir / "test_skill.yaml").write_text(
-        "name: test_skill\nprompt: hello\nsource: custom\n"
-    )
+    (skills_dir / "test_skill.yaml").write_text("name: test_skill\nprompt: hello\nsource: custom\n")
     from app.services.chat import stream_helpers as _sh
     from app.skills.store import SkillStore
 
@@ -1269,5 +1355,3 @@ def test_p0_chat_handoff_create_get_consume(api_client):
 
     fetched_after = client.get(f"/api/v1/chat/{conv_id}/handoffs/{handoff_id}")
     assert fetched_after.json()["status"] == "consumed"
-
-

@@ -12,8 +12,9 @@ def configure_logging(debug: bool = False) -> None:
     console_handler.setFormatter(logging.Formatter(fmt))
 
     # File handler — rotates at 5 MB, keeps 3 backups
-    from logging.handlers import RotatingFileHandler
     import os
+    from logging.handlers import RotatingFileHandler
+
     log_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "logs")
     os.makedirs(log_dir, exist_ok=True)
     file_handler = RotatingFileHandler(
@@ -28,7 +29,12 @@ def configure_logging(debug: bool = False) -> None:
     root.addHandler(file_handler)
 
     # SQLAlchemy is extremely chatty; keep it quiet unless explicitly re-enabled.
-    for logger_name in ("sqlalchemy", "sqlalchemy.engine", "sqlalchemy.pool", "sqlalchemy.dialects"):
+    for logger_name in (
+        "sqlalchemy",
+        "sqlalchemy.engine",
+        "sqlalchemy.pool",
+        "sqlalchemy.dialects",
+    ):
         logging.getLogger(logger_name).setLevel(logging.WARNING)
 
 

@@ -8,7 +8,6 @@ from app.models import models
 from app.services.agent.core import AgentCore, BuildGoalRequest, normalize_build_attempts
 from app.services.chat import ChatService
 from app.services.chat.agent import ChatCoreAgent, ScopedChatContext
-from app.services.platform.coding_engine import CodingEngineApplyResult
 from app.services.function.authoring_agent import (
     FunctionAuthoringAgent,
     FunctionBuildCommand,
@@ -18,6 +17,7 @@ from app.services.function.authoring_agent import (
 from app.services.function.builder import FunctionBuildRunResult
 from app.services.function.runtime import FunctionRuntimeResult
 from app.services.function.scope_adapter import FunctionBuildScopeAdapter
+from app.services.platform.coding_engine import CodingEngineApplyResult
 from app.services.platform.workspace_store import WorkspaceStore
 
 

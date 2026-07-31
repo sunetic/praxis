@@ -15,19 +15,19 @@ from sqlalchemy.orm import Session, sessionmaker
 from app.core.logging import fmt_kv, get_logger
 from app.db.database import get_db
 from app.models import models
+from app.services.lifecycle import LifecycleValidationError, PageLifecycleService, PageState
+from app.services.page.authoring_agent import PageBuildCommand, PagePlanner
+from app.services.page.build_orchestrator import (
+    PageBuilderOrchestrator,
+    PageBuildOrchestratorCommand,
+)
 from app.services.page.builder import (
     PageBuilderService,  # noqa: F401 - kept for test monkeypatch hook
     PageBuildRunEvent,
     PageBuildRunResult,
 )
-from app.services.lifecycle import LifecycleValidationError, PageLifecycleService, PageState
-from app.services.page.authoring_agent import PageBuildCommand, PagePlanner
-from app.services.page.build_orchestrator import (
-    PageBuildOrchestratorCommand,
-    PageBuilderOrchestrator,
-)
-from app.services.page.review_evidence import normalize_page_semantic_review_config
 from app.services.page.preview_theme import ensure_page_preview_theme
+from app.services.page.review_evidence import normalize_page_semantic_review_config
 from app.services.platform.workspace_store import WorkspaceStore
 
 router = APIRouter(prefix="/pages", tags=["Pages"])
@@ -44,11 +44,13 @@ _PAGE_STREAM_EVENT_SINK_KEY = "__internal_event_sink__"
 
 
 def _serialize(record: Any) -> dict[str, Any]:
-    return json.loads(json.dumps(
-        {column.name: getattr(record, column.name) for column in record.__table__.columns},
-        default=str,
-        ensure_ascii=False,
-    )) 
+    return json.loads(
+        json.dumps(
+            {column.name: getattr(record, column.name) for column in record.__table__.columns},
+            default=str,
+            ensure_ascii=False,
+        )
+    )
 
 
 def _json_dumps_safe(payload: dict[str, Any]) -> str:
@@ -73,7 +75,12 @@ def _should_use_orchestrated_page_builder(payload: dict[str, Any]) -> bool:
         and bool((orchestration.get("semantic_review") or {}).get("enabled"))
     )
     workspace_store_overridden = WorkspaceStore is not _DEFAULT_WORKSPACE_STORE_CLASS
-    return build_mode == "coding_engine" or orchestration_enabled or semantic_review_enabled or workspace_store_overridden
+    return (
+        build_mode == "coding_engine"
+        or orchestration_enabled
+        or semantic_review_enabled
+        or workspace_store_overridden
+    )
 
 
 def _run_legacy_page_builder(
@@ -84,10 +91,16 @@ def _run_legacy_page_builder(
     event_sink: Any = None,
 ) -> dict[str, Any]:
     builder = PageBuilderService()
-    previous_draft_payload = deepcopy(page.draft_payload) if isinstance(page.draft_payload, dict) else {}
+    previous_draft_payload = (
+        deepcopy(page.draft_payload) if isinstance(page.draft_payload, dict) else {}
+    )
     build = builder.apply_prompt(previous_draft_payload, prompt)
     summary_text = str(build.summary or "页面草稿已更新。").strip() or "页面草稿已更新。"
-    next_draft_payload = deepcopy(build.draft_payload) if isinstance(build.draft_payload, dict) else previous_draft_payload
+    next_draft_payload = (
+        deepcopy(build.draft_payload)
+        if isinstance(build.draft_payload, dict)
+        else previous_draft_payload
+    )
     build_run = PageBuildRunResult(
         run_id=f"pbr_{uuid4().hex[:16]}",
         status="done",
@@ -146,11 +159,30 @@ def _normalize_page_core_phase(phase: str) -> str:
     normalized = str(phase or "").strip().lower()
     if normalized in _PAGE_CORE_PHASES:
         return normalized
-    if normalized in {"intake", "intent_parsed", "draft_planned", "plan_generated", "reuse_recommendation"}:
+    if normalized in {
+        "intake",
+        "intent_parsed",
+        "draft_planned",
+        "plan_generated",
+        "reuse_recommendation",
+    }:
         return "plan"
-    if normalized in {"code_generated", "patch_applied", "apply", "invoke", "invoke_started", "suggest_input"}:
+    if normalized in {
+        "code_generated",
+        "patch_applied",
+        "apply",
+        "invoke",
+        "invoke_started",
+        "suggest_input",
+    }:
         return "act"
-    if normalized in {"patch_validated", "preview_ready", "verify_failed", "failed", "invoke_finished"}:
+    if normalized in {
+        "patch_validated",
+        "preview_ready",
+        "verify_failed",
+        "failed",
+        "invoke_finished",
+    }:
         return "observe"
     return "act"
 
@@ -239,9 +271,7 @@ def _build_attempt_core_events(attempts: list[dict[str, Any]]) -> list[dict[str,
         status = str(attempt.get("status") or "").strip().lower()
         summary = str(attempt.get("summary") or "").strip()
         diagnostics = [
-            str(item).strip()
-            for item in (attempt.get("diagnostics") or [])
-            if str(item).strip()
+            str(item).strip() for item in (attempt.get("diagnostics") or []) if str(item).strip()
         ]
         if status in {"failed", "error"}:
             events.append(
@@ -283,7 +313,9 @@ def _build_attempt_core_events(attempts: list[dict[str, Any]]) -> list[dict[str,
 
 
 def _derive_page_stream_events(result_payload: dict[str, Any]) -> list[dict[str, Any]]:
-    build_run = result_payload.get("build_run") if isinstance(result_payload.get("build_run"), dict) else {}
+    build_run = (
+        result_payload.get("build_run") if isinstance(result_payload.get("build_run"), dict) else {}
+    )
     events = build_run.get("events") if isinstance(build_run.get("events"), list) else []
     normalized: list[dict[str, Any]] = []
     extension_emitted = {"verify_result": False, "preview_result": False}
@@ -298,7 +330,9 @@ def _derive_page_stream_events(result_payload: dict[str, Any]) -> list[dict[str,
         created_at = str(item.get("created_at") or "")
         if phase:
             if phase == "apply":
-                attempts = payload.get("attempts") if isinstance(payload.get("attempts"), list) else []
+                attempts = (
+                    payload.get("attempts") if isinstance(payload.get("attempts"), list) else []
+                )
                 normalized.extend(_build_attempt_core_events(attempts))
             normalized.append(
                 _to_page_stream_core_event(
@@ -309,7 +343,9 @@ def _derive_page_stream_events(result_payload: dict[str, Any]) -> list[dict[str,
                     created_at=created_at,
                 )
             )
-        verification = payload.get("verification") if isinstance(payload.get("verification"), dict) else None
+        verification = (
+            payload.get("verification") if isinstance(payload.get("verification"), dict) else None
+        )
         if verification is not None and not extension_emitted["verify_result"]:
             verify_passed = bool(
                 (verification.get("page") or {}).get("passed")
@@ -329,8 +365,14 @@ def _derive_page_stream_events(result_payload: dict[str, Any]) -> list[dict[str,
             )
             extension_emitted["verify_result"] = True
         if phase in {"apply", "preview_ready"} and not extension_emitted["preview_result"]:
-            page_payload = result_payload.get("page") if isinstance(result_payload.get("page"), dict) else {}
-            draft = page_payload.get("draft_payload") if isinstance(page_payload.get("draft_payload"), dict) else {}
+            page_payload = (
+                result_payload.get("page") if isinstance(result_payload.get("page"), dict) else {}
+            )
+            draft = (
+                page_payload.get("draft_payload")
+                if isinstance(page_payload.get("draft_payload"), dict)
+                else {}
+            )
             config = draft.get("config") if isinstance(draft.get("config"), dict) else {}
             runtime = draft.get("runtime") if isinstance(draft.get("runtime"), dict) else {}
             normalized.append(
@@ -352,7 +394,11 @@ def _derive_page_stream_events(result_payload: dict[str, Any]) -> list[dict[str,
             _to_page_stream_core_event(
                 phase="act",
                 status=str(build_run.get("status") or "done"),
-                summary=str(build_run.get("result_summary") or build_run.get("error_summary") or "页面草稿已更新"),
+                summary=str(
+                    build_run.get("result_summary")
+                    or build_run.get("error_summary")
+                    or "页面草稿已更新"
+                ),
                 payload={},
             )
         )
@@ -381,8 +427,7 @@ def _serialize_build_run(run: models.PageBuildRun, *, with_events: bool = False)
     payload = _serialize(run)
     if with_events:
         payload["events"] = [
-            _serialize(item)
-            for item in sorted(run.events, key=lambda event: event.created_at)
+            _serialize(item) for item in sorted(run.events, key=lambda event: event.created_at)
         ]
     return payload
 
@@ -456,11 +501,19 @@ def _build_page_clarification_run(
 
 
 def _compile_page_artifact(snapshot_payload: dict[str, Any]) -> tuple[dict[str, Any], str]:
-    if not (isinstance(snapshot_payload, dict) and snapshot_payload.get("version") == "page-runtime-v2"):
+    if not (
+        isinstance(snapshot_payload, dict) and snapshot_payload.get("version") == "page-runtime-v2"
+    ):
         raise ValueError("snapshot payload must be page-runtime-v2")
-    runtime = snapshot_payload.get("runtime") if isinstance(snapshot_payload.get("runtime"), dict) else {}
-    source = snapshot_payload.get("source") if isinstance(snapshot_payload.get("source"), dict) else {}
-    config = snapshot_payload.get("config") if isinstance(snapshot_payload.get("config"), dict) else {}
+    runtime = (
+        snapshot_payload.get("runtime") if isinstance(snapshot_payload.get("runtime"), dict) else {}
+    )
+    source = (
+        snapshot_payload.get("source") if isinstance(snapshot_payload.get("source"), dict) else {}
+    )
+    config = (
+        snapshot_payload.get("config") if isinstance(snapshot_payload.get("config"), dict) else {}
+    )
     preview_html = str(runtime.get("preview_html") or "").strip()
     source_code = str(source.get("code") or "").strip()
     if not preview_html:
@@ -498,7 +551,11 @@ def _append_page_build_history(
     payload = deepcopy(draft_payload) if isinstance(draft_payload, dict) else {}
     meta = payload.get("meta") if isinstance(payload.get("meta"), dict) else {}
     history_raw = meta.get("history")
-    history = [item for item in history_raw if isinstance(item, dict)] if isinstance(history_raw, list) else []
+    history = (
+        [item for item in history_raw if isinstance(item, dict)]
+        if isinstance(history_raw, list)
+        else []
+    )
     entry = {
         "prompt": str(prompt or "").strip(),
         "summary": str(summary or "").strip(),
@@ -513,7 +570,9 @@ def _append_page_build_history(
     return payload
 
 
-def _load_recent_page_build_contexts(db: Session, *, page_id: int, limit: int = 6) -> list[dict[str, str]]:
+def _load_recent_page_build_contexts(
+    db: Session, *, page_id: int, limit: int = 6
+) -> list[dict[str, str]]:
     rows = (
         db.query(models.PageBuildRun)
         .filter(models.PageBuildRun.page_id == page_id)
@@ -613,7 +672,9 @@ def _normalize_page_orchestration(payload: dict[str, Any]) -> dict[str, Any]:
             key = _normalize_dependency_key(item.get("key") or item.get("id"))
             if not key:
                 continue
-            invoke_payload = item.get("invoke_payload") if isinstance(item.get("invoke_payload"), dict) else {}
+            invoke_payload = (
+                item.get("invoke_payload") if isinstance(item.get("invoke_payload"), dict) else {}
+            )
             dependencies.append(
                 {
                     "key": key,
@@ -623,7 +684,10 @@ def _normalize_page_orchestration(payload: dict[str, Any]) -> dict[str, Any]:
                 }
             )
 
-    if mode == _PAGE_ORCHESTRATION_MODE_SINGLE_SCENARIO and scenario_id == "cluster_stats_collection_status":
+    if (
+        mode == _PAGE_ORCHESTRATION_MODE_SINGLE_SCENARIO
+        and scenario_id == "cluster_stats_collection_status"
+    ):
         if not any(item.get("key") == _STATS_PROVIDER_DEPENDENCY_KEY for item in dependencies):
             dependencies.append(
                 {
@@ -650,7 +714,11 @@ def _normalize_page_orchestration(payload: dict[str, Any]) -> dict[str, Any]:
 
 
 def _collect_missing_required_slots(orchestration: dict[str, Any]) -> list[str]:
-    required_slots = orchestration.get("required_slots") if isinstance(orchestration.get("required_slots"), list) else []
+    required_slots = (
+        orchestration.get("required_slots")
+        if isinstance(orchestration.get("required_slots"), list)
+        else []
+    )
     slots = orchestration.get("slots") if isinstance(orchestration.get("slots"), dict) else {}
     missing: list[str] = []
     for raw_key in required_slots:
@@ -717,7 +785,9 @@ def _ensure_stats_provider_function(db: Session) -> models.Function:
     if existing is not None:
         return existing
 
-    from app.api import functions as functions_api  # Local import avoids circular import at module load time.
+    from app.api import (
+        functions as functions_api,  # Local import avoids circular import at module load time.
+    )
 
     created = functions_api.create_function(
         {
@@ -735,7 +805,9 @@ def _ensure_stats_provider_function(db: Session) -> models.Function:
 
 
 def _invoke_function_sync(function_id: int, payload: dict[str, Any], db: Session) -> dict[str, Any]:
-    from app.api import functions as functions_api  # Local import avoids circular import at module load time.
+    from app.api import (
+        functions as functions_api,  # Local import avoids circular import at module load time.
+    )
 
     return asyncio.run(functions_api.invoke_function(function_id, payload, db=db))
 
@@ -759,7 +831,11 @@ def _verify_stats_provider_function(
         "runtime_path": "draft",
         "execution_mode": "plan",
         "write_mode": "readonly",
-        **{k: v for k, v in invoke_payload.items() if k in {"runtime_path", "execution_mode", "write_mode"}},
+        **{
+            k: v
+            for k, v in invoke_payload.items()
+            if k in {"runtime_path", "execution_mode", "write_mode"}
+        },
     }
     invocation = _invoke_function_sync(int(function.id), merged_payload, db=db)
     if str(invocation.get("status") or "").strip().lower() != "success":
@@ -792,7 +868,11 @@ def _plan_page_dependencies(
     db: Session,
     orchestration: dict[str, Any],
 ) -> dict[str, Any]:
-    dependencies = orchestration.get("dependencies") if isinstance(orchestration.get("dependencies"), list) else []
+    dependencies = (
+        orchestration.get("dependencies")
+        if isinstance(orchestration.get("dependencies"), list)
+        else []
+    )
     if not dependencies:
         return {
             "dependency_planned": False,
@@ -822,7 +902,9 @@ def _plan_page_dependencies(
             verification = _verify_stats_provider_function(
                 function=function,
                 db=db,
-                invoke_payload=dependency.get("invoke_payload") if isinstance(dependency.get("invoke_payload"), dict) else {},
+                invoke_payload=dependency.get("invoke_payload")
+                if isinstance(dependency.get("invoke_payload"), dict)
+                else {},
             )
             if not bool(verification.get("ok")):
                 planned_dependencies.append(
@@ -881,7 +963,9 @@ def _attach_stats_provider_binding(
     payload = deepcopy(draft_payload) if isinstance(draft_payload, dict) else {}
     meta = payload.get("meta") if isinstance(payload.get("meta"), dict) else {}
     dependencies = meta.get("dependencies") if isinstance(meta.get("dependencies"), dict) else {}
-    functions = dependencies.get("functions") if isinstance(dependencies.get("functions"), list) else []
+    functions = (
+        dependencies.get("functions") if isinstance(dependencies.get("functions"), list) else []
+    )
 
     binding = {
         "id": int(function.id or 0),
@@ -907,7 +991,9 @@ def _attach_stats_provider_binding(
 
     source = payload.get("source") if isinstance(payload.get("source"), dict) else {}
     runtime = payload.get("runtime") if isinstance(payload.get("runtime"), dict) else {}
-    source["code"] = _inject_endpoint_reference(str(source.get("code") or ""), endpoint=endpoint, kind="tsx")
+    source["code"] = _inject_endpoint_reference(
+        str(source.get("code") or ""), endpoint=endpoint, kind="tsx"
+    )
     runtime["preview_html"] = _inject_endpoint_reference(
         str(runtime.get("preview_html") or ""),
         endpoint=endpoint,
@@ -933,7 +1019,11 @@ def list_navigation_pages(db: Session = Depends(get_db)):
         .all()
     )
     workspace = next(
-        (page for page in pages if page.status in {PageState.DRAFT.value, PageState.PREVIEWING.value}),
+        (
+            page
+            for page in pages
+            if page.status in {PageState.DRAFT.value, PageState.PREVIEWING.value}
+        ),
         None,
     )
     published_pages = [page for page in pages if page.status == PageState.PUBLISHED.value]
@@ -1039,7 +1129,9 @@ def create_page_build_run(
     conversation_context = str(effective_payload.get("conversation_context") or "").strip()
     if not prompt:
         raise HTTPException(status_code=400, detail="prompt is required")
-    if _should_use_legacy_page_builder() or not _should_use_orchestrated_page_builder(effective_payload):
+    if _should_use_legacy_page_builder() or not _should_use_orchestrated_page_builder(
+        effective_payload
+    ):
         return _run_legacy_page_builder(
             db=db,
             page=page,
@@ -1047,7 +1139,9 @@ def create_page_build_run(
             event_sink=event_sink,
         )
     orchestration = _normalize_page_orchestration(effective_payload)
-    missing_slots = _collect_missing_required_slots(orchestration) if bool(orchestration.get("enabled")) else []
+    missing_slots = (
+        _collect_missing_required_slots(orchestration) if bool(orchestration.get("enabled")) else []
+    )
     if missing_slots:
         _emit_page_phase_event(
             event_sink,
@@ -1065,7 +1159,9 @@ def create_page_build_run(
                 "mode": orchestration.get("mode"),
                 "scenario_id": orchestration.get("scenario_id"),
                 "missing_slots": missing_slots,
-                "required_slots": orchestration.get("required_slots") if isinstance(orchestration.get("required_slots"), list) else [],
+                "required_slots": orchestration.get("required_slots")
+                if isinstance(orchestration.get("required_slots"), list)
+                else [],
             },
         )
         run_record = _persist_page_build_run(
@@ -1082,11 +1178,15 @@ def create_page_build_run(
             "build_summary": clarification_run.summary,
             "build_run": _serialize_build_run(run_record, with_events=True),
         }
-    dependency_plan = _plan_page_dependencies(db=db, orchestration=orchestration) if bool(orchestration.get("enabled")) else {
-        "dependency_planned": False,
-        "bindings": [],
-        "dependencies": [],
-    }
+    dependency_plan = (
+        _plan_page_dependencies(db=db, orchestration=orchestration)
+        if bool(orchestration.get("enabled"))
+        else {
+            "dependency_planned": False,
+            "bindings": [],
+            "dependencies": [],
+        }
+    )
     dependency_blockers = [
         item
         for item in (dependency_plan.get("dependencies") or [])
@@ -1128,12 +1228,18 @@ def create_page_build_run(
     dependency_context_lines = [
         f"dependency:{item.get('key')} endpoint={item.get('endpoint')}"
         for item in (dependency_plan.get("dependencies") or [])
-        if isinstance(item, dict) and bool(item.get("planned")) and str(item.get("endpoint") or "").strip()
+        if isinstance(item, dict)
+        and bool(item.get("planned"))
+        and str(item.get("endpoint") or "").strip()
     ]
     effective_context = conversation_context
     if dependency_context_lines:
         effective_context = "\n".join(
-            [item for item in (conversation_context, *dependency_context_lines) if str(item or "").strip()]
+            [
+                item
+                for item in (conversation_context, *dependency_context_lines)
+                if str(item or "").strip()
+            ]
         )
     logger.info(
         "page_build_mode_selected %s",
@@ -1146,10 +1252,16 @@ def create_page_build_run(
     )
     workspace = WorkspaceStore()
     recent_contexts = _load_recent_page_build_contexts(db, page_id=page.id)
-    previous_draft_payload = deepcopy(page.draft_payload) if isinstance(page.draft_payload, dict) else {}
-    dependency_bindings = [item for item in (dependency_plan.get("bindings") or []) if isinstance(item, dict)]
+    previous_draft_payload = (
+        deepcopy(page.draft_payload) if isinstance(page.draft_payload, dict) else {}
+    )
+    dependency_bindings = [
+        item for item in (dependency_plan.get("bindings") or []) if isinstance(item, dict)
+    ]
 
-    def _finalize_draft_payload(current_draft: dict[str, Any], _apply_result: Any) -> dict[str, Any]:
+    def _finalize_draft_payload(
+        current_draft: dict[str, Any], _apply_result: Any
+    ) -> dict[str, Any]:
         finalize_summary = (
             str(
                 getattr(_apply_result, "assistant_message", "")
@@ -1176,7 +1288,9 @@ def create_page_build_run(
         return finalized
 
     orchestrator = PageBuilderOrchestrator()
-    released_functions = db.query(models.Function).filter(models.Function.status == "released").all()
+    released_functions = (
+        db.query(models.Function).filter(models.Function.status == "released").all()
+    )
     existing_functions = [
         {"id": fn.id, "name": fn.name, "description": fn.description or ""}
         for fn in released_functions
@@ -1190,7 +1304,9 @@ def create_page_build_run(
             orchestration=orchestration,
             dependency_plan={
                 "dependency_planned": bool(dependency_plan.get("dependency_planned")),
-                "dependencies": dependency_plan.get("dependencies") if isinstance(dependency_plan.get("dependencies"), list) else [],
+                "dependencies": dependency_plan.get("dependencies")
+                if isinstance(dependency_plan.get("dependencies"), list)
+                else [],
             },
         ),
         workspace_store=workspace,
@@ -1251,7 +1367,9 @@ def create_page_build_run(
         }
     result = orchestration_result.apply_result
     if result is None:
-        raise HTTPException(status_code=500, detail="page build orchestrator returned no apply_result")
+        raise HTTPException(
+            status_code=500, detail="page build orchestrator returned no apply_result"
+        )
     next_draft_payload = (
         deepcopy(orchestration_result.next_draft_payload)
         if isinstance(orchestration_result.next_draft_payload, dict)
@@ -1263,7 +1381,9 @@ def create_page_build_run(
         "mode": str(orchestration.get("mode") or "legacy"),
         "scenario_id": str(orchestration.get("scenario_id") or ""),
         "dependency_planned": bool(dependency_plan.get("dependency_planned")),
-        "dependencies": dependency_plan.get("dependencies") if isinstance(dependency_plan.get("dependencies"), list) else [],
+        "dependencies": dependency_plan.get("dependencies")
+        if isinstance(dependency_plan.get("dependencies"), list)
+        else [],
     }
     build_run = PageBuildRunResult(
         run_id=f"pbr_{uuid4().hex[:16]}",
@@ -1291,7 +1411,9 @@ def create_page_build_run(
                             "passed": bool(orchestration_result.page_verification.passed)
                             if orchestration_result.page_verification is not None
                             else False,
-                            "diagnostic_count": len(orchestration_result.page_verification.diagnostics)
+                            "diagnostic_count": len(
+                                orchestration_result.page_verification.diagnostics
+                            )
                             if orchestration_result.page_verification is not None
                             else 0,
                             "checks": orchestration_result.page_verification.checks
@@ -1305,7 +1427,9 @@ def create_page_build_run(
                             "passed": bool(orchestration_result.e2e_verification.passed)
                             if orchestration_result.e2e_verification is not None
                             else False,
-                            "diagnostic_count": len(orchestration_result.e2e_verification.diagnostics)
+                            "diagnostic_count": len(
+                                orchestration_result.e2e_verification.diagnostics
+                            )
                             if orchestration_result.e2e_verification is not None
                             else 0,
                             "checks": orchestration_result.e2e_verification.checks
@@ -1355,7 +1479,9 @@ def create_page_build_run(
 
 
 @router.post("/{page_id}/build-runs/stream")
-async def create_page_build_run_stream(page_id: int, payload: dict[str, Any], db: Session = Depends(get_db)):
+async def create_page_build_run_stream(
+    page_id: int, payload: dict[str, Any], db: Session = Depends(get_db)
+):
     _get_page_or_404(db, page_id)
     prompt = str(payload.get("prompt") or "").strip()
     if not prompt:
@@ -1439,7 +1565,10 @@ async def create_page_build_run_stream(page_id: int, payload: dict[str, Any], db
                 )
             build_run = result.get("build_run") if isinstance(result.get("build_run"), dict) else {}
             assistant_message = str(
-                build_run.get("result_summary") or build_run.get("error_summary") or result.get("build_summary") or ""
+                build_run.get("result_summary")
+                or build_run.get("error_summary")
+                or result.get("build_summary")
+                or ""
             ).strip()
             events = build_run.get("events") if isinstance(build_run.get("events"), list) else []
             extension_emitted = {"verify_result": False, "preview_result": False}
@@ -1448,7 +1577,11 @@ async def create_page_build_run_stream(page_id: int, payload: dict[str, Any], db
                     continue
                 phase = str(item.get("phase") or "").strip()
                 payload_data = item.get("payload") if isinstance(item.get("payload"), dict) else {}
-                verification = payload_data.get("verification") if isinstance(payload_data.get("verification"), dict) else None
+                verification = (
+                    payload_data.get("verification")
+                    if isinstance(payload_data.get("verification"), dict)
+                    else None
+                )
                 if verification is not None and not extension_emitted["verify_result"]:
                     verify_passed = bool(
                         (verification.get("page") or {}).get("passed")
@@ -1461,7 +1594,9 @@ async def create_page_build_run_stream(page_id: int, payload: dict[str, Any], db
                             "event_group": "extension",
                             "event_name": "verify_result",
                             "data": {
-                                "summary": "业务结果校验通过" if verify_passed else "业务结果校验未通过",
+                                "summary": "业务结果校验通过"
+                                if verify_passed
+                                else "业务结果校验未通过",
                                 "verification": verification,
                                 "source": "verifier",
                                 "agent": "PageVerifier",
@@ -1470,8 +1605,14 @@ async def create_page_build_run_stream(page_id: int, payload: dict[str, Any], db
                     )
                     extension_emitted["verify_result"] = True
                 if phase in {"apply", "preview_ready"} and not extension_emitted["preview_result"]:
-                    page_payload = result.get("page") if isinstance(result.get("page"), dict) else {}
-                    draft = page_payload.get("draft_payload") if isinstance(page_payload.get("draft_payload"), dict) else {}
+                    page_payload = (
+                        result.get("page") if isinstance(result.get("page"), dict) else {}
+                    )
+                    draft = (
+                        page_payload.get("draft_payload")
+                        if isinstance(page_payload.get("draft_payload"), dict)
+                        else {}
+                    )
                     config = draft.get("config") if isinstance(draft.get("config"), dict) else {}
                     runtime = draft.get("runtime") if isinstance(draft.get("runtime"), dict) else {}
                     enqueue(
@@ -1482,7 +1623,9 @@ async def create_page_build_run_stream(page_id: int, payload: dict[str, Any], db
                             "data": {
                                 "summary": "Preview · 预览已刷新",
                                 "title": str(config.get("title") or ""),
-                                "has_preview_html": bool(str(runtime.get("preview_html") or "").strip()),
+                                "has_preview_html": bool(
+                                    str(runtime.get("preview_html") or "").strip()
+                                ),
                                 "source": "runtime",
                                 "agent": "PageBuilderAgent",
                             },
@@ -1496,7 +1639,11 @@ async def create_page_build_run_stream(page_id: int, payload: dict[str, Any], db
                         "event_group": "core",
                         "event_name": "assistant",
                         "phase": "responding",
-                        "data": {"text": assistant_message, "source": "llm", "agent": "PageBuilderAgent"},
+                        "data": {
+                            "text": assistant_message,
+                            "source": "llm",
+                            "agent": "PageBuilderAgent",
+                        },
                     }
                 )
             enqueue(

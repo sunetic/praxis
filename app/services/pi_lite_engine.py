@@ -4,15 +4,16 @@ import ast
 import json
 import re
 import subprocess
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Awaitable, Callable
+from typing import Any
 
 from app.core.logging import fmt_kv, get_logger
 from app.services.datasource.router import normalize_role
-from app.services.platform.coding_engine import CodingEngineApplyResult
 from app.services.function.runtime_contract import get_function_runtime_contract
 from app.services.llm import get_llm_client
+from app.services.platform.coding_engine import CodingEngineApplyResult
 
 logger = get_logger("app.services.pi_lite_engine")
 
@@ -72,27 +73,36 @@ class PiLiteEngine:
         state = _PiLiteState()
         if self._requires_function_runtime_probe(allowed):
             state.probe_required = True
-        tools = self._build_tools(include_function_tools=self._requires_function_runtime_probe(allowed))
+        tools = self._build_tools(
+            include_function_tools=self._requires_function_runtime_probe(allowed)
+        )
         messages: list[dict[str, Any]] = [
-            {"role": "system", "content": self._build_system_prompt(workspace_resolved, sorted(allowed))},
+            {
+                "role": "system",
+                "content": self._build_system_prompt(workspace_resolved, sorted(allowed)),
+            },
             {"role": "user", "content": goal},
         ]
 
         for step in range(1, self.max_steps + 1):
             response = await self._chat_completion(messages, tools)
-            message = (((response.get("choices") or [{}])[0] or {}).get("message") or {})
+            message = ((response.get("choices") or [{}])[0] or {}).get("message") or {}
             tool_calls = message.get("tool_calls") or []
             content = message.get("content")
             logger.info(
                 "pi_lite_step %s",
-                fmt_kv(step=step, has_tool_calls=bool(tool_calls), content_len=len(str(content or ""))),
+                fmt_kv(
+                    step=step, has_tool_calls=bool(tool_calls), content_len=len(str(content or ""))
+                ),
             )
 
             messages.append(
                 {
                     "role": "assistant",
                     "content": content if isinstance(content, str) else "",
-                    "tool_calls": tool_calls if isinstance(tool_calls, list) and tool_calls else None,
+                    "tool_calls": tool_calls
+                    if isinstance(tool_calls, list) and tool_calls
+                    else None,
                 }
             )
 
@@ -117,7 +127,9 @@ class PiLiteEngine:
             try:
                 final = self._parse_final_json(content_text)
             except ValueError as exc:
-                if self._should_continue_after_intermediate_message(content=content_text, state=state):
+                if self._should_continue_after_intermediate_message(
+                    content=content_text, state=state
+                ):
                     state.intermediate_messages += 1
                     logger.info(
                         "pi_lite_intermediate_message %s",
@@ -157,7 +169,11 @@ class PiLiteEngine:
             if self._requires_function_runtime_probe(allowed) and state.probe_required:
                 logger.warning(
                     "pi_lite_probe_required_before_finalize %s",
-                    fmt_kv(step=step, probe_attempts=state.probe_attempts, last_probe_error=str(state.last_probe_error or "")),
+                    fmt_kv(
+                        step=step,
+                        probe_attempts=state.probe_attempts,
+                        last_probe_error=str(state.last_probe_error or ""),
+                    ),
                 )
                 repair_hint = self._build_probe_repair_hint(str(state.last_probe_error or ""))
                 hint_block = f"Repair hint: {repair_hint}\n" if repair_hint else ""
@@ -185,26 +201,39 @@ class PiLiteEngine:
             )
             return CodingEngineApplyResult(
                 changed_files=sorted(state.changed_files),
-                diff_summary=str(final.get("diff_summary") or f"Applied {len(state.changed_files)} file change(s)"),
+                diff_summary=str(
+                    final.get("diff_summary")
+                    or f"Applied {len(state.changed_files)} file change(s)"
+                ),
                 tests_suggested=self._normalize_string_list(final.get("tests_suggested")),
                 risk_notes=self._normalize_string_list(final.get("risk_notes")),
-                assistant_message=str(final.get("assistant_message") or "Code changes applied; please verify."),
+                assistant_message=str(
+                    final.get("assistant_message") or "Code changes applied; please verify."
+                ),
                 generated_title=str(final.get("generated_title") or "").strip(),
                 generated_description=str(final.get("generated_description") or "").strip(),
             )
 
-        logger.error("pi_lite_run_failed %s", fmt_kv(reason="max_steps_exceeded", max_steps=self.max_steps))
+        logger.error(
+            "pi_lite_run_failed %s", fmt_kv(reason="max_steps_exceeded", max_steps=self.max_steps)
+        )
         raise ValueError(f"pi-lite reached max_steps={self.max_steps} without final JSON response")
 
-    def _should_continue_after_intermediate_message(self, *, content: str, state: _PiLiteState) -> bool:
+    def _should_continue_after_intermediate_message(
+        self, *, content: str, state: _PiLiteState
+    ) -> bool:
         text = str(content or "").strip()
         if not text:
             return False
         return state.intermediate_messages < 2
 
-    async def _default_chat_completion(self, messages: list[dict[str, Any]], tools: list[dict[str, Any]]) -> dict[str, Any]:
+    async def _default_chat_completion(
+        self, messages: list[dict[str, Any]], tools: list[dict[str, Any]]
+    ) -> dict[str, Any]:
         client = get_llm_client()
-        async for payload in client.chat(messages=messages, tools=tools, stream=False, temperature=0):
+        async for payload in client.chat(
+            messages=messages, tools=tools, stream=False, temperature=0
+        ):
             if isinstance(payload, dict):
                 return payload
         raise ValueError("LLM returned no response payload")
@@ -359,7 +388,7 @@ class PiLiteEngine:
         allowed: set[str],
         state: _PiLiteState,
     ) -> dict[str, Any]:
-        fn = (((call.get("function") or {}) if isinstance(call.get("function"), dict) else {}))
+        fn = (call.get("function") or {}) if isinstance(call.get("function"), dict) else {}
         name = str(fn.get("name") or "").strip()
         arguments_text = str(fn.get("arguments") or "").strip()
         args = self._safe_json_load(arguments_text)
@@ -423,19 +452,29 @@ class PiLiteEngine:
                 output = f"{completed.stdout or ''}\n{completed.stderr or ''}".strip()
                 if len(output) > 8000:
                     output = output[:8000] + "\n...[truncated]"
-                return {"ok": completed.returncode == 0, "returncode": completed.returncode, "output": output}
+                return {
+                    "ok": completed.returncode == 0,
+                    "returncode": completed.returncode,
+                    "output": output,
+                }
 
             if name == "get_function_runtime_contract":
                 return {"ok": True, "contract": get_function_runtime_contract()}
 
             if name == "function_runtime_probe":
                 if "main.py" not in allowed:
-                    raise ValueError("function_runtime_probe is only available when main.py is in allowed_files")
+                    raise ValueError(
+                        "function_runtime_probe is only available when main.py is in allowed_files"
+                    )
                 state.probe_attempts += 1
                 payload = args.get("payload")
                 context = args.get("context")
-                probe_payload = payload if isinstance(payload, dict) else self._default_probe_payload()
-                probe_context = context if isinstance(context, dict) else self._default_probe_context()
+                probe_payload = (
+                    payload if isinstance(payload, dict) else self._default_probe_payload()
+                )
+                probe_context = (
+                    context if isinstance(context, dict) else self._default_probe_context()
+                )
                 ok, error, result_type = self._run_function_runtime_probe(
                     workspace_dir=workspace_dir,
                     payload=probe_payload,
@@ -465,7 +504,9 @@ class PiLiteEngine:
             logger.warning("pi_lite_tool_error %s", fmt_kv(tool=name, error=str(exc)))
             return {"ok": False, "error": str(exc), "tool": name}
 
-    def _normalize_allowed_path(self, raw_path: Any, workspace_dir: Path, allowed: set[str]) -> Path:
+    def _normalize_allowed_path(
+        self, raw_path: Any, workspace_dir: Path, allowed: set[str]
+    ) -> Path:
         relative = str(raw_path or "").strip()
         if not relative:
             raise ValueError("path is required")
@@ -575,7 +616,7 @@ class PiLiteEngine:
                 return [{"value": 1}]
             return []
 
-        def _sample_query_result(sql_text: str) -> "_FakeQueryResult":
+        def _sample_query_result(sql_text: str) -> _FakeQueryResult:
             rows = _sample_rows_for_sql(sql_text)
             columns = list(rows[0].keys()) if rows else []
             return _FakeQueryResult(columns=columns, rows=rows, row_count=len(rows))
@@ -609,23 +650,38 @@ class PiLiteEngine:
         class _FakeQueryResult(dict):
             def __iter__(self):  # type: ignore[override]
                 message = (
-                    "db.query(" + "..." + ") returns a " + "mapping; use " + "result.get('rows', []) "
+                    "db.query("
+                    + "..."
+                    + ") returns a "
+                    + "mapping; use "
+                    + "result.get('rows', []) "
                     "before iterating rows"
                 )
                 raise ValueError(message)
 
         class _FakeDB:
-            def query(self, _sql: str, *, datasource: Any = None, role: str = "user", params: list[Any] | None = None) -> _FakeQueryResult:
+            def query(
+                self,
+                _sql: str,
+                *,
+                datasource: Any = None,
+                role: str = "user",
+                params: list[Any] | None = None,
+            ) -> _FakeQueryResult:
                 _ = datasource, params
                 _ = normalize_role(role)
                 return _sample_query_result(_sql)
 
-            def explain(self, _sql: str, *, datasource: Any = None, role: str = "user") -> _FakeQueryResult:
+            def explain(
+                self, _sql: str, *, datasource: Any = None, role: str = "user"
+            ) -> _FakeQueryResult:
                 _ = datasource
                 _ = normalize_role(role)
                 return _sample_query_result(_sql)
 
-            def query_by_id(self, *, sql: str, datasource_id: int, params: list[Any] | None = None) -> _FakeQueryResult:
+            def query_by_id(
+                self, *, sql: str, datasource_id: int, params: list[Any] | None = None
+            ) -> _FakeQueryResult:
                 _ = datasource_id, params
                 return _sample_query_result(sql)
 
@@ -648,7 +704,9 @@ class PiLiteEngine:
             def __init__(self, execution_mode: str) -> None:
                 self._execution_mode = str(execution_mode or "apply").strip().lower()
 
-            def list(self, _object_type: str, *, filters: dict[str, Any] | None = None, limit: int = 100) -> list[dict[str, Any]]:
+            def list(
+                self, _object_type: str, *, filters: dict[str, Any] | None = None, limit: int = 100
+            ) -> list[dict[str, Any]]:
                 _ = filters, limit
                 if str(_object_type or "").strip().lower() == "datasource":
                     return [
@@ -660,16 +718,38 @@ class PiLiteEngine:
             def get(self, _object_type: str, _object_id: Any) -> dict[str, Any]:
                 return {}
 
-            def crud(self, *, object_type: str, action: str, object_id: Any = None, payload: dict[str, Any] | None = None) -> dict[str, Any]:
+            def crud(
+                self,
+                *,
+                object_type: str,
+                action: str,
+                object_id: Any = None,
+                payload: dict[str, Any] | None = None,
+            ) -> dict[str, Any]:
                 _ = object_type, object_id, payload
-                if self._execution_mode == "plan" and str(action or "").strip().lower() in {"create", "update", "delete"}:
-                    raise ValueError("Plan mode does not allow control-plane write operations; confirm first and use apply mode")
+                if self._execution_mode == "plan" and str(action or "").strip().lower() in {
+                    "create",
+                    "update",
+                    "delete",
+                }:
+                    raise ValueError(
+                        "Plan mode does not allow control-plane write operations; confirm first and use apply mode"
+                    )
                 return {"ok": True}
 
-            def operate(self, *, object_type: str, action: str, object_id: Any, payload: dict[str, Any] | None = None) -> dict[str, Any]:
+            def operate(
+                self,
+                *,
+                object_type: str,
+                action: str,
+                object_id: Any,
+                payload: dict[str, Any] | None = None,
+            ) -> dict[str, Any]:
                 _ = object_type, action, object_id, payload
                 if self._execution_mode == "plan":
-                    raise ValueError("Plan mode does not allow control-plane operate actions; confirm first and use apply mode")
+                    raise ValueError(
+                        "Plan mode does not allow control-plane operate actions; confirm first and use apply mode"
+                    )
                 return {"ok": True}
 
         try:
@@ -681,10 +761,16 @@ class PiLiteEngine:
                 context=context,
                 runtime_services={
                     "db_capability": _FakeDB(),
-                    "platform_capability": _FakePlatform(str(context.get("execution_mode") or "plan")),
+                    "platform_capability": _FakePlatform(
+                        str(context.get("execution_mode") or "plan")
+                    ),
                 },
             )
-            return True, None, type(runtime_result).__name__ if runtime_result is not None else "NoneType"
+            return (
+                True,
+                None,
+                type(runtime_result).__name__ if runtime_result is not None else "NoneType",
+            )
         except Exception as exc:
             return False, f"{exc.__class__.__name__}: {exc}", None
 

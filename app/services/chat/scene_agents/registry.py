@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-from typing import Iterable
+from collections.abc import Iterable
 
-from app.services.function.chat_agent import FunctionChatAgent
 from app.services.chat.agent import ChatCoreAgent
+from app.services.function.chat_agent import FunctionChatAgent
+
 from .sql_analysis import SqlAnalysisAgent
 
 _extra_agents: list[ChatCoreAgent] = []
@@ -17,6 +18,7 @@ class SceneAgentRegistry:
     def __init__(self, agents: Iterable[ChatCoreAgent] | None = None) -> None:
         if agents is None:
             from app.services.skill.skill_builder_agent import SkillBuilderAgent
+
             agents = [FunctionChatAgent(), SqlAnalysisAgent(), SkillBuilderAgent(), *_extra_agents]
         resolved_agents = list(agents)
         self._agent_map = {agent.key: agent for agent in resolved_agents if agent.key}

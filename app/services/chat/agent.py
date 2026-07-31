@@ -11,6 +11,7 @@ from app.core.logging import get_logger
 from app.services.agent.core import AgentCore
 from app.services.platform.prompt_loader import PromptLoader
 from app.tools.registry import registry as tool_registry
+
 from . import ChatService, get_chat_service
 
 logger = get_logger("chat.agent")
@@ -92,7 +93,7 @@ class ChatCoreAgent:
     @property
     def display_name(self) -> str:
         """Human-friendly agent name for UI display."""
-        _DISPLAY_NAMES: dict[str, str] = {
+        _display_names: dict[str, str] = {
             "general": "ChatAgent",
             "function": "FunctionPlannerAgent",
             "function_build": "FunctionChatAgent",
@@ -101,7 +102,7 @@ class ChatCoreAgent:
             "stats_analysis": "StatsAnalysisAgent",
             "sql_analysis": "SqlAnalysisAgent",
         }
-        return _DISPLAY_NAMES.get(self.key, self.key or "Assistant")
+        return _display_names.get(self.key, self.key or "Assistant")
 
     async def stream_general_chat(
         self,

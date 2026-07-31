@@ -66,7 +66,9 @@ async def test_add_skills(skill_store):
     result = await select_skills_for_context(
         prompt="test",
         skill_store_instance=skill_store,
-        llm_client_factory=_make_llm_factory(add=["mysql-slow-query-triage", "mysql-lock-diagnosis"]),
+        llm_client_factory=_make_llm_factory(
+            add=["mysql-slow-query-triage", "mysql-lock-diagnosis"]
+        ),
     )
     assert result["selector_ok"]
     assert "mysql-slow-query-triage" in result["active_skills"]

@@ -4,6 +4,7 @@ import json
 
 from app.services.chat.agent import ChatCoreAgent
 from app.services.platform.prompt_loader import PromptLoader
+
 from .base import SceneAgentPayload
 
 

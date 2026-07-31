@@ -1,6 +1,6 @@
 import asyncio
-from pathlib import Path
 from datetime import datetime, timedelta
+from pathlib import Path
 
 import pytest
 from sqlalchemy import create_engine
@@ -9,8 +9,6 @@ from sqlalchemy.orm import Session, sessionmaker
 from app.db.database import Base
 from app.models import models
 from app.services.function.runtime import FunctionRuntimeResult, FunctionRuntimeService
-from app.services.scheduler.result import ScheduleRuntimeResult
-from app.services.scheduler.runtime import ScheduleTargetRuntimeService, _schedule_type_handlers
 from app.services.scheduler.worker import SchedulerWorker
 
 
@@ -346,7 +344,10 @@ async def test_scheduler_run_now_executes_scheduler_history_cleanup_function(ses
         timezone="UTC",
         function_id=fn.id,
         function_release_id=release.id,
-        input_payload={"target_schedule_id": target_schedule.id, "retention_seconds": 30 * 24 * 3600},
+        input_payload={
+            "target_schedule_id": target_schedule.id,
+            "retention_seconds": 30 * 24 * 3600,
+        },
     )
     db.add(cleanup_schedule)
     db.commit()

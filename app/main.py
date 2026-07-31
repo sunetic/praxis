@@ -3,12 +3,30 @@ from pathlib import Path
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from sqlalchemy.exc import OperationalError
 from starlette.staticfiles import StaticFiles
 
-from app.api import agents, capabilities, channels, chat, chat_agent_draft, chat_handoff, chat_pending, conversations, datasources, functions, knowledge, knowledge_packs, onboarding, schedules, settings as settings_api, skills, sql_analysis
+from app.api import (
+    agents,
+    capabilities,
+    channels,
+    chat,
+    chat_agent_draft,
+    chat_handoff,
+    chat_pending,
+    conversations,
+    datasources,
+    functions,
+    knowledge,
+    knowledge_packs,
+    onboarding,
+    schedules,
+    skills,
+    sql_analysis,
+)
+from app.api import settings as settings_api
 from app.core.config import get_settings
 from app.core.logging import configure_logging, fmt_kv, get_logger
 from app.db.database import init_db
@@ -37,6 +55,7 @@ app.add_middleware(
 # Tracing — EE-only, skip if module absent
 try:
     from app.tracing import init_tracing, shutdown_tracing
+
     init_tracing(settings, app=app)
     _has_tracing = True
 except ImportError:
@@ -58,19 +77,26 @@ async def startup():
     try:
         from app.builtin_functions import register_builtin_functions
         from app.db.database import SessionLocal
+
         with SessionLocal() as _seed_db:
             outcome = register_builtin_functions(_seed_db)
-            logger.info("builtin_functions_bootstrap_done created=%s updated=%s", outcome.get("created", 0), outcome.get("updated", 0))
+            logger.info(
+                "builtin_functions_bootstrap_done created=%s updated=%s",
+                outcome.get("created", 0),
+                outcome.get("updated", 0),
+            )
     except Exception as exc:
         logger.warning("builtin_functions_bootstrap_failed error=%s", exc)
     try:
         from app.builtin_knowledge import register_builtin_knowledge_packs
+
         register_builtin_knowledge_packs()
     except Exception as exc:
         logger.warning("builtin_knowledge_packs_bootstrap_failed error=%s", exc)
     # EE: stats_analysis schedule bootstrap
     try:
         from app.api import stats_analysis
+
         outcome = stats_analysis.ensure_stats_analysis_schedule_singleton()
         logger.info(
             "stats_analysis_schedule_bootstrap_done created=%s removed_legacy=%s",
@@ -86,6 +112,7 @@ async def startup():
         try:
             from app.api.onboarding import is_onboarding_completed
             from app.db.database import SessionLocal
+
             with SessionLocal() as _db:
                 onboarding_done = is_onboarding_completed(_db)
         except OperationalError:
@@ -158,8 +185,13 @@ app.include_router(settings_api.router, prefix="/api/v1")
 
 # ── EE routers (skip if modules absent) ─────────────────────────────────────
 _ee_api_modules = [
-    "collector", "pages", "services", "sessions",
-    "sql_analysis_monitor", "stats_analysis", "traces",
+    "collector",
+    "pages",
+    "services",
+    "sessions",
+    "sql_analysis_monitor",
+    "stats_analysis",
+    "traces",
 ]
 for _mod_name in _ee_api_modules:
     try:
@@ -183,8 +215,8 @@ if _HANDBOOK_SITE.is_dir():
 
 _FRONTEND_DIST = Path(__file__).resolve().parent.parent / "frontend" / "dist"
 if _FRONTEND_DIST.is_dir():
-    from starlette.responses import FileResponse as _FR
-    from starlette.staticfiles import StaticFiles as _SF
+    from starlette.responses import FileResponse as _FR  # noqa: N814
+    from starlette.staticfiles import StaticFiles as _SF  # noqa: N814
 
     _index_html = str(_FRONTEND_DIST / "index.html")
     app.mount("/assets", _SF(directory=str(_FRONTEND_DIST / "assets")), name="frontend-assets")

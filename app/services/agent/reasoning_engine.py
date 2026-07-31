@@ -40,7 +40,11 @@ class ReasoningPhase(StrEnum):
 
 VALID_TRANSITIONS: dict[ReasoningPhase, set[ReasoningPhase]] = {
     ReasoningPhase.THINKING: {ReasoningPhase.PLANNING, ReasoningPhase.ERROR},
-    ReasoningPhase.PLANNING: {ReasoningPhase.TOOL_RUNNING, ReasoningPhase.RESPONDING, ReasoningPhase.ERROR},
+    ReasoningPhase.PLANNING: {
+        ReasoningPhase.TOOL_RUNNING,
+        ReasoningPhase.RESPONDING,
+        ReasoningPhase.ERROR,
+    },
     ReasoningPhase.TOOL_RUNNING: {ReasoningPhase.REFLECTING, ReasoningPhase.ERROR},
     ReasoningPhase.REFLECTING: {
         ReasoningPhase.PLANNING,
@@ -66,11 +70,9 @@ class EngineConfig:
 
 
 class ToolExecutor(Protocol):
-    def preview_tool_start(self, tool_call: dict[str, Any]) -> dict[str, Any]:
-        ...
+    def preview_tool_start(self, tool_call: dict[str, Any]) -> dict[str, Any]: ...
 
-    async def execute_tool(self, tool_call: dict[str, Any]) -> dict[str, Any]:
-        ...
+    async def execute_tool(self, tool_call: dict[str, Any]) -> dict[str, Any]: ...
 
 
 class SimpleToolExecutor:
@@ -118,7 +120,11 @@ class SimpleToolExecutor:
         error_class = None
         if isinstance(result, dict):
             error_class = result.get("error_class")
-        runtime_meta = normalized["arguments"].get("_runtime") if isinstance(normalized["arguments"].get("_runtime"), dict) else {}
+        runtime_meta = (
+            normalized["arguments"].get("_runtime")
+            if isinstance(normalized["arguments"].get("_runtime"), dict)
+            else {}
+        )
         return {
             "tool_call_id": normalized["tool_call_id"],
             "name": normalized["name"],
@@ -142,7 +148,8 @@ class ReasoningEngine:
         llm: Any | None = None,
         tool_executor: ToolExecutor | None = None,
         compressor: ContextCompressor | None = None,
-        tool_plan_extractor: Callable[[dict[int, dict[str, Any]]], list[dict[str, Any]]] | None = None,
+        tool_plan_extractor: Callable[[dict[int, dict[str, Any]]], list[dict[str, Any]]]
+        | None = None,
     ) -> None:
         self.config = config or EngineConfig()
         self.llm = llm or get_llm_client()
@@ -293,7 +300,9 @@ class ReasoningEngine:
                     )
 
                     execution_results: list[dict[str, Any]] = []
-                    for tool_index, (_, raw_tool_call) in enumerate(sorted(plan["tool_calls"].items(), key=lambda item: item[0])):
+                    for tool_index, (_, raw_tool_call) in enumerate(
+                        sorted(plan["tool_calls"].items(), key=lambda item: item[0])
+                    ):
                         start_preview = self._preview_tool_start(raw_tool_call)
                         yield _event(
                             type_="tool_start",
@@ -307,7 +316,12 @@ class ReasoningEngine:
                         )
 
                         if is_cancelled and is_cancelled():
-                            logger.info("reasoning_cancelled_before_tool %s", fmt_kv(run_id=run_id, iteration=iteration, tool=start_preview["name"]))
+                            logger.info(
+                                "reasoning_cancelled_before_tool %s",
+                                fmt_kv(
+                                    run_id=run_id, iteration=iteration, tool=start_preview["name"]
+                                ),
+                            )
                             break
 
                         prepared_tool_call = (
@@ -341,11 +355,15 @@ class ReasoningEngine:
                                 "role": "tool",
                                 "tool_call_id": item["tool_call_id"],
                                 "name": item["name"],
-                                "content": json.dumps(item["result"], ensure_ascii=False, default=str),
+                                "content": json.dumps(
+                                    item["result"], ensure_ascii=False, default=str
+                                ),
                             }
                         )
 
-                        result_payload = item.get("result") if isinstance(item.get("result"), dict) else {}
+                        result_payload = (
+                            item.get("result") if isinstance(item.get("result"), dict) else {}
+                        )
                         result_data = (
                             result_payload.get("data")
                             if isinstance(result_payload.get("data"), dict)
@@ -375,7 +393,11 @@ class ReasoningEngine:
                         type_="reflect",
                         phase=phase,
                         data=decision,
-                        meta={"iteration": iteration, "reflection_count": reflection_count, "run_id": run_id},
+                        meta={
+                            "iteration": iteration,
+                            "reflection_count": reflection_count,
+                            "run_id": run_id,
+                        },
                     )
 
                     if decision["action"] == "retry":
@@ -407,8 +429,14 @@ class ReasoningEngine:
                                             "fallback_finalize": True,
                                         },
                                     )
-                                    chat_messages.append({"role": "assistant", "content": fallback_summary})
-                            phase = ReasoningPhase.RESPONDING if emitted_finalize_text else ReasoningPhase.ERROR
+                                    chat_messages.append(
+                                        {"role": "assistant", "content": fallback_summary}
+                                    )
+                            phase = (
+                                ReasoningPhase.RESPONDING
+                                if emitted_finalize_text
+                                else ReasoningPhase.ERROR
+                            )
                             break
                         phase = ReasoningPhase.THINKING
                         continue
@@ -440,14 +468,21 @@ class ReasoningEngine:
                                         "fallback_finalize": True,
                                     },
                                 )
-                                chat_messages.append({"role": "assistant", "content": fallback_summary})
-                        phase = ReasoningPhase.RESPONDING if emitted_finalize_text else ReasoningPhase.ERROR
+                                chat_messages.append(
+                                    {"role": "assistant", "content": fallback_summary}
+                                )
+                        phase = (
+                            ReasoningPhase.RESPONDING
+                            if emitted_finalize_text
+                            else ReasoningPhase.ERROR
+                        )
                         break
 
                     if decision["action"] == "await_confirmation":
                         pending_item = next(
                             (
-                                item for item in execution_results
+                                item
+                                for item in execution_results
                                 if isinstance((item.get("result") or {}).get("data"), dict)
                                 and (item.get("result") or {})["data"].get("requires_confirmation")
                             ),
@@ -466,7 +501,9 @@ class ReasoningEngine:
                                 args = {}
                             result_data = (pending_item.get("result") or {}).get("data") or {}
                             intent = str(args.get("intent") or "").strip()
-                            sql_preview = str(result_data.get("sql_preview") or args.get("sql") or "").strip()
+                            sql_preview = str(
+                                result_data.get("sql_preview") or args.get("sql") or ""
+                            ).strip()
                             if sql_preview:
                                 preview_parts = []
                                 if intent:
@@ -501,7 +538,10 @@ class ReasoningEngine:
                                 yield _event(
                                     type_="assistant",
                                     phase=ReasoningPhase.RESPONDING,
-                                    data={"text": continuation_event["content"], "iteration": iteration},
+                                    data={
+                                        "text": continuation_event["content"],
+                                        "iteration": iteration,
+                                    },
                                     meta={"iteration": iteration, "run_id": run_id},
                                 )
                             elif continuation_event["type"] == "continuation_result":
@@ -509,7 +549,9 @@ class ReasoningEngine:
                         if continuation_text:
                             plan["assistant_text"] += continuation_text
                         else:
-                            truncation_notice = "\n\n(Output may have been truncated due to model length limit)"
+                            truncation_notice = (
+                                "\n\n(Output may have been truncated due to model length limit)"
+                            )
                             plan["assistant_text"] += truncation_notice
                             emitted_text += truncation_notice
                             yield _event(
@@ -814,14 +856,16 @@ def _extract_xml_tool_calls(
         params: dict[str, str] = {}
         for pm in _XML_PARAMETER_RE.finditer(body):
             params[pm.group(1)] = pm.group(2).strip()
-        extracted.append({
-            "id": f"xmltc_{uuid.uuid4().hex[:12]}",
-            "type": "function",
-            "function": {
-                "name": func_name,
-                "arguments": json.dumps(params, ensure_ascii=False),
-            },
-        })
+        extracted.append(
+            {
+                "id": f"xmltc_{uuid.uuid4().hex[:12]}",
+                "type": "function",
+                "function": {
+                    "name": func_name,
+                    "arguments": json.dumps(params, ensure_ascii=False),
+                },
+            }
+        )
     cleaned = _XML_TOOL_CALL_RE.sub("", text)
     cleaned = _TRAILING_TOOL_CALL_RE.sub("", cleaned)
     cleaned = cleaned.rstrip()
@@ -920,7 +964,9 @@ def _reflector_step(
 ) -> dict[str, Any]:
     for item in execution_results:
         result_payload = item.get("result") if isinstance(item.get("result"), dict) else {}
-        result_data = result_payload.get("data") if isinstance(result_payload.get("data"), dict) else {}
+        result_data = (
+            result_payload.get("data") if isinstance(result_payload.get("data"), dict) else {}
+        )
         if bool(result_data.get("requires_confirmation")):
             return {
                 "action": "await_confirmation",
@@ -929,7 +975,9 @@ def _reflector_step(
                 "strategy_reason_code": _extract_strategy_reason_code(execution_results),
             }
 
-    failures = [result for result in execution_results if not (result.get("result") or {}).get("success")]
+    failures = [
+        result for result in execution_results if not (result.get("result") or {}).get("success")
+    ]
     strategy_reason_code = _extract_strategy_reason_code(execution_results)
     if not failures:
         return {
@@ -939,7 +987,9 @@ def _reflector_step(
             "strategy_reason_code": strategy_reason_code,
         }
 
-    schema_failures = [failure for failure in failures if str(failure.get("error_class") or "") == "schema_error"]
+    schema_failures = [
+        failure for failure in failures if str(failure.get("error_class") or "") == "schema_error"
+    ]
     has_unknown_column = any(_is_unknown_column_failure(failure) for failure in schema_failures)
     if has_unknown_column and reflection_count >= 1:
         failure_summary = _summarize_failures(failures)
@@ -982,7 +1032,9 @@ def _build_retry_system_hint(
         return ""
     summary = _summarize_failures(failures, limit=3)
     planning_summary = _summarize_planning_objectives(execution_results)
-    schema_failures = [failure for failure in failures if str(failure.get("error_class") or "") == "schema_error"]
+    schema_failures = [
+        failure for failure in failures if str(failure.get("error_class") or "") == "schema_error"
+    ]
     schema_rules = ""
     if schema_failures:
         schema_rules = (
@@ -1002,8 +1054,7 @@ def _build_retry_system_hint(
         "(SHOW TABLES / INFORMATION_SCHEMA / DESCRIBE), then retry with adapted SQL.\n"
         f"{schema_rules}"
         "- If failure indicates permission/role issue, switch datasource or explain limitation.\n"
-        f"- {planning_summary}" + ("\n" if planning_summary else "") +
-        f"- {summary}"
+        f"- {planning_summary}" + ("\n" if planning_summary else "") + f"- {summary}"
     )
 
 
@@ -1050,7 +1101,9 @@ def _summarize_failures(failures: list[dict[str, Any]], limit: int = 2) -> str:
 def _summarize_planning_objectives(execution_results: list[dict[str, Any]], limit: int = 2) -> str:
     snippets: list[str] = []
     for item in execution_results[:limit]:
-        planning_meta = item.get("planning_meta") if isinstance(item.get("planning_meta"), dict) else {}
+        planning_meta = (
+            item.get("planning_meta") if isinstance(item.get("planning_meta"), dict) else {}
+        )
         goal = str(planning_meta.get("goal") or "").strip()
         criteria = str(planning_meta.get("success_criteria") or "").strip()
         phase = str(planning_meta.get("phase") or "").strip()

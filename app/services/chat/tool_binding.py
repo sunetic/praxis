@@ -83,9 +83,7 @@ def filter_tools_by_scope(tools: list[dict], scope_context: dict | None) -> list
     return tools
 
 
-def inject_service_tools(
-    tools: list[dict], datasource_id: int | None, db: Session
-) -> list[dict]:
+def inject_service_tools(tools: list[dict], datasource_id: int | None, db: Session) -> list[dict]:
     if datasource_id is None:
         return tools
     datasource = db.query(models.DataSource).filter(models.DataSource.id == datasource_id).first()
@@ -121,7 +119,11 @@ def inject_service_tools(
                 f"Service ID (auto-bound to service_id={svc.id}; can be omitted). "
                 "Determine domain parameters based on datasource_attributes, loaded skills, and knowledge base evidence."
             )
-            attrs = datasource.attributes if isinstance(getattr(datasource, "attributes", None), dict) else {}
+            attrs = (
+                datasource.attributes
+                if isinstance(getattr(datasource, "attributes", None), dict)
+                else {}
+            )
             ocp_cluster_id = attrs.get("ocp_cluster_id")
             ocp_tenant_id = attrs.get("ocp_tenant_id")
             if svc.service_type == "ocp_api":

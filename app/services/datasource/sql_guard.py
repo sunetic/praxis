@@ -117,7 +117,9 @@ def compare_tenant_fingerprint(expected: dict[str, str], current: dict[str, str]
     return mismatches
 
 
-async def probe_tenant_fingerprint(pool, datasource: models.DataSource, role: str) -> dict[str, str]:
+async def probe_tenant_fingerprint(
+    pool, datasource: models.DataSource, role: str
+) -> dict[str, str]:
     probes = [
         ("effective_tenant_id", "SELECT effective_tenant_id() AS v"),
         ("current_user", "SELECT CURRENT_USER() AS v"),
@@ -146,4 +148,3 @@ async def probe_tenant_fingerprint(pool, datasource: models.DataSource, role: st
         if datasource.database:
             fingerprint["metadata_database"] = str(datasource.database)
     return fingerprint
-

@@ -1,6 +1,5 @@
 import shutil
 from pathlib import Path
-from typing import List
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, status
 from sqlalchemy.orm import Session
@@ -51,7 +50,7 @@ def _ensure_not_pack(kb: models.KnowledgeBase) -> None:
         )
 
 
-@router.get("", response_model=List[schemas.KnowledgeBaseResponse])
+@router.get("", response_model=list[schemas.KnowledgeBaseResponse])
 def list_knowledge_bases(db: Session = Depends(get_db)):
     records = db.query(models.KnowledgeBase).all()
     logger.info("list_knowledge_bases %s", fmt_kv(count=len(records)))
@@ -107,7 +106,7 @@ def delete_knowledge_base(kb_id: int, db: Session = Depends(get_db)):
 # ─── Documents ───────────────────────────────────────────────────────────────
 
 
-@router.get("/{kb_id}/documents", response_model=List[schemas.KnowledgeDocumentResponse])
+@router.get("/{kb_id}/documents", response_model=list[schemas.KnowledgeDocumentResponse])
 def list_documents(kb_id: int, db: Session = Depends(get_db)):
     _get_kb_or_404(kb_id, db)
     docs = (
@@ -119,7 +118,11 @@ def list_documents(kb_id: int, db: Session = Depends(get_db)):
     return docs
 
 
-@router.post("/{kb_id}/documents", response_model=schemas.KnowledgeDocumentResponse, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/{kb_id}/documents",
+    response_model=schemas.KnowledgeDocumentResponse,
+    status_code=status.HTTP_201_CREATED,
+)
 async def upload_document(kb_id: int, file: UploadFile, db: Session = Depends(get_db)):
     kb = _get_kb_or_404(kb_id, db)
     _ensure_not_pack(kb)

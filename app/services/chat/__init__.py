@@ -8,14 +8,17 @@ from collections.abc import AsyncGenerator, Callable
 from datetime import UTC, datetime
 from typing import Any
 
-from opentelemetry import context as otel_context, trace
+from opentelemetry import context as otel_context
+from opentelemetry import trace
 
 from app.core.logging import fmt_kv, get_logger
+from app.services.agent.reasoning_engine import (
+    VALID_TRANSITIONS as ENGINE_VALID_TRANSITIONS,
+)
 from app.services.agent.reasoning_engine import (
     EngineConfig,
     ReasoningEngine,
     ReasoningPhase,
-    VALID_TRANSITIONS as ENGINE_VALID_TRANSITIONS,
 )
 from app.services.llm import get_llm_client
 from app.tools.registry import registry
@@ -294,7 +297,11 @@ class ChatService:
                 payload = result.to_dict()
                 tool_span.set_attribute("chat.tool.success", payload.get("success", False))
                 execution_ids = self._extract_execution_ids(bound_args, payload)
-                runtime_meta = bound_args.get("_runtime") if isinstance(bound_args.get("_runtime"), dict) else {}
+                runtime_meta = (
+                    bound_args.get("_runtime")
+                    if isinstance(bound_args.get("_runtime"), dict)
+                    else {}
+                )
                 planning_meta = {
                     "phase": str(runtime_meta.get("phase") or "").strip(),
                     "goal": str(runtime_meta.get("goal") or "").strip(),
@@ -428,7 +435,10 @@ class ChatService:
         self, default_datasource_id: int | None
     ) -> tuple[int | None, str | None]:
         if default_datasource_id is None:
-            return None, "No datasource is bound to the current session; cannot auto-resolve PraxisService."
+            return (
+                None,
+                "No datasource is bound to the current session; cannot auto-resolve PraxisService.",
+            )
 
         from app.db.database import SessionLocal
         from app.models import models
@@ -440,9 +450,15 @@ class ChatService:
                 .first()
             )
             if not datasource:
-                return None, f"Datasource {default_datasource_id} not found; cannot auto-resolve PraxisService."
+                return (
+                    None,
+                    f"Datasource {default_datasource_id} not found; cannot auto-resolve PraxisService.",
+                )
             if not datasource.cluster_key:
-                return None, "The current datasource is missing cluster_key; cannot auto-resolve PraxisService."
+                return (
+                    None,
+                    "The current datasource is missing cluster_key; cannot auto-resolve PraxisService.",
+                )
 
             services = (
                 db.query(models.Service)
@@ -509,7 +525,11 @@ class ChatService:
                 return "List operation is blocked in builder scope"
             if action == "create":
                 return f"Create {object_type} is out of scope for current builder object"
-            if target_object_id_text and scope_object_id and target_object_id_text != scope_object_id:
+            if (
+                target_object_id_text
+                and scope_object_id
+                and target_object_id_text != scope_object_id
+            ):
                 return (
                     f"Target {object_type}:{target_object_id_text} is outside builder scope "
                     f"{scope_object_type}:{scope_object_id}"
@@ -622,7 +642,10 @@ class ChatService:
             },
         }
         if self._active_agent_name:
-            payload["data"] = {**(data if isinstance(data, dict) else {"value": data}), "agent_name": self._active_agent_name}
+            payload["data"] = {
+                **(data if isinstance(data, dict) else {"value": data}),
+                "agent_name": self._active_agent_name,
+            }
         if self._active_scope_context:
             payload["meta"].update(
                 {
@@ -653,6 +676,7 @@ class ChatService:
             conversation_id=conversation_id,
             meta={"iteration": iteration, "error_class": error_class},
         )
+
 
 def get_chat_service() -> ChatService:
     """Get or create chat service instance."""

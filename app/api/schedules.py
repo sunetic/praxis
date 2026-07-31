@@ -9,13 +9,13 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlalchemy.orm import Session, sessionmaker
 
-from app.db.database import get_db
-from app.models import models
 from app.core.config import get_settings
 from app.core.logging import fmt_kv, get_logger
-from app.services.scheduler.builder import SchedulerBuilderService
+from app.db.database import get_db
+from app.models import models
 from app.services.function.runtime import FunctionRuntimeService
 from app.services.lifecycle import LifecycleValidationError, ScheduleLifecycleService
+from app.services.scheduler.builder import SchedulerBuilderService
 from app.services.scheduler.runtime_state import get_scheduler_worker
 from app.services.scheduler.worker import SchedulerWorker
 
@@ -32,15 +32,19 @@ def register_schedule_target(target_type: str, *, internal: bool = False) -> Non
         INTERNAL_SCHEDULE_TARGETS.add(target_type)
     else:
         USER_VISIBLE_SCHEDULE_TARGETS.add(target_type)
+
+
 logger = get_logger("api.schedules")
 
 
 def _serialize(record: Any) -> dict[str, Any]:
-    return json.loads(json.dumps(
-        {column.name: getattr(record, column.name) for column in record.__table__.columns},
-        default=str,
-        ensure_ascii=False,
-    ))
+    return json.loads(
+        json.dumps(
+            {column.name: getattr(record, column.name) for column in record.__table__.columns},
+            default=str,
+            ensure_ascii=False,
+        )
+    )
 
 
 def _utc_now_naive() -> datetime:
@@ -97,7 +101,9 @@ def _normalize_datasource_id(db: Session, raw_value: Any) -> int | None:
         .first()
     )
     if datasource is None:
-        raise HTTPException(status_code=400, detail=f"Datasource {datasource_id} not found or inactive")
+        raise HTTPException(
+            status_code=400, detail=f"Datasource {datasource_id} not found or inactive"
+        )
     return datasource.id
 
 
@@ -113,21 +119,27 @@ def _resolve_schedule_target(
         raw_target_type = raw_target_type or "function"
         raw_target_id = payload.get("function_id")
 
-    target_type = str(raw_target_type or (current.target_type if current else "function")).strip().lower()
+    target_type = (
+        str(raw_target_type or (current.target_type if current else "function")).strip().lower()
+    )
     if target_type not in SUPPORTED_SCHEDULE_TARGETS:
         raise HTTPException(
             status_code=400,
             detail=f"target_type must be one of: {', '.join(sorted(SUPPORTED_SCHEDULE_TARGETS))}",
         )
 
-    target_id = raw_target_id if raw_target_id is not None else (current.target_id if current else None)
+    target_id = (
+        raw_target_id if raw_target_id is not None else (current.target_id if current else None)
+    )
     if not isinstance(target_id, int):
         raise HTTPException(status_code=400, detail="target_id is required")
 
     if target_type == "function":
         function = _get_function_or_404(db, target_id)
         if function.current_release_id is None or function.status != "released":
-            raise HTTPException(status_code=400, detail="function must be released before scheduling")
+            raise HTTPException(
+                status_code=400, detail="function must be released before scheduling"
+            )
         return {
             "target_type": "function",
             "target_id": function.id,
@@ -152,7 +164,9 @@ def _resolve_schedule_target(
             .first()
         )
         if datasource is None:
-            raise HTTPException(status_code=400, detail=f"Datasource {target_id} not found or inactive")
+            raise HTTPException(
+                status_code=400, detail=f"Datasource {target_id} not found or inactive"
+            )
         return {
             "target_type": "stats_analysis",
             "target_id": datasource.id,
@@ -167,7 +181,9 @@ def _resolve_schedule_target(
             .first()
         )
         if datasource is None:
-            raise HTTPException(status_code=400, detail=f"Datasource {target_id} not found or inactive")
+            raise HTTPException(
+                status_code=400, detail=f"Datasource {target_id} not found or inactive"
+            )
         return {
             "target_type": "collector",
             "target_id": datasource.id,
@@ -199,18 +215,26 @@ def _normalize_schedule_kind(raw_kind: Any, *, default: str = "custom") -> str:
 
 
 def _is_built_in_schedule(schedule: models.Schedule) -> bool:
-    if _normalize_schedule_kind(getattr(schedule, "kind", "custom"), default="custom") == "built_in":
+    if (
+        _normalize_schedule_kind(getattr(schedule, "kind", "custom"), default="custom")
+        == "built_in"
+    ):
         return True
     if str(getattr(schedule, "target_type", "") or "").strip().lower() == "function":
         function = getattr(schedule, "function", None)
-        if function is not None and str(getattr(function, "kind", "") or "").strip().lower() in {"built_in", "builtin"}:
+        if function is not None and str(getattr(function, "kind", "") or "").strip().lower() in {
+            "built_in",
+            "builtin",
+        }:
             return True
     return False
 
 
 def _ensure_user_visible_target_type(target_type: str) -> None:
     if target_type not in USER_VISIBLE_SCHEDULE_TARGETS:
-        raise HTTPException(status_code=400, detail="user-facing schedules only support function or agent targets")
+        raise HTTPException(
+            status_code=400, detail="user-facing schedules only support function or agent targets"
+        )
 
 
 def _ensure_mutable_schedule_payload(schedule: models.Schedule, payload: dict[str, Any]) -> None:
@@ -297,8 +321,7 @@ def list_all_schedule_runs(
         base_query = base_query.filter(models.ScheduleRun.schedule_id == schedule_id)
     total = base_query.count()
     runs = (
-        base_query
-        .order_by(models.ScheduleRun.created_at.desc())
+        base_query.order_by(models.ScheduleRun.created_at.desc())
         .offset(normalized_offset)
         .limit(normalized_limit)
         .all()
@@ -314,7 +337,11 @@ def list_all_schedule_runs(
 def scheduler_worker_health():
     settings = get_settings()
     worker = get_scheduler_worker()
-    health = worker.health() if worker is not None else {"running": False, "shutting_down": False, "job_count": 0}
+    health = (
+        worker.health()
+        if worker is not None
+        else {"running": False, "shutting_down": False, "job_count": 0}
+    )
     return {
         "running": bool(health.get("running")),
         "shutting_down": bool(health.get("shutting_down")),
@@ -362,7 +389,10 @@ def create_schedule(payload: dict[str, Any], db: Session = Depends(get_db)):
         input_prompt=payload.get("input_prompt"),
     )
     schedule = models.Schedule(
-        name=str(payload.get("name") or f"schedule-{resolved_target['target_type']}-{resolved_target['target_id']}"),
+        name=str(
+            payload.get("name")
+            or f"schedule-{resolved_target['target_type']}-{resolved_target['target_id']}"
+        ),
         description=str(payload.get("description") or "").strip() or None,
         kind="custom",
         status=status_value,
@@ -375,7 +405,9 @@ def create_schedule(payload: dict[str, Any], db: Session = Depends(get_db)):
         datasource_id=datasource_id,
         function_id=resolved_target["function_id"],
         function_release_id=resolved_target["function_release_id"],
-        input_payload=payload.get("input_payload") if isinstance(payload.get("input_payload"), dict) else None,
+        input_payload=payload.get("input_payload")
+        if isinstance(payload.get("input_payload"), dict)
+        else None,
         input_prompt=input_prompt,
         next_run_at=next_run_at,
         max_retries=int(payload.get("max_retries", 0)),
@@ -420,11 +452,15 @@ def update_schedule(schedule_id: int, payload: dict[str, Any], db: Session = Dep
                 value = str(value or "").strip() or None
             setattr(schedule, field, value)
     if "timezone" in payload:
-        schedule.timezone = _normalize_timezone(payload.get("timezone"), default=schedule.timezone or DEFAULT_SCHEDULE_TIMEZONE)
+        schedule.timezone = _normalize_timezone(
+            payload.get("timezone"), default=schedule.timezone or DEFAULT_SCHEDULE_TIMEZONE
+        )
     if "datasource_id" in payload:
         schedule.datasource_id = _normalize_datasource_id(db, payload.get("datasource_id"))
     if "input_payload" in payload:
-        schedule.input_payload = payload["input_payload"] if isinstance(payload["input_payload"], dict) else None
+        schedule.input_payload = (
+            payload["input_payload"] if isinstance(payload["input_payload"], dict) else None
+        )
     if "input_prompt" in payload:
         schedule.input_prompt = payload.get("input_prompt")
     if "status" in payload:
@@ -529,7 +565,9 @@ def ai_create_schedule(payload: dict[str, Any], db: Session = Depends(get_db)):
     schedule_type = str(build.patch.get("schedule_type") or current["schedule_type"])
     cron_expression = build.patch.get("cron_expression")
     interval_seconds = build.patch.get("interval_seconds")
-    timezone = _normalize_timezone(build.patch.get("timezone") or current["timezone"], default=current["timezone"])
+    timezone = _normalize_timezone(
+        build.patch.get("timezone") or current["timezone"], default=current["timezone"]
+    )
     status_value = _normalize_schedule_status(build.patch.get("status") or payload.get("status"))
     max_retries = int(build.patch.get("max_retries") or payload.get("max_retries", 0))
     input_prompt = _validate_target_input_contract(
@@ -552,7 +590,10 @@ def ai_create_schedule(payload: dict[str, Any], db: Session = Depends(get_db)):
         else None
     )
     schedule = models.Schedule(
-        name=str(payload.get("name") or f"schedule-{resolved_target['target_type']}-{resolved_target['target_id']}"),
+        name=str(
+            payload.get("name")
+            or f"schedule-{resolved_target['target_type']}-{resolved_target['target_id']}"
+        ),
         description=str(payload.get("description") or "").strip() or None,
         kind="custom",
         status=status_value,
@@ -565,7 +606,9 @@ def ai_create_schedule(payload: dict[str, Any], db: Session = Depends(get_db)):
         datasource_id=datasource_id,
         function_id=resolved_target["function_id"],
         function_release_id=resolved_target["function_release_id"],
-        input_payload=payload.get("input_payload") if isinstance(payload.get("input_payload"), dict) else None,
+        input_payload=payload.get("input_payload")
+        if isinstance(payload.get("input_payload"), dict)
+        else None,
         input_prompt=input_prompt,
         next_run_at=next_run_at,
         max_retries=max_retries,
@@ -605,8 +648,7 @@ def list_schedule_runs(
     base_query = db.query(models.ScheduleRun).filter(models.ScheduleRun.schedule_id == schedule_id)
     total = base_query.count()
     runs = (
-        base_query
-        .order_by(models.ScheduleRun.created_at.desc())
+        base_query.order_by(models.ScheduleRun.created_at.desc())
         .offset(normalized_offset)
         .limit(normalized_limit)
         .all()
@@ -692,7 +734,12 @@ async def run_schedule_now(schedule_id: int, db: Session = Depends(get_db)):
     worker = get_scheduler_worker()
     if worker is not None and worker.health().get("running"):
         run_id, schedule_run_id = await worker.submit_now(schedule_id, trace_id=trace_id)
-        return {"trace_id": trace_id, "schedule_id": schedule_id, "run_id": run_id, "schedule_run_id": schedule_run_id}
+        return {
+            "trace_id": trace_id,
+            "schedule_id": schedule_id,
+            "run_id": run_id,
+            "schedule_run_id": schedule_run_id,
+        }
 
     runtime_session_factory = sessionmaker(
         bind=db.get_bind(),
@@ -705,4 +752,9 @@ async def run_schedule_now(schedule_id: int, db: Session = Depends(get_db)):
         runtime_service=FunctionRuntimeService(session_factory=runtime_session_factory),
     )
     run_id, schedule_run_id = await fallback_worker.submit_now(schedule_id, trace_id=trace_id)
-    return {"trace_id": trace_id, "schedule_id": schedule_id, "run_id": run_id, "schedule_run_id": schedule_run_id}
+    return {
+        "trace_id": trace_id,
+        "schedule_id": schedule_id,
+        "run_id": run_id,
+        "schedule_run_id": schedule_run_id,
+    }

@@ -1,8 +1,18 @@
 import uuid
 from datetime import datetime
-from typing import List, Optional
+from typing import Optional
 
-from sqlalchemy import JSON, Boolean, DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import (
+    JSON,
+    Boolean,
+    DateTime,
+    Float,
+    ForeignKey,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.security import EncryptedString
@@ -20,10 +30,10 @@ class DataSource(Base):
     cluster_key: Mapped[str] = mapped_column(String(255), nullable=False, default="")
     tenant_role: Mapped[str] = mapped_column(String(50), nullable=False, default="user")
 
-    user: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
-    password: Mapped[Optional[str]] = mapped_column(EncryptedString, nullable=True)
-    database: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
-    attributes: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    user: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    password: Mapped[str | None] = mapped_column(EncryptedString, nullable=True)
+    database: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    attributes: Mapped[dict | None] = mapped_column(JSON, nullable=True)
 
     status: Mapped[str] = mapped_column(String(50), default="active")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
@@ -31,13 +41,13 @@ class DataSource(Base):
         DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
     )
 
-    conversations: Mapped[List["Conversation"]] = relationship(
+    conversations: Mapped[list["Conversation"]] = relationship(
         back_populates="datasource", cascade="all, delete-orphan"
     )
-    agents: Mapped[List["Agent"]] = relationship(
+    agents: Mapped[list["Agent"]] = relationship(
         secondary="agent_datasources", back_populates="datasources"
     )
-    schedules: Mapped[List["Schedule"]] = relationship(back_populates="datasource")
+    schedules: Mapped[list["Schedule"]] = relationship(back_populates="datasource")
 
 
 class Channel(Base):
@@ -46,9 +56,9 @@ class Channel(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     provider: Mapped[str] = mapped_column(String(50), nullable=False, default="dingtalk")
-    description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
     status: Mapped[str] = mapped_column(String(50), nullable=False, default="active")
-    config: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    config: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
@@ -60,13 +70,13 @@ class Conversation(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
     title: Mapped[str] = mapped_column(String(500), default="New Conversation")
-    datasource_id: Mapped[Optional[int]] = mapped_column(
+    datasource_id: Mapped[int | None] = mapped_column(
         Integer, ForeignKey("datasources.id"), nullable=True
     )
-    agent_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("agents.id"), nullable=True)
-    active_skills: Mapped[Optional[str]] = mapped_column(JSON, nullable=True)
+    agent_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("agents.id"), nullable=True)
+    active_skills: Mapped[str | None] = mapped_column(JSON, nullable=True)
     category: Mapped[str] = mapped_column(String(20), nullable=False, default="primary")
-    scene_key: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    scene_key: Mapped[str | None] = mapped_column(String(100), nullable=True)
     read_only: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(
@@ -75,16 +85,16 @@ class Conversation(Base):
 
     datasource: Mapped[Optional["DataSource"]] = relationship(back_populates="conversations")
     agent: Mapped[Optional["Agent"]] = relationship(back_populates="conversations")
-    messages: Mapped[List["Message"]] = relationship(
+    messages: Mapped[list["Message"]] = relationship(
         back_populates="conversation", cascade="all, delete-orphan"
     )
-    chat_events: Mapped[List["ChatEvent"]] = relationship(
+    chat_events: Mapped[list["ChatEvent"]] = relationship(
         back_populates="conversation", cascade="all, delete-orphan"
     )
-    pending_actions: Mapped[List["PendingAction"]] = relationship(
+    pending_actions: Mapped[list["PendingAction"]] = relationship(
         back_populates="conversation", cascade="all, delete-orphan"
     )
-    build_sessions: Mapped[List["BuildSession"]] = relationship(
+    build_sessions: Mapped[list["BuildSession"]] = relationship(
         back_populates="conversation", cascade="all, delete-orphan"
     )
 
@@ -98,9 +108,9 @@ class Message(Base):
     )
     role: Mapped[str] = mapped_column(String(50), nullable=False)
     content: Mapped[str] = mapped_column(Text, nullable=False)
-    agent_name: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
-    tool_calls: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
-    content_parts: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
+    agent_name: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    tool_calls: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    content_parts: Mapped[list | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
     conversation: Mapped["Conversation"] = relationship(back_populates="messages")
@@ -114,13 +124,13 @@ class ChatEvent(Base):
         Integer, ForeignKey("conversations.id"), nullable=False
     )
     event_type: Mapped[str] = mapped_column(String(50), nullable=False)
-    phase: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
-    turn_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True, index=True)
-    turn_seq: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, index=True)
-    part_seq: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
-    role: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
-    agent_name: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
-    payload: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    phase: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    turn_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    turn_seq: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+    part_seq: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    role: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    agent_name: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    payload: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
     conversation: Mapped["Conversation"] = relationship(back_populates="chat_events")
@@ -136,14 +146,14 @@ class PendingAction(Base):
     token: Mapped[str] = mapped_column(String(64), nullable=False, unique=True, index=True)
     action_type: Mapped[str] = mapped_column(String(50), nullable=False, default="execute_sql")
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="pending")
-    payload: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    payload: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
     )
-    confirmed_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
-    executed_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
-    cancelled_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    confirmed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    executed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    cancelled_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
     conversation: Mapped["Conversation"] = relationship(back_populates="pending_actions")
 
@@ -153,10 +163,10 @@ class Agent(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
-    description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
     prompt: Mapped[str] = mapped_column(Text, nullable=False)
-    tools: Mapped[Optional[str]] = mapped_column(JSON, nullable=True)
-    skills: Mapped[Optional[str]] = mapped_column(JSON, nullable=True)
+    tools: Mapped[str | None] = mapped_column(JSON, nullable=True)
+    skills: Mapped[str | None] = mapped_column(JSON, nullable=True)
     agent_type: Mapped[str] = mapped_column(String(50), nullable=False, default="custom")
     status: Mapped[str] = mapped_column(String(50), default="active")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
@@ -164,13 +174,13 @@ class Agent(Base):
         DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
     )
 
-    conversations: Mapped[List["Conversation"]] = relationship(
+    conversations: Mapped[list["Conversation"]] = relationship(
         back_populates="agent", cascade="all, delete-orphan"
     )
-    datasources: Mapped[List["DataSource"]] = relationship(
+    datasources: Mapped[list["DataSource"]] = relationship(
         secondary="agent_datasources", back_populates="agents"
     )
-    tool_executions: Mapped[List["ToolExecution"]] = relationship(
+    tool_executions: Mapped[list["ToolExecution"]] = relationship(
         back_populates="agent", cascade="all, delete-orphan"
     )
 
@@ -188,14 +198,14 @@ class ToolExecution(Base):
     __tablename__ = "tool_executions"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
-    agent_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("agents.id"), nullable=True)
-    conversation_id: Mapped[Optional[int]] = mapped_column(
+    agent_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("agents.id"), nullable=True)
+    conversation_id: Mapped[int | None] = mapped_column(
         Integer, ForeignKey("conversations.id"), nullable=True
     )
     tool_name: Mapped[str] = mapped_column(String(255), nullable=False)
-    parameters: Mapped[Optional[str]] = mapped_column(JSON, nullable=True)
-    result: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    parameters: Mapped[str | None] = mapped_column(JSON, nullable=True)
+    result: Mapped[str | None] = mapped_column(Text, nullable=True)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
     agent: Mapped[Optional["Agent"]] = relationship(back_populates="tool_executions")
@@ -206,13 +216,13 @@ class Page(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
-    description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
     status: Mapped[str] = mapped_column(String(50), nullable=False, default="draft")
-    draft_payload: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
-    source_path: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
-    current_commit_sha: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
-    release_commit_sha: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
-    current_release_id: Mapped[Optional[int]] = mapped_column(
+    draft_payload: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    source_path: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    current_commit_sha: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    release_commit_sha: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    current_release_id: Mapped[int | None] = mapped_column(
         Integer, ForeignKey("page_releases.id", ondelete="SET NULL"), nullable=True
     )
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
@@ -220,22 +230,22 @@ class Page(Base):
         DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
     )
 
-    releases: Mapped[List["PageRelease"]] = relationship(
+    releases: Mapped[list["PageRelease"]] = relationship(
         back_populates="page",
         cascade="all, delete-orphan",
         foreign_keys="PageRelease.page_id",
     )
-    build_runs: Mapped[List["PageBuildRun"]] = relationship(
+    build_runs: Mapped[list["PageBuildRun"]] = relationship(
         back_populates="page",
         cascade="all, delete-orphan",
         foreign_keys="PageBuildRun.page_id",
     )
-    snapshots: Mapped[List["PageDraftSnapshot"]] = relationship(
+    snapshots: Mapped[list["PageDraftSnapshot"]] = relationship(
         back_populates="page",
         cascade="all, delete-orphan",
         foreign_keys="PageDraftSnapshot.page_id",
     )
-    compile_runs: Mapped[List["PageCompileRun"]] = relationship(
+    compile_runs: Mapped[list["PageCompileRun"]] = relationship(
         back_populates="page",
         cascade="all, delete-orphan",
         foreign_keys="PageCompileRun.page_id",
@@ -256,9 +266,9 @@ class PageRelease(Base):
         Integer, ForeignKey("pages.id", ondelete="CASCADE"), nullable=False
     )
     version: Mapped[int] = mapped_column(Integer, nullable=False)
-    artifact_uri: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
-    artifact_payload: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
-    release_notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    artifact_uri: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    artifact_payload: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    release_notes: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
     page: Mapped["Page"] = relationship(back_populates="releases", foreign_keys=[page_id])
@@ -273,19 +283,19 @@ class PageBuildRun(Base):
         Integer, ForeignKey("pages.id", ondelete="CASCADE"), nullable=False
     )
     status: Mapped[str] = mapped_column(String(50), nullable=False, default="running")
-    phase: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    phase: Mapped[str | None] = mapped_column(String(50), nullable=True)
     prompt: Mapped[str] = mapped_column(Text, nullable=False)
-    result_summary: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    error_summary: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    result_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    error_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
     started_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
-    finished_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
     )
 
     page: Mapped["Page"] = relationship(back_populates="build_runs", foreign_keys=[page_id])
-    events: Mapped[List["PageBuildEvent"]] = relationship(
+    events: Mapped[list["PageBuildEvent"]] = relationship(
         back_populates="build_run",
         cascade="all, delete-orphan",
         foreign_keys="PageBuildEvent.build_run_id",
@@ -301,8 +311,8 @@ class PageBuildEvent(Base):
     )
     phase: Mapped[str] = mapped_column(String(50), nullable=False)
     status: Mapped[str] = mapped_column(String(50), nullable=False, default="running")
-    summary: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    payload: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    payload: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
     build_run: Mapped["PageBuildRun"] = relationship(
@@ -317,12 +327,12 @@ class PageDraftSnapshot(Base):
     page_id: Mapped[int] = mapped_column(
         Integer, ForeignKey("pages.id", ondelete="CASCADE"), nullable=False, index=True
     )
-    summary: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    summary: Mapped[str | None] = mapped_column(Text, nullable=True)
     snapshot_payload: Mapped[dict] = mapped_column(JSON, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
     page: Mapped["Page"] = relationship(back_populates="snapshots", foreign_keys=[page_id])
-    compile_runs: Mapped[List["PageCompileRun"]] = relationship(
+    compile_runs: Mapped[list["PageCompileRun"]] = relationship(
         back_populates="snapshot",
         cascade="all, delete-orphan",
         foreign_keys="PageCompileRun.snapshot_id",
@@ -338,14 +348,17 @@ class PageCompileRun(Base):
         Integer, ForeignKey("pages.id", ondelete="CASCADE"), nullable=False, index=True
     )
     snapshot_id: Mapped[int] = mapped_column(
-        Integer, ForeignKey("page_draft_snapshots.id", ondelete="CASCADE"), nullable=False, index=True
+        Integer,
+        ForeignKey("page_draft_snapshots.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
     )
     status: Mapped[str] = mapped_column(String(50), nullable=False, default="running")
-    summary: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    error_summary: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    artifact_payload: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    error_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    artifact_payload: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     started_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
-    finished_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
     page: Mapped["Page"] = relationship(back_populates="compile_runs", foreign_keys=[page_id])
@@ -366,15 +379,15 @@ class Function(Base):
         index=True,
         default=lambda: f"fn-{uuid.uuid4().hex[:12]}",
     )
-    description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
     kind: Mapped[str] = mapped_column(String(50), nullable=False, default="custom")
     status: Mapped[str] = mapped_column(String(50), nullable=False, default="draft")
-    draft_code: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    draft_dependencies: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
-    source_path: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
-    current_commit_sha: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
-    release_commit_sha: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
-    current_release_id: Mapped[Optional[int]] = mapped_column(
+    draft_code: Mapped[str | None] = mapped_column(Text, nullable=True)
+    draft_dependencies: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    source_path: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    current_commit_sha: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    release_commit_sha: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    current_release_id: Mapped[int | None] = mapped_column(
         Integer, ForeignKey("function_releases.id", ondelete="SET NULL"), nullable=True
     )
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
@@ -382,7 +395,7 @@ class Function(Base):
         DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
     )
 
-    releases: Mapped[List["FunctionRelease"]] = relationship(
+    releases: Mapped[list["FunctionRelease"]] = relationship(
         back_populates="function",
         cascade="all, delete-orphan",
         foreign_keys="FunctionRelease.function_id",
@@ -390,13 +403,15 @@ class Function(Base):
     current_release: Mapped[Optional["FunctionRelease"]] = relationship(
         foreign_keys=[current_release_id], post_update=True
     )
-    schedules: Mapped[List["Schedule"]] = relationship(
+    schedules: Mapped[list["Schedule"]] = relationship(
         back_populates="function", cascade="all, delete-orphan", foreign_keys="Schedule.function_id"
     )
-    runs: Mapped[List["FunctionRun"]] = relationship(
-        back_populates="function", cascade="all, delete-orphan", foreign_keys="FunctionRun.function_id"
+    runs: Mapped[list["FunctionRun"]] = relationship(
+        back_populates="function",
+        cascade="all, delete-orphan",
+        foreign_keys="FunctionRun.function_id",
     )
-    build_runs: Mapped[List["FunctionBuildRun"]] = relationship(
+    build_runs: Mapped[list["FunctionBuildRun"]] = relationship(
         back_populates="function",
         cascade="all, delete-orphan",
         foreign_keys="FunctionBuildRun.function_id",
@@ -415,12 +430,14 @@ class FunctionRelease(Base):
     )
     version: Mapped[int] = mapped_column(Integer, nullable=False)
     code_snapshot: Mapped[str] = mapped_column(Text, nullable=False)
-    dependency_manifest: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
-    release_metadata: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    dependency_manifest: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    release_metadata: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
-    function: Mapped["Function"] = relationship(back_populates="releases", foreign_keys=[function_id])
-    runs: Mapped[List["FunctionRun"]] = relationship(
+    function: Mapped["Function"] = relationship(
+        back_populates="releases", foreign_keys=[function_id]
+    )
+    runs: Mapped[list["FunctionRun"]] = relationship(
         back_populates="function_release",
         cascade="all, delete-orphan",
         foreign_keys="FunctionRun.function_release_id",
@@ -435,18 +452,18 @@ class FunctionRun(Base):
     function_id: Mapped[int] = mapped_column(
         Integer, ForeignKey("functions.id", ondelete="CASCADE"), nullable=False
     )
-    function_release_id: Mapped[Optional[int]] = mapped_column(
+    function_release_id: Mapped[int | None] = mapped_column(
         Integer, ForeignKey("function_releases.id", ondelete="SET NULL"), nullable=True
     )
     status: Mapped[str] = mapped_column(String(50), nullable=False, default="running")
-    duration_ms: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
-    input_summary: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    output_summary: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    error_class: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
-    error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    runtime_context: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    duration_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    input_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    output_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    error_class: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    runtime_context: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     started_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
-    finished_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
     function: Mapped["Function"] = relationship(back_populates="runs", foreign_keys=[function_id])
@@ -465,19 +482,21 @@ class FunctionBuildRun(Base):
     )
     action: Mapped[str] = mapped_column(String(50), nullable=False, default="build")
     status: Mapped[str] = mapped_column(String(50), nullable=False, default="running")
-    phase: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    phase: Mapped[str | None] = mapped_column(String(50), nullable=True)
     prompt: Mapped[str] = mapped_column(Text, nullable=False, default="")
-    result_summary: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    error_summary: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    result_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    error_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
     started_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
-    finished_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
     )
 
-    function: Mapped["Function"] = relationship(back_populates="build_runs", foreign_keys=[function_id])
-    events: Mapped[List["FunctionBuildEvent"]] = relationship(
+    function: Mapped["Function"] = relationship(
+        back_populates="build_runs", foreign_keys=[function_id]
+    )
+    events: Mapped[list["FunctionBuildEvent"]] = relationship(
         back_populates="build_run",
         cascade="all, delete-orphan",
         foreign_keys="FunctionBuildEvent.build_run_id",
@@ -489,12 +508,15 @@ class FunctionBuildEvent(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
     build_run_id: Mapped[int] = mapped_column(
-        Integer, ForeignKey("function_build_runs.id", ondelete="CASCADE"), nullable=False, index=True
+        Integer,
+        ForeignKey("function_build_runs.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
     )
     phase: Mapped[str] = mapped_column(String(50), nullable=False)
     status: Mapped[str] = mapped_column(String(50), nullable=False, default="running")
-    summary: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    payload: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    payload: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
     build_run: Mapped["FunctionBuildRun"] = relationship(
@@ -507,24 +529,28 @@ class Schedule(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
-    description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
     kind: Mapped[str] = mapped_column(String(50), nullable=False, default="custom")
     status: Mapped[str] = mapped_column(String(50), nullable=False, default="active")
     target_type: Mapped[str] = mapped_column(String(20), nullable=False, default="function")
-    target_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    target_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     schedule_type: Mapped[str] = mapped_column(String(20), nullable=False, default="cron")
-    cron_expression: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
-    interval_seconds: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    cron_expression: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    interval_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)
     timezone: Mapped[str] = mapped_column(String(64), nullable=False, default="Asia/Shanghai")
-    datasource_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("datasources.id"), nullable=True)
-    function_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("functions.id"), nullable=True)
-    function_release_id: Mapped[Optional[int]] = mapped_column(
+    datasource_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("datasources.id"), nullable=True
+    )
+    function_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("functions.id"), nullable=True
+    )
+    function_release_id: Mapped[int | None] = mapped_column(
         Integer, ForeignKey("function_releases.id"), nullable=True
     )
-    input_payload: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
-    input_prompt: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    next_run_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
-    last_run_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    input_payload: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    input_prompt: Mapped[str | None] = mapped_column(Text, nullable=True)
+    next_run_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    last_run_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     max_retries: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     retry_backoff_seconds: Mapped[int] = mapped_column(Integer, nullable=False, default=60)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
@@ -532,12 +558,14 @@ class Schedule(Base):
         DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
     )
 
-    function: Mapped["Function"] = relationship(back_populates="schedules", foreign_keys=[function_id])
+    function: Mapped["Function"] = relationship(
+        back_populates="schedules", foreign_keys=[function_id]
+    )
     datasource: Mapped[Optional["DataSource"]] = relationship(back_populates="schedules")
     function_release: Mapped[Optional["FunctionRelease"]] = relationship(
         foreign_keys=[function_release_id]
     )
-    runs: Mapped[List["ScheduleRun"]] = relationship(
+    runs: Mapped[list["ScheduleRun"]] = relationship(
         back_populates="schedule", cascade="all, delete-orphan"
     )
 
@@ -555,16 +583,18 @@ class ScheduleRun(Base):
     attempt: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     retry_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     max_retries: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    correlation_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
-    target_type: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
-    runtime_run_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
-    runtime_status: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
-    conversation_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("conversations.id"), nullable=True)
-    error_summary: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    output_summary: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    output_payload: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
-    started_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
-    finished_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    correlation_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    target_type: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    runtime_run_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    runtime_status: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    conversation_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("conversations.id"), nullable=True
+    )
+    error_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    output_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    output_payload: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
     schedule: Mapped["Schedule"] = relationship(back_populates="runs")
@@ -574,7 +604,7 @@ class BuildSession(Base):
     __tablename__ = "build_sessions"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
-    conversation_id: Mapped[Optional[int]] = mapped_column(
+    conversation_id: Mapped[int | None] = mapped_column(
         Integer, ForeignKey("conversations.id", ondelete="CASCADE"), nullable=True
     )
     scope_type: Mapped[str] = mapped_column(String(50), nullable=False, default="builder")
@@ -601,7 +631,7 @@ class ObjectAuditLog(Base):
     action: Mapped[str] = mapped_column(String(100), nullable=False)
     actor: Mapped[str] = mapped_column(String(255), nullable=False)
     result: Mapped[str] = mapped_column(String(50), nullable=False)
-    detail: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    detail: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
 
@@ -623,28 +653,32 @@ class StatsRiskCandidate(Base):
         nullable=False,
         index=True,
     )
-    tenant_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    tenant_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     database_name: Mapped[str] = mapped_column(String(255), nullable=False)
     table_name: Mapped[str] = mapped_column(String(255), nullable=False)
     severity: Mapped[str] = mapped_column(String(16), nullable=False, default="low")
     score: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
     lifecycle_status: Mapped[str] = mapped_column(String(24), nullable=False, default="active")
-    source: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
-    latest_summary: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    first_seen_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
-    last_seen_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
-    expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    source: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    latest_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    first_seen_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow, nullable=False
+    )
+    last_seen_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow, nullable=False
+    )
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
     )
 
     datasource: Mapped["DataSource"] = relationship()
-    tags: Mapped[List["StatsRiskCandidateTag"]] = relationship(
+    tags: Mapped[list["StatsRiskCandidateTag"]] = relationship(
         back_populates="candidate",
         cascade="all, delete-orphan",
     )
-    runs: Mapped[List["StatsRiskAnalysisRun"]] = relationship(
+    runs: Mapped[list["StatsRiskAnalysisRun"]] = relationship(
         back_populates="candidate",
         cascade="all, delete-orphan",
     )
@@ -667,10 +701,14 @@ class StatsRiskCandidateTag(Base):
     tag_label: Mapped[str] = mapped_column(String(120), nullable=False)
     severity: Mapped[str] = mapped_column(String(16), nullable=False, default="low")
     score: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
-    facts: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    facts: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
-    first_seen_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
-    last_seen_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    first_seen_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow, nullable=False
+    )
+    last_seen_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.utcnow, nullable=False
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
@@ -698,12 +736,12 @@ class StatsRiskAnalysisRun(Base):
     )
     trigger_type: Mapped[str] = mapped_column(String(20), nullable=False, default="manual")
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="pending")
-    model: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
-    summary: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    result_payload: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
-    error_summary: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    started_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
-    finished_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    model: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    result_payload: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    error_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
@@ -726,10 +764,10 @@ class StatsRiskCollectionRun(Base):
     )
     trigger_type: Mapped[str] = mapped_column(String(20), nullable=False, default="manual")
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="pending")
-    summary: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    error_summary: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    started_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
-    finished_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    error_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
@@ -744,8 +782,8 @@ class Service(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     service_type: Mapped[str] = mapped_column(String(50), nullable=False)
-    config: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
-    resource_ref: Mapped[Optional[str]] = mapped_column(String(255), nullable=True, index=True)
+    config: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    resource_ref: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
     status: Mapped[str] = mapped_column(String(50), nullable=False, default="active")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(
@@ -758,12 +796,12 @@ class KnowledgeBase(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
-    description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    tags: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
-    source: Mapped[Optional[str]] = mapped_column(String(50), nullable=True, default="user")
-    pack_id: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
-    version: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
-    repo_subdirectory: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    tags: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    source: Mapped[str | None] = mapped_column(String(50), nullable=True, default="user")
+    pack_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    version: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    repo_subdirectory: Mapped[str | None] = mapped_column(String(255), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
@@ -778,7 +816,9 @@ class KnowledgeDocument(Base):
     __tablename__ = "knowledge_documents"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
-    kb_id: Mapped[int] = mapped_column(Integer, ForeignKey("knowledge_bases.id"), nullable=False, index=True)
+    kb_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("knowledge_bases.id"), nullable=False, index=True
+    )
     title: Mapped[str] = mapped_column(String(255), nullable=False)
     filename: Mapped[str] = mapped_column(String(255), nullable=False)
     content_path: Mapped[str] = mapped_column(String(512), nullable=False)
@@ -795,7 +835,7 @@ class PlatformSetting(Base):
     __tablename__ = "platform_settings"
 
     key: Mapped[str] = mapped_column(String(255), primary_key=True)
-    value: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    value: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
     )

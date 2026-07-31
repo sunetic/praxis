@@ -12,7 +12,9 @@ _BATCH = 1000
 _TIMEOUT_SECS = 300
 
 
-async def _delete_batched(target_ds: DataSource, table: str, time_col: str, retention_days: int) -> int:
+async def _delete_batched(
+    target_ds: DataSource, table: str, time_col: str, retention_days: int
+) -> int:
     total = 0
     deadline = time.monotonic() + _TIMEOUT_SECS
     while True:
@@ -104,7 +106,10 @@ async def run_cleanup(target_ds: DataSource) -> dict:
 
     logger.info(
         "cleanup_done stat=%s sample=%s sql_text_store=%s plan_detail_store=%s",
-        stat_deleted, sample_deleted, sql_text_store_deleted, plan_detail_store_deleted,
+        stat_deleted,
+        sample_deleted,
+        sql_text_store_deleted,
+        plan_detail_store_deleted,
     )
     return {
         "sql_audit_stat_deleted": stat_deleted,

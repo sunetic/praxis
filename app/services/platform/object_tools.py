@@ -6,17 +6,11 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any
 
-from app.core.logging import fmt_kv, get_logger
 from sqlalchemy.orm import Session, sessionmaker
 
+from app.core.logging import fmt_kv, get_logger
 from app.db.database import SessionLocal
 from app.models import models
-from app.services.function.identity import (
-    generate_unique_function_slug,
-    normalize_function_display_name,
-    normalize_function_slug,
-    validate_function_display_name,
-)
 from app.services.channel_delivery import (
     ChannelDeliveryError,
     ChannelDeliveryService,
@@ -24,17 +18,23 @@ from app.services.channel_delivery import (
     normalize_channel_provider,
     normalize_channel_status,
 )
+from app.services.function.identity import (
+    generate_unique_function_slug,
+    normalize_function_display_name,
+    normalize_function_slug,
+    validate_function_display_name,
+)
+from app.services.function.runtime import FunctionRuntimeService
 from app.services.function.strategy import (
     FunctionStrategyDecider,
     FunctionVerificationHarness,
     StrategyThresholds,
 )
-from app.services.function.runtime import FunctionRuntimeService
 from app.services.lifecycle import (
     FunctionLifecycleService,
     LifecycleValidationError,
-    PageState,
     PageLifecycleService,
+    PageState,
     ScheduleLifecycleService,
 )
 from app.services.scheduler.worker import SchedulerWorker
@@ -55,7 +55,17 @@ class ObjectToolError(Exception):
 
 
 class ObjectToolService:
-    allowed_object_types = {"page", "function", "scheduler", "datasource", "scheduler_history", "channel", "knowledge_base", "knowledge_document", "service"}
+    allowed_object_types = {
+        "page",
+        "function",
+        "scheduler",
+        "datasource",
+        "scheduler_history",
+        "channel",
+        "knowledge_base",
+        "knowledge_document",
+        "service",
+    }
     crud_actions = {"create", "read", "update", "delete", "list"}
     sensitive_actions = {
         "operate:publish",
@@ -161,7 +171,13 @@ class ObjectToolService:
         trace_id = str(payload.get("trace_id") or uuid.uuid4())
         logger.info(
             "object_tool_start %s",
-            fmt_kv(trace_id=trace_id, object_type=object_type, action=action, object_id=object_id_text, actor=actor),
+            fmt_kv(
+                trace_id=trace_id,
+                object_type=object_type,
+                action=action,
+                object_id=object_id_text,
+                actor=actor,
+            ),
         )
         try:
             self._enforce_policy(action=action, actor=actor)
@@ -184,7 +200,13 @@ class ObjectToolService:
             db.commit()
             logger.info(
                 "object_tool_success %s",
-                fmt_kv(trace_id=trace_id, object_type=object_type, action=action, object_id=object_id_text, actor=actor),
+                fmt_kv(
+                    trace_id=trace_id,
+                    object_type=object_type,
+                    action=action,
+                    object_id=object_id_text,
+                    actor=actor,
+                ),
             )
             return result
         except ObjectToolError as err:
@@ -200,13 +222,24 @@ class ObjectToolService:
                     "request_payload": payload,
                     "trace_id": trace_id,
                     "policy": {"sensitive": action in self.sensitive_actions, "actor": actor},
-                    "error": {"code": err.code, "message": err.message, "details": err.details or {}},
+                    "error": {
+                        "code": err.code,
+                        "message": err.message,
+                        "details": err.details or {},
+                    },
                 },
             )
             db.commit()
             logger.warning(
                 "object_tool_failure %s",
-                fmt_kv(trace_id=trace_id, object_type=object_type, action=action, object_id=object_id_text, actor=actor, error=err.code),
+                fmt_kv(
+                    trace_id=trace_id,
+                    object_type=object_type,
+                    action=action,
+                    object_id=object_id_text,
+                    actor=actor,
+                    error=err.code,
+                ),
             )
             raise
         except LifecycleValidationError as err:
@@ -233,7 +266,13 @@ class ObjectToolService:
             db.commit()
             logger.warning(
                 "object_tool_lifecycle_failure %s",
-                fmt_kv(trace_id=trace_id, object_type=object_type, action=action, object_id=object_id_text, actor=actor),
+                fmt_kv(
+                    trace_id=trace_id,
+                    object_type=object_type,
+                    action=action,
+                    object_id=object_id_text,
+                    actor=actor,
+                ),
             )
             raise normalized
         except Exception as err:  # pragma: no cover - defensive
@@ -255,7 +294,13 @@ class ObjectToolService:
             db.commit()
             logger.exception(
                 "object_tool_internal_error %s",
-                fmt_kv(trace_id=trace_id, object_type=object_type, action=action, object_id=object_id_text, actor=actor),
+                fmt_kv(
+                    trace_id=trace_id,
+                    object_type=object_type,
+                    action=action,
+                    object_id=object_id_text,
+                    actor=actor,
+                ),
             )
             raise ObjectToolError(code="internal_error", message=str(err))
         finally:
@@ -313,7 +358,9 @@ class ObjectToolService:
 
         if action == "read":
             if object_id is None:
-                raise ObjectToolError(code="missing_object_id", message="object_id is required for read")
+                raise ObjectToolError(
+                    code="missing_object_id", message="object_id is required for read"
+                )
             item = db.query(model_cls).filter(model_cls.id == object_id).first()
             if item is None:
                 raise ObjectToolError(
@@ -325,7 +372,9 @@ class ObjectToolService:
 
         if action == "update":
             if object_id is None:
-                raise ObjectToolError(code="missing_object_id", message="object_id is required for update")
+                raise ObjectToolError(
+                    code="missing_object_id", message="object_id is required for update"
+                )
             item = db.query(model_cls).filter(model_cls.id == object_id).first()
             if item is None:
                 raise ObjectToolError(
@@ -340,7 +389,9 @@ class ObjectToolService:
 
         if action == "delete":
             if object_id is None:
-                raise ObjectToolError(code="missing_object_id", message="object_id is required for delete")
+                raise ObjectToolError(
+                    code="missing_object_id", message="object_id is required for delete"
+                )
             item = db.query(model_cls).filter(model_cls.id == object_id).first()
             if item is None:
                 raise ObjectToolError(
@@ -370,8 +421,12 @@ class ObjectToolService:
 
         if action == "read":
             if object_id is None:
-                raise ObjectToolError(code="missing_object_id", message="object_id is required for read")
-            item = db.query(models.ScheduleRun).filter(models.ScheduleRun.id == int(object_id)).first()
+                raise ObjectToolError(
+                    code="missing_object_id", message="object_id is required for read"
+                )
+            item = (
+                db.query(models.ScheduleRun).filter(models.ScheduleRun.id == int(object_id)).first()
+            )
             if item is None:
                 raise ObjectToolError(
                     code="not_found",
@@ -403,10 +458,20 @@ class ObjectToolService:
                 raise ObjectToolError(
                     code="missing_delete_scope",
                     message="scheduler_history.delete requires at least one filter condition",
-                    details={"allowed_filters": ["where.schedule_id", "where.statuses", "policy.retention_seconds", "policy.keep_latest", "object_id"]},
+                    details={
+                        "allowed_filters": [
+                            "where.schedule_id",
+                            "where.statuses",
+                            "policy.retention_seconds",
+                            "policy.keep_latest",
+                            "object_id",
+                        ]
+                    },
                 )
             query = self._build_scheduler_history_query(db, filters=filters)
-            candidates = query.order_by(models.ScheduleRun.created_at.desc(), models.ScheduleRun.id.desc()).all()
+            candidates = query.order_by(
+                models.ScheduleRun.created_at.desc(), models.ScheduleRun.id.desc()
+            ).all()
             keep_latest = filters["keep_latest"]
             if keep_latest is not None and keep_latest > 0:
                 candidates = candidates[keep_latest:]
@@ -450,26 +515,52 @@ class ObjectToolService:
                 kbs = db.query(models.KnowledgeBase).order_by(models.KnowledgeBase.id).all()
                 items = []
                 for kb in kbs:
-                    doc_count = db.query(models.KnowledgeDocument).filter(models.KnowledgeDocument.kb_id == kb.id).count()
-                    items.append({
-                        "id": kb.id,
-                        "name": kb.name,
-                        "description": kb.description,
-                        "tags": kb.tags or [],
-                        "document_count": doc_count,
-                        "doc_root": f"data/knowledge/{kb.id}/",
-                    })
-                return {"object_type": object_type, "action": "list", "count": len(items), "items": items}
+                    doc_count = (
+                        db.query(models.KnowledgeDocument)
+                        .filter(models.KnowledgeDocument.kb_id == kb.id)
+                        .count()
+                    )
+                    items.append(
+                        {
+                            "id": kb.id,
+                            "name": kb.name,
+                            "description": kb.description,
+                            "tags": kb.tags or [],
+                            "document_count": doc_count,
+                            "doc_root": f"data/knowledge/{kb.id}/",
+                        }
+                    )
+                return {
+                    "object_type": object_type,
+                    "action": "list",
+                    "count": len(items),
+                    "items": items,
+                }
             if action == "read":
                 if object_id is None:
-                    raise ObjectToolError(code="missing_object_id", message="object_id is required for read")
-                kb = db.query(models.KnowledgeBase).filter(models.KnowledgeBase.id == object_id).first()
+                    raise ObjectToolError(
+                        code="missing_object_id", message="object_id is required for read"
+                    )
+                kb = (
+                    db.query(models.KnowledgeBase)
+                    .filter(models.KnowledgeBase.id == object_id)
+                    .first()
+                )
                 if kb is None:
-                    raise ObjectToolError(code="not_found", message=f"knowledge_base {object_id} not found")
-                doc_count = db.query(models.KnowledgeDocument).filter(models.KnowledgeDocument.kb_id == kb.id).count()
+                    raise ObjectToolError(
+                        code="not_found", message=f"knowledge_base {object_id} not found"
+                    )
+                doc_count = (
+                    db.query(models.KnowledgeDocument)
+                    .filter(models.KnowledgeDocument.kb_id == kb.id)
+                    .count()
+                )
                 return {
-                    "id": kb.id, "name": kb.name, "description": kb.description,
-                    "tags": kb.tags or [], "document_count": doc_count,
+                    "id": kb.id,
+                    "name": kb.name,
+                    "description": kb.description,
+                    "tags": kb.tags or [],
+                    "document_count": doc_count,
                     "doc_root": f"data/knowledge/{kb.id}/",
                 }
 
@@ -477,7 +568,10 @@ class ObjectToolService:
             if action == "list":
                 kb_id = payload.get("kb_id")
                 if kb_id is None:
-                    raise ObjectToolError(code="invalid_payload", message="knowledge_document.list requires payload.kb_id")
+                    raise ObjectToolError(
+                        code="invalid_payload",
+                        message="knowledge_document.list requires payload.kb_id",
+                    )
                 docs = (
                     db.query(models.KnowledgeDocument)
                     .filter(models.KnowledgeDocument.kb_id == int(kb_id))
@@ -485,18 +579,42 @@ class ObjectToolService:
                     .all()
                 )
                 return {
-                    "object_type": object_type, "action": "list", "count": len(docs),
-                    "items": [{"id": d.id, "title": d.title, "filename": d.filename,
-                               "content_path": d.content_path, "size_bytes": d.size_bytes} for d in docs],
+                    "object_type": object_type,
+                    "action": "list",
+                    "count": len(docs),
+                    "items": [
+                        {
+                            "id": d.id,
+                            "title": d.title,
+                            "filename": d.filename,
+                            "content_path": d.content_path,
+                            "size_bytes": d.size_bytes,
+                        }
+                        for d in docs
+                    ],
                 }
             if action == "read":
                 if object_id is None:
-                    raise ObjectToolError(code="missing_object_id", message="object_id is required for read")
-                doc = db.query(models.KnowledgeDocument).filter(models.KnowledgeDocument.id == object_id).first()
+                    raise ObjectToolError(
+                        code="missing_object_id", message="object_id is required for read"
+                    )
+                doc = (
+                    db.query(models.KnowledgeDocument)
+                    .filter(models.KnowledgeDocument.id == object_id)
+                    .first()
+                )
                 if doc is None:
-                    raise ObjectToolError(code="not_found", message=f"knowledge_document {object_id} not found")
-                return {"id": doc.id, "kb_id": doc.kb_id, "title": doc.title, "filename": doc.filename,
-                        "content_path": doc.content_path, "size_bytes": doc.size_bytes}
+                    raise ObjectToolError(
+                        code="not_found", message=f"knowledge_document {object_id} not found"
+                    )
+                return {
+                    "id": doc.id,
+                    "kb_id": doc.kb_id,
+                    "title": doc.title,
+                    "filename": doc.filename,
+                    "content_path": doc.content_path,
+                    "size_bytes": doc.size_bytes,
+                }
 
         raise ObjectToolError(code="invalid_action", message=f"Unsupported action: {action}")
 
@@ -535,7 +653,9 @@ class ObjectToolService:
             }
 
         if object_id is None:
-            raise ObjectToolError(code="missing_object_id", message="object_id is required for read")
+            raise ObjectToolError(
+                code="missing_object_id", message="object_id is required for read"
+            )
         svc = db.query(models.Service).filter(models.Service.id == object_id).first()
         if svc is None:
             raise ObjectToolError(code="not_found", message=f"service {object_id} not found")
@@ -585,7 +705,9 @@ class ObjectToolService:
                     )
                 self._page_lifecycle.rollback(page, target_release_id=release_id)
             else:
-                raise ObjectToolError(code="invalid_action", message=f"Unsupported page action: {action}")
+                raise ObjectToolError(
+                    code="invalid_action", message=f"Unsupported page action: {action}"
+                )
             db.commit()
             db.refresh(page)
             return self._serialize_model(page)
@@ -596,12 +718,11 @@ class ObjectToolService:
                 raise ObjectToolError(code="not_found", message=f"function {object_id} not found")
             if action == "strategy":
                 requirement_text = str(
-                    payload.get("requirement")
-                    or function.description
-                    or function.name
-                    or ""
+                    payload.get("requirement") or function.description or function.name or ""
                 )
-                contract = payload.get("contract") if isinstance(payload.get("contract"), dict) else None
+                contract = (
+                    payload.get("contract") if isinstance(payload.get("contract"), dict) else None
+                )
                 force_strategy = payload.get("force_strategy")
                 thresholds = StrategyThresholds(
                     reuse=float(payload.get("reuse_threshold", 0.82)),
@@ -623,7 +744,9 @@ class ObjectToolService:
                 }
             if action == "verify":
                 code_snapshot = payload.get("code_snapshot") or function.draft_code or ""
-                dependency_manifest = payload.get("dependency_manifest") or function.draft_dependencies
+                dependency_manifest = (
+                    payload.get("dependency_manifest") or function.draft_dependencies
+                )
                 verification = self._function_verifier.verify_draft(
                     code_snapshot=code_snapshot,
                     dependency_manifest=dependency_manifest,
@@ -642,12 +765,11 @@ class ObjectToolService:
                         message="release requires code_snapshot or existing draft_code",
                     )
                 requirement_text = str(
-                    payload.get("requirement")
-                    or function.description
-                    or function.name
-                    or ""
+                    payload.get("requirement") or function.description or function.name or ""
                 )
-                contract = payload.get("contract") if isinstance(payload.get("contract"), dict) else None
+                contract = (
+                    payload.get("contract") if isinstance(payload.get("contract"), dict) else None
+                )
                 strategy_decision = self._function_strategy.decide(
                     db,
                     requirement_text=requirement_text,
@@ -665,7 +787,8 @@ class ObjectToolService:
                 )
                 verification = self._function_verifier.verify_draft(
                     code_snapshot=code_snapshot,
-                    dependency_manifest=payload.get("dependency_manifest") or function.draft_dependencies,
+                    dependency_manifest=payload.get("dependency_manifest")
+                    or function.draft_dependencies,
                 )
                 if not verification["passed"]:
                     raise ObjectToolError(
@@ -693,7 +816,8 @@ class ObjectToolService:
                 release = self._function_lifecycle.release(
                     function,
                     code_snapshot=code_snapshot,
-                    dependency_manifest=payload.get("dependency_manifest") or function.draft_dependencies,
+                    dependency_manifest=payload.get("dependency_manifest")
+                    or function.draft_dependencies,
                     release_metadata=enriched_metadata,
                 )
                 db.commit()
@@ -735,7 +859,9 @@ class ObjectToolService:
                     "output": result.output,
                     "duration_ms": result.duration_ms,
                 }
-            raise ObjectToolError(code="invalid_action", message=f"Unsupported function action: {action}")
+            raise ObjectToolError(
+                code="invalid_action", message=f"Unsupported function action: {action}"
+            )
 
         if object_type == "scheduler":
             schedule = db.query(models.Schedule).filter(models.Schedule.id == object_id).first()
@@ -771,7 +897,9 @@ class ObjectToolService:
             if action == "list-runs":
                 limit = payload.get("limit", 20)
                 if not isinstance(limit, int) or limit <= 0:
-                    raise ObjectToolError(code="invalid_limit", message="limit must be positive integer")
+                    raise ObjectToolError(
+                        code="invalid_limit", message="limit must be positive integer"
+                    )
                 runs = (
                     db.query(models.ScheduleRun)
                     .filter(models.ScheduleRun.schedule_id == schedule.id)
@@ -786,7 +914,9 @@ class ObjectToolService:
                     "count": len(runs),
                     "runs": [self._serialize_model(run) for run in runs],
                 }
-            raise ObjectToolError(code="invalid_action", message=f"Unsupported scheduler action: {action}")
+            raise ObjectToolError(
+                code="invalid_action", message=f"Unsupported scheduler action: {action}"
+            )
 
         if object_type == "datasource":
             raise ObjectToolError(
@@ -799,7 +929,9 @@ class ObjectToolService:
             if channel is None:
                 raise ObjectToolError(code="not_found", message=f"channel {object_id} not found")
             if action != "send":
-                raise ObjectToolError(code="invalid_action", message=f"Unsupported channel action: {action}")
+                raise ObjectToolError(
+                    code="invalid_action", message=f"Unsupported channel action: {action}"
+                )
             try:
                 result = await self._channel_delivery.send(channel=channel, payload=payload)
             except ChannelDeliveryError as err:
@@ -816,13 +948,17 @@ class ObjectToolService:
                 "result": result,
             }
 
-        raise ObjectToolError(code="invalid_object_type", message=f"Unsupported object type: {object_type}")
+        raise ObjectToolError(
+            code="invalid_object_type", message=f"Unsupported object type: {object_type}"
+        )
 
     def _create_object(self, db: Session, object_type: str, payload: dict[str, Any]):
         if object_type == "page":
             name = payload.get("name")
             if not isinstance(name, str) or not name.strip():
-                raise ObjectToolError(code="invalid_payload", message="page.create requires non-empty name")
+                raise ObjectToolError(
+                    code="invalid_payload", message="page.create requires non-empty name"
+                )
             return models.Page(
                 name=name.strip(),
                 description=payload.get("description"),
@@ -844,7 +980,14 @@ class ObjectToolService:
             )
 
         if object_type == "scheduler":
-            target_type = str(payload.get("target_type") or ("function" if payload.get("function_id") is not None else "function")).strip().lower()
+            target_type = (
+                str(
+                    payload.get("target_type")
+                    or ("function" if payload.get("function_id") is not None else "function")
+                )
+                .strip()
+                .lower()
+            )
             raw_target_id = payload.get("target_id", payload.get("function_id"))
             if target_type not in {"function", "agent"}:
                 raise ObjectToolError(
@@ -860,18 +1003,26 @@ class ObjectToolService:
             function_id: int | None = None
             function_release_id: int | None = None
             if target_type == "function":
-                function = db.query(models.Function).filter(models.Function.id == raw_target_id).first()
+                function = (
+                    db.query(models.Function).filter(models.Function.id == raw_target_id).first()
+                )
                 if function is None:
-                    raise ObjectToolError(code="not_found", message=f"function {raw_target_id} not found")
+                    raise ObjectToolError(
+                        code="not_found", message=f"function {raw_target_id} not found"
+                    )
                 self._function_lifecycle.ensure_released_target(function)
                 function_id = function.id
                 function_release_id = function.current_release_id
             else:
                 agent = db.query(models.Agent).filter(models.Agent.id == raw_target_id).first()
                 if agent is None:
-                    raise ObjectToolError(code="not_found", message=f"agent {raw_target_id} not found")
+                    raise ObjectToolError(
+                        code="not_found", message=f"agent {raw_target_id} not found"
+                    )
                 if str(agent.status or "").strip().lower() != "active":
-                    raise ObjectToolError(code="validation_error", message="agent must be active before scheduling")
+                    raise ObjectToolError(
+                        code="validation_error", message="agent must be active before scheduling"
+                    )
 
             schedule_type = payload.get("schedule_type", "cron")
             cron_expression = payload.get("cron_expression")
@@ -884,7 +1035,9 @@ class ObjectToolService:
             )
             status = str(payload.get("status") or "active").strip().lower()
             if status not in {"active", "paused"}:
-                raise ObjectToolError(code="validation_error", message="scheduler status must be active or paused")
+                raise ObjectToolError(
+                    code="validation_error", message="scheduler status must be active or paused"
+                )
             next_run_at = None
             if status == "active":
                 next_run_at = self._schedule_lifecycle.calculate_next_run_at(
@@ -903,7 +1056,9 @@ class ObjectToolService:
                 timezone=str(payload.get("timezone") or "UTC"),
                 function_id=function_id,
                 function_release_id=function_release_id,
-                input_payload=payload.get("input_payload") if isinstance(payload.get("input_payload"), dict) else None,
+                input_payload=payload.get("input_payload")
+                if isinstance(payload.get("input_payload"), dict)
+                else None,
                 input_prompt=input_prompt,
                 next_run_at=next_run_at,
                 max_retries=int(payload.get("max_retries", 0)),
@@ -914,14 +1069,18 @@ class ObjectToolService:
             raw_name = payload.get("name")
             name = str(raw_name or "").strip()
             if not name:
-                raise ObjectToolError(code="invalid_payload", message="channel.create requires non-empty name")
+                raise ObjectToolError(
+                    code="invalid_payload", message="channel.create requires non-empty name"
+                )
             try:
                 provider = normalize_channel_provider(payload.get("provider", "dingtalk"))
                 status = normalize_channel_status(payload.get("status", "active"))
                 config = self._compose_channel_config(payload)
                 normalized_config = normalize_channel_config(provider=provider, config=config)
             except ChannelDeliveryError as err:
-                raise ObjectToolError(code=err.code, message=err.message, details=err.details) from err
+                raise ObjectToolError(
+                    code=err.code, message=err.message, details=err.details
+                ) from err
             return models.Channel(
                 name=name,
                 provider=provider,
@@ -947,14 +1106,18 @@ class ObjectToolService:
                 db_type=str(payload.get("db_type", "mysql")),
                 cluster_key=cluster_key,
                 tenant_role=str(payload.get("tenant_role", "user")),
-                attributes=payload.get("attributes") if isinstance(payload.get("attributes"), dict) else None,
+                attributes=payload.get("attributes")
+                if isinstance(payload.get("attributes"), dict)
+                else None,
                 user=payload["user"],
                 password=payload["password"],
                 database=payload["database"],
                 status=str(payload.get("status", "active")),
             )
 
-        raise ObjectToolError(code="invalid_object_type", message=f"Unsupported object type: {object_type}")
+        raise ObjectToolError(
+            code="invalid_object_type", message=f"Unsupported object type: {object_type}"
+        )
 
     def _update_object(
         self,
@@ -1006,7 +1169,9 @@ class ObjectToolService:
                 "status",
             }
         else:
-            raise ObjectToolError(code="invalid_object_type", message=f"Unsupported object type: {object_type}")
+            raise ObjectToolError(
+                code="invalid_object_type", message=f"Unsupported object type: {object_type}"
+            )
 
         for field, value in payload.items():
             if field in allowed and hasattr(item, field):
@@ -1024,28 +1189,49 @@ class ObjectToolService:
 
         if object_type == "scheduler":
             if "target_type" in payload or "target_id" in payload or "function_id" in payload:
-                target_type = str(
-                    payload.get("target_type")
-                    or ("function" if payload.get("function_id") is not None else item.target_type)
-                ).strip().lower()
+                target_type = (
+                    str(
+                        payload.get("target_type")
+                        or (
+                            "function"
+                            if payload.get("function_id") is not None
+                            else item.target_type
+                        )
+                    )
+                    .strip()
+                    .lower()
+                )
                 raw_target_id = payload.get("target_id", payload.get("function_id", item.target_id))
                 if target_type not in {"function", "agent"} or not isinstance(raw_target_id, int):
-                    raise ObjectToolError(code="invalid_payload", message="scheduler target update is invalid")
+                    raise ObjectToolError(
+                        code="invalid_payload", message="scheduler target update is invalid"
+                    )
                 item.target_type = target_type
                 item.target_id = raw_target_id
                 if target_type == "function":
-                    function = db.query(models.Function).filter(models.Function.id == raw_target_id).first()
+                    function = (
+                        db.query(models.Function)
+                        .filter(models.Function.id == raw_target_id)
+                        .first()
+                    )
                     if function is None:
-                        raise ObjectToolError(code="not_found", message=f"function {raw_target_id} not found")
+                        raise ObjectToolError(
+                            code="not_found", message=f"function {raw_target_id} not found"
+                        )
                     self._function_lifecycle.ensure_released_target(function)
                     item.function_id = function.id
                     item.function_release_id = function.current_release_id
                 else:
                     agent = db.query(models.Agent).filter(models.Agent.id == raw_target_id).first()
                     if agent is None:
-                        raise ObjectToolError(code="not_found", message=f"agent {raw_target_id} not found")
+                        raise ObjectToolError(
+                            code="not_found", message=f"agent {raw_target_id} not found"
+                        )
                     if str(agent.status or "").strip().lower() != "active":
-                        raise ObjectToolError(code="validation_error", message="agent must be active before scheduling")
+                        raise ObjectToolError(
+                            code="validation_error",
+                            message="agent must be active before scheduling",
+                        )
                     item.function_id = None
                     item.function_release_id = None
             if "input_prompt" in payload:
@@ -1073,7 +1259,9 @@ class ObjectToolService:
                 merged_config = self._compose_channel_config(payload, current=item.config)
                 item.config = normalize_channel_config(provider=item.provider, config=merged_config)
             except ChannelDeliveryError as err:
-                raise ObjectToolError(code=err.code, message=err.message, details=err.details) from err
+                raise ObjectToolError(
+                    code=err.code, message=err.message, details=err.details
+                ) from err
 
     def _resolve_model(self, object_type: str):
         mapping = {
@@ -1088,7 +1276,9 @@ class ObjectToolService:
         }
         model_cls = mapping.get(object_type)
         if model_cls is None:
-            raise ObjectToolError(code="invalid_object_type", message=f"Unsupported object type: {object_type}")
+            raise ObjectToolError(
+                code="invalid_object_type", message=f"Unsupported object type: {object_type}"
+            )
         return model_cls
 
     def _compose_channel_config(
@@ -1184,17 +1374,27 @@ class ObjectToolService:
         schedule_id = where.get("schedule_id")
         if schedule_id is not None:
             if not isinstance(schedule_id, int) or schedule_id <= 0:
-                raise ObjectToolError(code="invalid_payload", message="where.schedule_id must be positive integer")
+                raise ObjectToolError(
+                    code="invalid_payload", message="where.schedule_id must be positive integer"
+                )
 
         raw_statuses = where.get("statuses")
         statuses: list[str] | None = None
         if raw_statuses is not None:
             if not isinstance(raw_statuses, list) or not raw_statuses:
-                raise ObjectToolError(code="invalid_payload", message="where.statuses must be a non-empty string list")
-            normalized_statuses = [str(item or "").strip().lower() for item in raw_statuses if str(item or "").strip()]
+                raise ObjectToolError(
+                    code="invalid_payload", message="where.statuses must be a non-empty string list"
+                )
+            normalized_statuses = [
+                str(item or "").strip().lower() for item in raw_statuses if str(item or "").strip()
+            ]
             if not normalized_statuses:
-                raise ObjectToolError(code="invalid_payload", message="where.statuses must be a non-empty string list")
-            unknown_statuses = sorted({item for item in normalized_statuses if item not in SCHEDULER_HISTORY_STATUS_ENUM})
+                raise ObjectToolError(
+                    code="invalid_payload", message="where.statuses must be a non-empty string list"
+                )
+            unknown_statuses = sorted(
+                {item for item in normalized_statuses if item not in SCHEDULER_HISTORY_STATUS_ENUM}
+            )
             if unknown_statuses:
                 raise ObjectToolError(
                     code="invalid_payload",
@@ -1205,12 +1405,18 @@ class ObjectToolService:
         retention_seconds = policy.get("retention_seconds")
         if retention_seconds is not None:
             if not isinstance(retention_seconds, int) or retention_seconds <= 0:
-                raise ObjectToolError(code="invalid_payload", message="policy.retention_seconds must be positive integer")
+                raise ObjectToolError(
+                    code="invalid_payload",
+                    message="policy.retention_seconds must be positive integer",
+                )
 
         keep_latest = policy.get("keep_latest")
         if keep_latest is not None:
             if not isinstance(keep_latest, int) or keep_latest < 0:
-                raise ObjectToolError(code="invalid_payload", message="policy.keep_latest must be non-negative integer")
+                raise ObjectToolError(
+                    code="invalid_payload",
+                    message="policy.keep_latest must be non-negative integer",
+                )
 
         unknown_where_keys = sorted(set(where.keys()) - {"schedule_id", "statuses"})
         if unknown_where_keys:

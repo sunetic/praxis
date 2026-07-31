@@ -48,15 +48,12 @@ class PageContextWriter:
 
         sections.append("# Page Build Context\n")
         sections.append(
-            "You are building a Praxis Page.\n"
-            "Follow the rules and contract below strictly.\n"
+            "You are building a Praxis Page.\nFollow the rules and contract below strictly.\n"
         )
 
         # ── Template Catalog ──
         sections.append("## Template Catalog\n")
-        sections.append(
-            "Choose one of the following templates as your structural baseline:\n"
-        )
+        sections.append("Choose one of the following templates as your structural baseline:\n")
         sections.append(
             "- **data_workbench**: FilterToolbar + StatCards + Charts(3/5+2/5) + ListTable + PaginationFooter + DetailDrawer. "
             "Best for diagnostics/inspection/reporting pages.\n"
@@ -116,8 +113,8 @@ class PageContextWriter:
             "- If the goal is clear and maps to one of the template structures, PROCEED.\n\n"
             "When the goal is too complex or needs clarification:\n"
             "- Do NOT write any code.\n"
-            "- Return a JSON result: `{\"result_status\": \"too_complex\", \"result\": \"<explanation and suggested decomposition>\"}` "
-            "or `{\"result_status\": \"needs_clarification\", \"result\": \"<specific questions>\"}`.\n\n"
+            '- Return a JSON result: `{"result_status": "too_complex", "result": "<explanation and suggested decomposition>"}` '
+            'or `{"result_status": "needs_clarification", "result": "<specific questions>"}`.\n\n'
             "### Stage 2: Requirement Refinement\n\n"
             "If the goal passes complexity assessment:\n"
             "- Identify which template to use as structural baseline.\n"

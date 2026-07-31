@@ -14,18 +14,23 @@ from app.models import models
 from app.services.platform.coding_engine import (
     AiderLikeAdapter,
     CodingEngineAdapter,
+    CodingEngineApplyResult,
     CodingEngineEdit,
     CodingEnginePlan,
-    CodingEngineApplyResult,
     PiLiteAdapter,
 )
 
 try:
     from app.services.page.preview_theme import (
         build_default_page_preview_html as _build_default_page_preview_html,
+    )
+    from app.services.page.preview_theme import (
         build_default_page_source_code as _build_default_page_source_code,
+    )
+    from app.services.page.preview_theme import (
         ensure_page_preview_theme as _ensure_page_preview_theme,
     )
+
     _has_page = True
 except ImportError:
     _has_page = False
@@ -57,21 +62,21 @@ def _strip_duplicate_flags(command: str, pre_flags: str, post_flags: str) -> str
         return ""
     pre_words = _split_shell_words(pre_flags)
     post_words = _split_shell_words(post_flags)
-    if pre_words and command_words[-len(pre_words):] == pre_words:
-        command_words = command_words[:-len(pre_words)]
-    if post_words and command_words[-len(post_words):] == post_words:
-        command_words = command_words[:-len(post_words)]
+    if pre_words and command_words[-len(pre_words) :] == pre_words:
+        command_words = command_words[: -len(pre_words)]
+    if post_words and command_words[-len(post_words) :] == post_words:
+        command_words = command_words[: -len(post_words)]
     if post_words and len(command_words) >= len(post_words):
         max_start = len(command_words) - len(post_words)
         for start in range(max(1, max_start), max_start + 1):
-            if command_words[start:start + len(post_words)] == post_words:
-                del command_words[start:start + len(post_words)]
+            if command_words[start : start + len(post_words)] == post_words:
+                del command_words[start : start + len(post_words)]
                 break
     if pre_words and len(command_words) >= len(pre_words):
         max_start = len(command_words) - len(pre_words)
         for start in range(1, max_start + 1):
-            if command_words[start:start + len(pre_words)] == pre_words:
-                del command_words[start:start + len(pre_words)]
+            if command_words[start : start + len(pre_words)] == pre_words:
+                del command_words[start : start + len(pre_words)]
                 break
     return " ".join(command_words)
 
@@ -83,8 +88,8 @@ def _resolve_adapter() -> CodingEngineAdapter:
     pre_flags = ""
     post_flags = ""
     try:
-        from app.db.database import SessionLocal
         from app.api.settings import get_setting
+        from app.db.database import SessionLocal
 
         db = SessionLocal()
         try:
@@ -101,7 +106,9 @@ def _resolve_adapter() -> CodingEngineAdapter:
             if stored_post:
                 post_flags = str(stored_post).strip()
             if external_cli_command:
-                external_cli_command = _strip_duplicate_flags(external_cli_command, pre_flags, post_flags)
+                external_cli_command = _strip_duplicate_flags(
+                    external_cli_command, pre_flags, post_flags
+                )
         finally:
             db.close()
     except Exception:
@@ -135,7 +142,9 @@ class WorkspaceStore:
     DB remains source of truth for lifecycle/governance metadata.
     """
 
-    def __init__(self, root: Path | None = None, adapter: CodingEngineAdapter | None = None) -> None:
+    def __init__(
+        self, root: Path | None = None, adapter: CodingEngineAdapter | None = None
+    ) -> None:
         configured = os.getenv("PRAXIS_WORKSPACE_ROOT")
         if root is not None:
             self.root = root
@@ -148,7 +157,10 @@ class WorkspaceStore:
         self._ensure_git_repo()
         if adapter is not None:
             self._adapter = adapter
-            logger.info("workspace_store_adapter %s", fmt_kv(adapter_type=type(adapter).__name__, root=self.root))
+            logger.info(
+                "workspace_store_adapter %s",
+                fmt_kv(adapter_type=type(adapter).__name__, root=self.root),
+            )
         else:
             self._adapter = _resolve_adapter()
             logger.info(
@@ -194,11 +206,17 @@ class WorkspaceStore:
         main_path = target_dir / "main.tsx"
         manifest_path = target_dir / "manifest.json"
         draft_payload = page.draft_payload if isinstance(page.draft_payload, dict) else {}
-        source = draft_payload.get("source") if isinstance(draft_payload.get("source"), dict) else {}
-        runtime = draft_payload.get("runtime") if isinstance(draft_payload.get("runtime"), dict) else {}
+        source = (
+            draft_payload.get("source") if isinstance(draft_payload.get("source"), dict) else {}
+        )
+        runtime = (
+            draft_payload.get("runtime") if isinstance(draft_payload.get("runtime"), dict) else {}
+        )
         source_code = str(source.get("code") or "")
         preview_html = str(runtime.get("preview_html") or "")
-        if self._should_refresh_legacy_page_baseline(source_code=source_code, preview_html=preview_html):
+        if self._should_refresh_legacy_page_baseline(
+            source_code=source_code, preview_html=preview_html
+        ):
             source_code = _build_default_page_source_code()
             preview_html = _build_default_page_preview_html()
         else:
@@ -303,7 +321,11 @@ class WorkspaceStore:
         result = self._adapter.apply_changes(workspace_dir=target_dir, plan=plan)
         logger.info(
             "workspace_apply_function_goal %s",
-            fmt_kv(function_id=function.id, changed_files=",".join(result.changed_files), adapter=type(self._adapter).__name__),
+            fmt_kv(
+                function_id=function.id,
+                changed_files=",".join(result.changed_files),
+                adapter=type(self._adapter).__name__,
+            ),
         )
         main_path = target_dir / "main.py"
         if main_path.exists():
@@ -323,6 +345,7 @@ class WorkspaceStore:
         target_dir.mkdir(parents=True, exist_ok=True)
         self.sync_page_draft(page)
         from app.services.page.context_writer import PageContextWriter
+
         PageContextWriter().write(
             workspace_dir=target_dir,
             goal=goal,
@@ -336,21 +359,37 @@ class WorkspaceStore:
         result = self._adapter.apply_changes(workspace_dir=target_dir, plan=plan)
         logger.info(
             "workspace_apply_page_goal %s",
-            fmt_kv(page_id=page.id, changed_files=",".join(result.changed_files), adapter=type(self._adapter).__name__),
+            fmt_kv(
+                page_id=page.id,
+                changed_files=",".join(result.changed_files),
+                adapter=type(self._adapter).__name__,
+            ),
         )
         main_path = target_dir / "main.tsx"
         preview_path = target_dir / "preview.html"
         if main_path.exists():
             code = main_path.read_text(encoding="utf-8")
-            draft_payload = deepcopy(page.draft_payload) if isinstance(page.draft_payload, dict) else {}
-            source = deepcopy(draft_payload.get("source")) if isinstance(draft_payload.get("source"), dict) else {}
-            runtime = deepcopy(draft_payload.get("runtime")) if isinstance(draft_payload.get("runtime"), dict) else {}
+            draft_payload = (
+                deepcopy(page.draft_payload) if isinstance(page.draft_payload, dict) else {}
+            )
+            source = (
+                deepcopy(draft_payload.get("source"))
+                if isinstance(draft_payload.get("source"), dict)
+                else {}
+            )
+            runtime = (
+                deepcopy(draft_payload.get("runtime"))
+                if isinstance(draft_payload.get("runtime"), dict)
+                else {}
+            )
             source["code"] = code
             source["language"] = str(source.get("language") or "tsx")
             draft_payload["source"] = source
             runtime["framework"] = str(runtime.get("framework") or "html")
             if preview_path.exists():
-                runtime["preview_html"] = _ensure_page_preview_theme(preview_path.read_text(encoding="utf-8"))
+                runtime["preview_html"] = _ensure_page_preview_theme(
+                    preview_path.read_text(encoding="utf-8")
+                )
             else:
                 runtime["preview_html"] = _ensure_page_preview_theme(
                     str(runtime.get("preview_html") or _build_default_page_preview_html())
@@ -360,7 +399,9 @@ class WorkspaceStore:
             page.draft_payload = draft_payload
         return result
 
-    def commit_publish(self, *, object_type: str, object_id: int, action: str, summary: str | None = None) -> str | None:
+    def commit_publish(
+        self, *, object_type: str, object_id: int, action: str, summary: str | None = None
+    ) -> str | None:
         self._ensure_git_repo()
         self._run_git(["add", "objects"])
         if not self._has_staged_changes():

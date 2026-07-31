@@ -56,6 +56,7 @@ async def collector_status(
         raise HTTPException(status_code=404, detail=str(e))
 
     from app.db.connection import DBConnectionPool
+
     pool = DBConnectionPool()
     cp_result = await pool.execute_query(
         target_ds,
@@ -63,7 +64,9 @@ async def collector_status(
         "FROM collector_checkpoints WHERE source_type LIKE %s",
         params=[f"%_{source_ds.id}"],
     )
-    checkpoints = [r if isinstance(r, dict) else dict(zip(cp_result["columns"], r)) for r in cp_result["rows"]]
+    checkpoints = [
+        r if isinstance(r, dict) else dict(zip(cp_result["columns"], r)) for r in cp_result["rows"]
+    ]
     wl_size = await watchlist.get_size(target_ds, source_ds.id)
 
     return {

@@ -64,8 +64,14 @@ def test_patch_settings_normalizes_external_cli_command(tmp_path: Path, monkeypa
         assert payload["build_engine"] == "external_cli"
         # Settings endpoint stores the command as-is; normalization
         # (strip_duplicate_flags) is applied at workspace build time, not on save.
-        assert payload["external_cli_command"] == "claude -p --output-format json --permission-mode bypassPermissions --allowedTools Edit Read Write Bash"
-        assert payload["external_cli_pre_flags"] == "-p --output-format json --permission-mode bypassPermissions"
+        assert (
+            payload["external_cli_command"]
+            == "claude -p --output-format json --permission-mode bypassPermissions --allowedTools Edit Read Write Bash"
+        )
+        assert (
+            payload["external_cli_pre_flags"]
+            == "-p --output-format json --permission-mode bypassPermissions"
+        )
         assert payload["external_cli_post_flags"] == "--allowedTools Edit Read Write Bash"
 
     set_scheduler_worker(None)

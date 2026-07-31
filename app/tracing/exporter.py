@@ -3,7 +3,7 @@
 import json
 import sqlite3
 import threading
-from typing import Sequence
+from collections.abc import Sequence
 
 from opentelemetry.sdk.trace import ReadableSpan
 from opentelemetry.sdk.trace.export import SpanExporter, SpanExportResult
@@ -45,12 +45,8 @@ class SQLiteSpanExporter(SpanExporter):
                 )
                 """
             )
-            conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_spans_trace ON spans (trace_id)"
-            )
-            conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_spans_start ON spans (start_time_ns)"
-            )
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_spans_trace ON spans (trace_id)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_spans_start ON spans (start_time_ns)")
             conn.commit()
 
     def export(self, spans: Sequence[ReadableSpan]) -> SpanExportResult:
@@ -60,18 +56,20 @@ class SQLiteSpanExporter(SpanExporter):
         for span in spans:
             ctx = span.get_span_context()
             parent = span.parent
-            rows.append((
-                format(ctx.trace_id, "032x"),
-                format(ctx.span_id, "016x"),
-                format(parent.span_id, "016x") if parent else None,
-                span.name,
-                span.kind.name if span.kind else None,
-                span.start_time,
-                span.end_time,
-                span.status.status_code.name if span.status else None,
-                json.dumps(dict(span.attributes) if span.attributes else {}),
-                json.dumps(dict(span.resource.attributes) if span.resource else {}),
-            ))
+            rows.append(
+                (
+                    format(ctx.trace_id, "032x"),
+                    format(ctx.span_id, "016x"),
+                    format(parent.span_id, "016x") if parent else None,
+                    span.name,
+                    span.kind.name if span.kind else None,
+                    span.start_time,
+                    span.end_time,
+                    span.status.status_code.name if span.status else None,
+                    json.dumps(dict(span.attributes) if span.attributes else {}),
+                    json.dumps(dict(span.resource.attributes) if span.resource else {}),
+                )
+            )
         try:
             with self._lock:
                 conn = self._get_conn()

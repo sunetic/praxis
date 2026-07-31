@@ -15,7 +15,7 @@ def _build_session(tmp_path, filename: str):
     db_path = tmp_path / filename
     engine = create_engine(f"sqlite:///{db_path}")
     Base.metadata.create_all(engine)
-    Session = sessionmaker(bind=engine, autocommit=False, autoflush=False, expire_on_commit=False)
+    Session = sessionmaker(bind=engine, autocommit=False, autoflush=False, expire_on_commit=False)  # noqa: N806
     return engine, Session()
 
 

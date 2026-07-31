@@ -1,9 +1,9 @@
 import os
 import re
-from urllib.parse import quote
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 import yaml
 
@@ -105,7 +105,11 @@ def _render_skill_file(skill: Skill) -> str:
 
 
 class SkillStore:
-    def __init__(self, skills_dir: str = _DEFAULT_SKILLS_DIR, builtin_skills_dir: str = _DEFAULT_BUILTIN_SKILLS_DIR):
+    def __init__(
+        self,
+        skills_dir: str = _DEFAULT_SKILLS_DIR,
+        builtin_skills_dir: str = _DEFAULT_BUILTIN_SKILLS_DIR,
+    ):
         self.skills_dir = os.path.abspath(skills_dir)
         self.builtin_skills_dir = os.path.abspath(builtin_skills_dir)
         self.skills: dict[str, Skill] = {}
@@ -116,7 +120,7 @@ class SkillStore:
 
     def _parse_skill_file(self, path: str) -> Skill:
         try:
-            with open(path, "r", encoding="utf-8") as f:
+            with open(path, encoding="utf-8") as f:
                 content = f.read()
         except OSError as e:
             raise SkillValidationError(f"Read skill file failed: {str(e)}") from e
@@ -137,7 +141,9 @@ class SkillStore:
         always_apply = metadata.get("always_apply")
         source = self._resolve_skill_source(path, metadata.get("source"))
         prompt_text = prompt.strip()
-        _validate_skill_fields(name, version, description, database, always_apply, prompt_text, source)
+        _validate_skill_fields(
+            name, version, description, database, always_apply, prompt_text, source
+        )
         rules, reference = _split_rules_reference(prompt_text)
         return Skill(
             name=name,
@@ -220,12 +226,25 @@ class SkillStore:
                         continue
                     if skill.name in self.skills:
                         conflict = self.skills[skill.name]
-                        logger.warning("skill_name_conflict %s", fmt_kv(name=skill.name, kept=conflict.path, ignored=path))
-                        self.errors.append({"path": path, "error": f"Duplicate skill name '{skill.name}', ignored"})
+                        logger.warning(
+                            "skill_name_conflict %s",
+                            fmt_kv(name=skill.name, kept=conflict.path, ignored=path),
+                        )
+                        self.errors.append(
+                            {"path": path, "error": f"Duplicate skill name '{skill.name}', ignored"}
+                        )
                         continue
                     self.skills[skill.name] = skill
                     loaded.append(skill)
-        logger.info("skill_load_done %s", fmt_kv(skills_dir=self.skills_dir, scanned=scanned_count, loaded=len(loaded), errors=len(self.errors)))
+        logger.info(
+            "skill_load_done %s",
+            fmt_kv(
+                skills_dir=self.skills_dir,
+                scanned=scanned_count,
+                loaded=len(loaded),
+                errors=len(self.errors),
+            ),
+        )
         return loaded
 
     def get(self, name: str) -> Skill | None:

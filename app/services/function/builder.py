@@ -4,8 +4,8 @@ import asyncio
 import copy
 import json
 import re
-import time
 import threading
+import time
 from collections.abc import Awaitable
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -18,6 +18,7 @@ from app.core.logging import fmt_kv, get_logger
 from app.models import models as db_models
 from app.services.llm import LLMClient, get_llm_client
 from app.services.platform.prompt_loader import PromptLoader
+
 logger = get_logger("builder.runtime")
 
 
@@ -41,6 +42,7 @@ def _normalize_sqlalchemy_type(type_obj: Any) -> str:
     if isinstance(type_obj, JSON):
         return "object"
     return str(type_obj).lower()
+
 
 @dataclass(frozen=True)
 class FunctionBuildResult:
@@ -68,7 +70,6 @@ class FunctionBuildRunResult:
     draft_dependencies: dict[str, Any]
     events: list[FunctionBuildRunEvent]
     error_summary: str | None = None
-
 
 
 class FunctionBuilderService:
@@ -212,7 +213,11 @@ class FunctionBuilderService:
                 run_id=run_id,
                 status="done",
                 phase="verified",
-                summary=str(spec["meta"].get("summary") or spec.get("summary") or "Function draft generated."),
+                summary=str(
+                    spec["meta"].get("summary")
+                    or spec.get("summary")
+                    or "Function draft generated."
+                ),
                 draft_code=draft_code,
                 draft_dependencies=dependencies,
                 events=events,
@@ -315,7 +320,9 @@ class FunctionBuilderService:
             raw = self._run_async_safely(self._call_llm_for_json(messages=messages))
             parsed = self._parse_json_patch(raw)
             payload_obj = parsed.get("payload") if isinstance(parsed.get("payload"), dict) else {}
-            contract_fields = [item for item in (spec.get("input_contract") or []) if isinstance(item, dict)]
+            contract_fields = [
+                item for item in (spec.get("input_contract") or []) if isinstance(item, dict)
+            ]
             contract_names = {
                 str(item.get("name") or "").strip()
                 for item in contract_fields
@@ -326,16 +333,18 @@ class FunctionBuilderService:
                 for item in contract_fields
                 if str(item.get("name") or "").strip() and bool(item.get("required"))
             }
-            invalid_keys = sorted(str(key) for key in payload_obj.keys() if str(key) not in contract_names)
+            invalid_keys = sorted(
+                str(key) for key in payload_obj.keys() if str(key) not in contract_names
+            )
             missing_required = sorted(name for name in required_names if name not in payload_obj)
             protocol_missing: list[str] = []
             if invalid_keys:
                 protocol_missing.append(
-                "payload contains undeclared fields: " + ", ".join(invalid_keys)
+                    "payload contains undeclared fields: " + ", ".join(invalid_keys)
                 )
             if missing_required:
                 protocol_missing.append(
-                "payload is missing required fields: " + ", ".join(missing_required)
+                    "payload is missing required fields: " + ", ".join(missing_required)
                 )
             return {
                 "payload": payload_obj,
@@ -357,7 +366,9 @@ class FunctionBuilderService:
                 "payload": {"rows": [1, 2, 3]},
                 "rationale": "Provided minimal runnable input sample; adjust as needed before execution.",
                 "missing_information": [],
-                "assumptions": ["No specific business context provided; using generic sample input."],
+                "assumptions": [
+                    "No specific business context provided; using generic sample input."
+                ],
             }
 
     def _generate_function_spec_with_retry(
@@ -447,18 +458,18 @@ class FunctionBuilderService:
             "constraints": [
                 "You must respond with JSON only.",
                 "Use Plan -> Act -> Reflect style outputs in fields: plan / output_fields / intent_summary.",
-                    "When information is insufficient to define executable behavior, ask targeted clarification_questions and provide a direct follow_up_message for the user.",
+                "When information is insufficient to define executable behavior, ask targeted clarification_questions and provide a direct follow_up_message for the user.",
                 "Before generating output, collect enough information for purpose/input/output/error handling verification.",
                 "Use retrieved_evidence as first-class facts; do not ask clarification for facts already present there.",
                 "Clarification is allowed only for evidence gaps that materially change behavior.",
                 "If information is missing, include high-signal follow-up questions in clarification_questions and list items in missing_information.",
                 "Prefer concise, concrete questions that can be answered by product users (not engineers only).",
-                    "Do not fabricate domain specifics when information is missing; ask instead.",
-                    "If user asks to proceed directly (e.g. '直接生成', '都不需要', '按默认'), proceed with explicit assumptions and provide a concise follow_up_message that states what is assumed.",
+                "Do not fabricate domain specifics when information is missing; ask instead.",
+                "If user asks to proceed directly (e.g. '直接生成', '都不需要', '按默认'), proceed with explicit assumptions and provide a concise follow_up_message that states what is assumed.",
                 "At most one clarification question in a single turn.",
                 "When default strategy is applied, explicitly describe it in default_strategy and record assumptions.",
                 "verification_checks must be executable acceptance checks (1 success + 1 failure minimum).",
-                    "follow_up_message must be a direct user-facing natural Chinese chat message, concise and direct (prefer <= 80 Chinese chars), and should be non-empty whenever clarification_questions, missing_information, or assumptions exist.",
+                "follow_up_message must be a direct user-facing natural Chinese chat message, concise and direct (prefer <= 80 Chinese chars), and should be non-empty whenever clarification_questions, missing_information, or assumptions exist.",
                 "Do not paraphrase user intent in a meta tone like '用户希望...' or '用户当前...'; speak as a direct collaborator.",
                 "Do not repeat the user prompt in follow_up_message.",
                 "input_contract must declare each input parameter with name/type/required/description, and include enum/range/default when those constraints exist.",
@@ -518,8 +529,12 @@ class FunctionBuilderService:
                         "enum": [str(item) for item in field.get("enum", []) if str(item).strip()]
                         if isinstance(field.get("enum"), list)
                         else [],
-                        "minimum": field.get("minimum") if isinstance(field.get("minimum"), (int, float)) else None,
-                        "maximum": field.get("maximum") if isinstance(field.get("maximum"), (int, float)) else None,
+                        "minimum": field.get("minimum")
+                        if isinstance(field.get("minimum"), (int, float))
+                        else None,
+                        "maximum": field.get("maximum")
+                        if isinstance(field.get("maximum"), (int, float))
+                        else None,
                         "default": field.get("default"),
                     }
                 )
@@ -562,9 +577,7 @@ class FunctionBuilderService:
             if str(item).strip()
         ]
         normalized["assumptions"] = [
-            str(item).strip()
-            for item in (normalized.get("assumptions") or [])
-            if str(item).strip()
+            str(item).strip() for item in (normalized.get("assumptions") or []) if str(item).strip()
         ]
         normalized["verification_checks"] = [
             str(item).strip()
@@ -585,13 +598,17 @@ class FunctionBuilderService:
         if not isinstance(fields, list):
             raise ValueError("function.output_fields must be an array")
 
-    def _merge_generated_spec(self, spec: dict[str, Any], generated: dict[str, Any], *, prompt: str) -> None:
+    def _merge_generated_spec(
+        self, spec: dict[str, Any], generated: dict[str, Any], *, prompt: str
+    ) -> None:
         # Reset volatile intent tags on each turn to avoid stale domain bias
         # leaking from previous builds (e.g. list_databases from older prompts).
         spec["meta"]["intent_tags"] = []
         generated_input_contract = generated.get("input_contract")
         if isinstance(generated_input_contract, list):
-            spec["input_contract"] = [copy.deepcopy(item) for item in generated_input_contract if isinstance(item, dict)]
+            spec["input_contract"] = [
+                copy.deepcopy(item) for item in generated_input_contract if isinstance(item, dict)
+            ]
         for field in generated.get("output_fields") or []:
             if not isinstance(field, dict):
                 continue
@@ -622,12 +639,22 @@ class FunctionBuilderService:
             "summary": str(spec.get("summary") or ""),
             "uses_db": bool(spec.get("uses_db")),
             "sql": str(spec.get("sql") or ""),
-            "input_contract": [copy.deepcopy(item) for item in (spec.get("input_contract") or []) if isinstance(item, dict)],
-            "output_fields": [copy.deepcopy(item) for item in (spec.get("output_fields") or []) if isinstance(item, dict)],
+            "input_contract": [
+                copy.deepcopy(item)
+                for item in (spec.get("input_contract") or [])
+                if isinstance(item, dict)
+            ],
+            "output_fields": [
+                copy.deepcopy(item)
+                for item in (spec.get("output_fields") or [])
+                if isinstance(item, dict)
+            ],
         }
 
     def _build_function_definition(self, spec: dict[str, Any]) -> str:
-        input_contract = [item for item in (spec.get("input_contract") or []) if isinstance(item, dict)]
+        input_contract = [
+            item for item in (spec.get("input_contract") or []) if isinstance(item, dict)
+        ]
         lines = [
             f"Function: {spec.get('function_name') or 'generated_function'}",
             "Signature: run(payload: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]",
@@ -653,7 +680,9 @@ class FunctionBuilderService:
                 if field.get("default") is not None:
                     extras.append(f"default={field.get('default')}")
                 suffix = f" [{' ; '.join(extras)}]" if extras else ""
-                lines.append(f"- {field.get('name')} ({field_type}, {required}): {description}{suffix}")
+                lines.append(
+                    f"- {field.get('name')} ({field_type}, {required}): {description}{suffix}"
+                )
         return "\n".join(lines)
 
     def _build_evidence_pack(
@@ -663,8 +692,12 @@ class FunctionBuilderService:
         spec: dict[str, Any],
         current_code: str | None,
     ) -> dict[str, Any]:
-        input_contract = [item for item in (spec.get("input_contract") or []) if isinstance(item, dict)]
-        output_fields = [item for item in (spec.get("output_fields") or []) if isinstance(item, dict)]
+        input_contract = [
+            item for item in (spec.get("input_contract") or []) if isinstance(item, dict)
+        ]
+        output_fields = [
+            item for item in (spec.get("output_fields") or []) if isinstance(item, dict)
+        ]
         return {
             "retrieval_version": "function-evidence-v1",
             "prompt_focus": _compact_whitespace(prompt),
@@ -732,7 +765,11 @@ class FunctionBuilderService:
         evidence_pack: dict[str, Any],
         ambiguities: list[dict[str, str]],
     ) -> list[str]:
-        ambiguity_lookup = {str(item.get("question") or "").strip() for item in ambiguities if isinstance(item, dict)}
+        ambiguity_lookup = {
+            str(item.get("question") or "").strip()
+            for item in ambiguities
+            if isinstance(item, dict)
+        }
         material: list[str] = []
         for question in questions:
             text = str(question or "").strip()
@@ -761,7 +798,9 @@ class FunctionBuilderService:
                 known_types[name] = field_type
         if not known_types:
             return False
-        asks_type = any(token in normalized for token in ["type", "int", "integer", "string", "number"])
+        asks_type = any(
+            token in normalized for token in ["type", "int", "integer", "string", "number"]
+        )
         if not asks_type:
             return False
         for name in known_types:
@@ -782,7 +821,9 @@ class FunctionBuilderService:
             break
         if response is None:
             raise ValueError("LLM returned empty response")
-        content = (((response.get("choices") or [{}])[0].get("message") or {}).get("content") or "").strip()
+        content = (
+            ((response.get("choices") or [{}])[0].get("message") or {}).get("content") or ""
+        ).strip()
         if not content:
             raise ValueError("LLM did not return a structured patch")
         return content
@@ -839,7 +880,9 @@ class FunctionBuilderService:
         current_code: str | None,
     ) -> dict[str, Any]:
         builder_spec = {}
-        if isinstance(current_dependencies, dict) and isinstance(current_dependencies.get("builder_spec"), dict):
+        if isinstance(current_dependencies, dict) and isinstance(
+            current_dependencies.get("builder_spec"), dict
+        ):
             builder_spec = copy.deepcopy(current_dependencies["builder_spec"])
 
         output_fields = builder_spec.get("output_fields")
@@ -868,7 +911,9 @@ class FunctionBuilderService:
         }
 
     def _ensure_output_field(self, spec: dict[str, Any], field: dict[str, Any]) -> None:
-        existing = next((item for item in spec["output_fields"] if item.get("name") == field["name"]), None)
+        existing = next(
+            (item for item in spec["output_fields"] if item.get("name") == field["name"]), None
+        )
         if existing is None:
             spec["output_fields"].append(field)
             return
@@ -891,7 +936,9 @@ class FunctionBuilderService:
             '        """',
             "        Input parameter contract:",
         ]
-        input_contract = [item for item in (spec.get("input_contract") or []) if isinstance(item, dict)]
+        input_contract = [
+            item for item in (spec.get("input_contract") or []) if isinstance(item, dict)
+        ]
         if input_contract:
             for field in input_contract:
                 required = "required" if bool(field.get("required")) else "optional"
@@ -905,7 +952,7 @@ class FunctionBuilderService:
         lines.extend(
             [
                 '        """',
-            "        result: dict[str, Any] = {}",
+                "        result: dict[str, Any] = {}",
             ]
         )
 
@@ -922,7 +969,11 @@ class FunctionBuilderService:
                 lines.append(f"        result[{name!r}] = len(payload.get({key!r}, []))")
 
         if spec["uses_db"]:
-            intent_tags = [str(item) for item in ((spec.get("meta") or {}).get("intent_tags") or []) if str(item)]
+            intent_tags = [
+                str(item)
+                for item in ((spec.get("meta") or {}).get("intent_tags") or [])
+                if str(item)
+            ]
             lines.extend(
                 [
                     "        datasource_id = payload.get('datasource_id') or payload.get('datasourceId') or 'default'",
@@ -965,4 +1016,3 @@ class FunctionBuilderService:
 
         lines.append("        return result")
         return "\n".join(lines) + "\n"
-

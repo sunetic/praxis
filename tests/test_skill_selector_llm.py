@@ -77,7 +77,9 @@ async def test_mysql_replication_selects_repl_skill(skill_store):
 @pytest.mark.anyio
 async def test_irrelevant_prompt_selects_nothing(skill_store):
     active = await _select(skill_store, "帮我写一个 React 登录页面，用 TypeScript")
-    assert active.isdisjoint(ALL_DB_SKILLS), f"DB skills on irrelevant prompt: {active & ALL_DB_SKILLS}"
+    assert active.isdisjoint(ALL_DB_SKILLS), (
+        f"DB skills on irrelevant prompt: {active & ALL_DB_SKILLS}"
+    )
 
 
 @pytest.mark.llm

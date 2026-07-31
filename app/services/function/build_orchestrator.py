@@ -5,6 +5,7 @@ import re
 import threading
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from datetime import UTC
 from typing import Any
 
 from sqlalchemy.orm import Session, sessionmaker
@@ -15,10 +16,10 @@ from app.services.agent.build_verify_loop import (
     VerificationOutcome,
 )
 from app.services.function.chat_agent import FunctionChatAgent
-from app.services.platform.coding_engine import CodingEngineApplyResult
 from app.services.function.runtime import FunctionRuntimeService
 from app.services.function.schema_probe import FunctionSchemaProbe
 from app.services.function.strategy import FunctionStrategyDecider, FunctionVerificationHarness
+from app.services.platform.coding_engine import CodingEngineApplyResult
 from app.services.platform.workspace_store import WorkspaceStore
 
 
@@ -124,9 +125,13 @@ class FunctionVerifier:
     ) -> dict[str, Any]:
         report = self._harness.verify_draft(
             code_snapshot=str(function.draft_code or ""),
-            dependency_manifest=function.draft_dependencies if isinstance(function.draft_dependencies, dict) else {},
+            dependency_manifest=function.draft_dependencies
+            if isinstance(function.draft_dependencies, dict)
+            else {},
         )
-        runtime_report = self._verify_runtime_samples(function=function, db=db, schema_probe=schema_probe)
+        runtime_report = self._verify_runtime_samples(
+            function=function, db=db, schema_probe=schema_probe
+        )
         report["runtime_verification"] = runtime_report
         checks = report.get("checks")
         if isinstance(checks, list):
@@ -135,8 +140,18 @@ class FunctionVerifier:
                     checks.append(item)
         diagnostics = report.get("diagnostics")
         if isinstance(diagnostics, list):
-            diagnostics.extend([str(item) for item in (runtime_report.get("diagnostics") or []) if str(item).strip()])
-        if bool(report.get("passed")) and bool(runtime_report.get("enforced")) and not bool(runtime_report.get("passed")):
+            diagnostics.extend(
+                [
+                    str(item)
+                    for item in (runtime_report.get("diagnostics") or [])
+                    if str(item).strip()
+                ]
+            )
+        if (
+            bool(report.get("passed"))
+            and bool(runtime_report.get("enforced"))
+            and not bool(runtime_report.get("passed"))
+        ):
             report["passed"] = False
         return report
 
@@ -249,7 +264,10 @@ class FunctionVerifier:
             if not success_ok:
                 diagnostics.append(
                     "Runtime sample (success) did not pass: "
-                    + (str(success_result.error_message or "").strip() or f"status={success_status or 'unknown'}")
+                    + (
+                        str(success_result.error_message or "").strip()
+                        or f"status={success_status or 'unknown'}"
+                    )
                 )
 
             if failure_required and failure_payload is not None:
@@ -264,7 +282,9 @@ class FunctionVerifier:
                     )
                 )
                 failure_status = str(failure_result.status or "").strip().lower()
-                failure_error_message = str(getattr(failure_result, "error_message", "") or "").strip()
+                failure_error_message = str(
+                    getattr(failure_result, "error_message", "") or ""
+                ).strip()
                 if self._is_runtime_environment_unavailable(failure_error_message):
                     samples.append(
                         {
@@ -304,7 +324,10 @@ class FunctionVerifier:
                 if not failure_ok:
                     diagnostics.append(
                         "Runtime sample (failure) did not trigger failure: "
-                        + (str(failure_result.error_message or "").strip() or f"status={failure_status or 'unknown'}")
+                        + (
+                            str(failure_result.error_message or "").strip()
+                            or f"status={failure_status or 'unknown'}"
+                        )
                     )
             else:
                 checks.append(
@@ -422,9 +445,19 @@ class FunctionVerifier:
         function: models.Function,
         fallback_datasource_id: int | None,
     ) -> tuple[dict[str, Any], dict[str, Any] | None, dict[str, Any]]:
-        dependencies = function.draft_dependencies if isinstance(function.draft_dependencies, dict) else {}
-        builder_spec = dependencies.get("builder_spec") if isinstance(dependencies.get("builder_spec"), dict) else {}
-        input_contract = builder_spec.get("input_contract") if isinstance(builder_spec.get("input_contract"), list) else []
+        dependencies = (
+            function.draft_dependencies if isinstance(function.draft_dependencies, dict) else {}
+        )
+        builder_spec = (
+            dependencies.get("builder_spec")
+            if isinstance(dependencies.get("builder_spec"), dict)
+            else {}
+        )
+        input_contract = (
+            builder_spec.get("input_contract")
+            if isinstance(builder_spec.get("input_contract"), list)
+            else []
+        )
         success: dict[str, Any] = {}
         required_names: list[str] = []
         inferred_types = self._infer_payload_value_types(str(function.draft_code or ""))
@@ -437,7 +470,11 @@ class FunctionVerifier:
             name = str(item.get("name") or "").strip()
             if not name:
                 continue
-            value_type = str(item.get("type") or inferred_types.get(name.casefold()) or "string").strip().lower()
+            value_type = (
+                str(item.get("type") or inferred_types.get(name.casefold()) or "string")
+                .strip()
+                .lower()
+            )
             success[name] = self._sample_value_for_key(
                 key=name,
                 value_type=value_type,
@@ -480,13 +517,17 @@ class FunctionVerifier:
         }
         return success, failure, meta
 
-    def _sample_value_for_key(self, *, key: str, value_type: str, fallback_datasource_id: int | None) -> Any:
+    def _sample_value_for_key(
+        self, *, key: str, value_type: str, fallback_datasource_id: int | None
+    ) -> Any:
         normalized = key.casefold()
         if normalized in {"datasource_id", "datasourceid"} or normalized.endswith("_datasource_id"):
             return int(fallback_datasource_id or 1)
         if normalized.endswith("_id"):
             return 1
-        if normalized.endswith(("_days", "_hours", "_minutes", "_minute", "_count", "_size", "_index", "_limit")):
+        if normalized.endswith(
+            ("_days", "_hours", "_minutes", "_minute", "_count", "_size", "_index", "_limit")
+        ):
             return 1
         if normalized in {"limit", "page_size", "pagesize"}:
             return 20
@@ -521,7 +562,11 @@ class FunctionVerifier:
         return inferred
 
     def _infer_required_payload_keys(self, code_snapshot: str) -> list[str]:
-        matches = [item.strip() for item in self._PAYLOAD_KEY_REQUIRED_RE.findall(code_snapshot or "") if item.strip()]
+        matches = [
+            item.strip()
+            for item in self._PAYLOAD_KEY_REQUIRED_RE.findall(code_snapshot or "")
+            if item.strip()
+        ]
         seen: set[str] = set()
         ordered: list[str] = []
         for key in matches:
@@ -533,7 +578,11 @@ class FunctionVerifier:
         return ordered
 
     def _infer_optional_payload_keys(self, code_snapshot: str) -> list[str]:
-        matches = [item.strip() for item in self._PAYLOAD_KEY_GET_RE.findall(code_snapshot or "") if item.strip()]
+        matches = [
+            item.strip()
+            for item in self._PAYLOAD_KEY_GET_RE.findall(code_snapshot or "")
+            if item.strip()
+        ]
         seen: set[str] = set()
         ordered: list[str] = []
         for key in matches:
@@ -576,19 +625,21 @@ class FunctionBuildOrchestrator:
     def _make_event_emitter(
         event_callback: Callable[[dict[str, Any]], None] | None,
     ) -> Callable[..., None]:
-        from datetime import datetime, timezone
+        from datetime import datetime
 
         def _emit(*, phase: str, status: str, summary: str) -> None:
             if event_callback is None:
                 return
             try:
-                event_callback({
-                    "type": "phase",
-                    "phase": phase,
-                    "status": status,
-                    "summary": summary,
-                    "created_at": datetime.now(timezone.utc).isoformat(),
-                })
+                event_callback(
+                    {
+                        "type": "phase",
+                        "phase": phase,
+                        "status": status,
+                        "summary": summary,
+                        "created_at": datetime.now(UTC).isoformat(),
+                    }
+                )
             except Exception:
                 pass
 
@@ -626,7 +677,11 @@ class FunctionBuildOrchestrator:
         event_callback: Callable[[dict[str, Any]], None] | None = None,
     ) -> FunctionBuildOrchestratorResult:
         _emit = self._make_event_emitter(event_callback)
-        _emit(phase="act", status="running", summary="Probing datasource schema, preparing code generation...")
+        _emit(
+            phase="act",
+            status="running",
+            summary="Probing datasource schema, preparing code generation...",
+        )
         probe = self._schema_probe.probe(db=db, requirement_text=goal)
         effective_goal = self._compose_goal_with_probe(goal=goal, probe_context=probe.goal_context)
         workspace_store.set_adapter_event_callback(event_callback)
@@ -637,7 +692,9 @@ class FunctionBuildOrchestrator:
                 function=function,
                 goal=self._compose_goal_with_probe(goal=goal, probe_context=probe.goal_context),
                 workspace_store=workspace_store,
-                datasource_schema={"tables": probe.columns_by_table} if probe.columns_by_table else None,
+                datasource_schema={"tables": probe.columns_by_table}
+                if probe.columns_by_table
+                else None,
                 datasource_id=probe.datasource_id,
             ),
             verify_step=lambda build_result, goal, attempt_index, attempts: self._verify_attempt(
@@ -646,13 +703,20 @@ class FunctionBuildOrchestrator:
                 schema_probe=probe.as_payload(),
             ),
             summarize_step=lambda build_result: str(
-                getattr(build_result, "assistant_message", "") or getattr(build_result, "diff_summary", "")
+                getattr(build_result, "assistant_message", "")
+                or getattr(build_result, "diff_summary", "")
             ).strip(),
             snapshot_step=lambda: str(function.draft_code or ""),
             event_callback=event_callback,
         )
-        apply_result = runtime.final_build_result if isinstance(runtime.final_build_result, CodingEngineApplyResult) else None
-        verification_payload = runtime.final_verification.payload if runtime.final_verification is not None else {}
+        apply_result = (
+            runtime.final_build_result
+            if isinstance(runtime.final_build_result, CodingEngineApplyResult)
+            else None
+        )
+        verification_payload = (
+            runtime.final_verification.payload if runtime.final_verification is not None else {}
+        )
         verification = verification_payload if isinstance(verification_payload, dict) else {}
         if runtime.final_verification is not None and "passed" not in verification:
             verification["passed"] = bool(runtime.final_verification.passed)
@@ -687,12 +751,16 @@ class FunctionBuildOrchestrator:
         schema_probe: dict[str, Any] | None = None,
     ) -> VerificationOutcome:
         verification = self._verifier.verify(function=function, db=db, schema_probe=schema_probe)
-        diagnostics = [str(item) for item in (verification.get("diagnostics") or []) if str(item).strip()]
+        diagnostics = [
+            str(item) for item in (verification.get("diagnostics") or []) if str(item).strip()
+        ]
         return VerificationOutcome(
             passed=bool(verification.get("passed")),
             diagnostics=diagnostics,
             payload=verification,
-            summary="verification_passed" if bool(verification.get("passed")) else "verification_failed",
+            summary="verification_passed"
+            if bool(verification.get("passed"))
+            else "verification_failed",
         )
 
     def _compose_goal_with_probe(self, *, goal: str, probe_context: str) -> str:
@@ -844,11 +912,13 @@ class StagedFunctionBuildOrchestrator:
         strategy_decision: dict[str, Any],
         event_callback: Callable[[dict[str, Any]], None] | None = None,
     ) -> StagedBuildResult:
-        from datetime import datetime, timezone
+        from datetime import datetime
 
         stage_results: list[StagedBuildStageResult] = []
 
-        def _emit(*, phase: str, status: str, summary: str, payload: dict[str, Any] | None = None) -> None:
+        def _emit(
+            *, phase: str, status: str, summary: str, payload: dict[str, Any] | None = None
+        ) -> None:
             if event_callback is None:
                 return
             event: dict[str, Any] = {
@@ -856,7 +926,7 @@ class StagedFunctionBuildOrchestrator:
                 "phase": phase,
                 "status": status,
                 "summary": summary,
-                "created_at": datetime.now(timezone.utc).isoformat(),
+                "created_at": datetime.now(UTC).isoformat(),
             }
             if payload:
                 event["payload"] = payload
@@ -866,7 +936,9 @@ class StagedFunctionBuildOrchestrator:
                 pass
 
         # ── Schema Probe ──
-        _emit(phase="act", status="running", summary="Probing datasource schema, preparing build...")
+        _emit(
+            phase="act", status="running", summary="Probing datasource schema, preparing build..."
+        )
         probe = self._schema_probe.probe(db=db, requirement_text=goal)
         probe_payload = probe.as_payload()
         datasource_schema = {"tables": probe.columns_by_table} if probe.columns_by_table else None
@@ -949,7 +1021,8 @@ class StagedFunctionBuildOrchestrator:
                 schema_probe=probe_payload,
             ),
             summarize_step=lambda build_result: str(
-                getattr(build_result, "assistant_message", "") or getattr(build_result, "diff_summary", "")
+                getattr(build_result, "assistant_message", "")
+                or getattr(build_result, "diff_summary", "")
             ).strip(),
             snapshot_step=lambda: str(function.draft_code or ""),
             event_callback=event_callback,
@@ -960,7 +1033,9 @@ class StagedFunctionBuildOrchestrator:
             if isinstance(runtime.final_build_result, CodingEngineApplyResult)
             else None
         )
-        verification_payload = runtime.final_verification.payload if runtime.final_verification is not None else {}
+        verification_payload = (
+            runtime.final_verification.payload if runtime.final_verification is not None else {}
+        )
         verification = verification_payload if isinstance(verification_payload, dict) else {}
         if runtime.final_verification is not None and "passed" not in verification:
             verification["passed"] = bool(runtime.final_verification.passed)
@@ -1032,12 +1107,16 @@ class StagedFunctionBuildOrchestrator:
         schema_probe: dict[str, Any] | None = None,
     ) -> VerificationOutcome:
         verification = self._verifier.verify(function=function, db=db, schema_probe=schema_probe)
-        diagnostics = [str(item) for item in (verification.get("diagnostics") or []) if str(item).strip()]
+        diagnostics = [
+            str(item) for item in (verification.get("diagnostics") or []) if str(item).strip()
+        ]
         return VerificationOutcome(
             passed=bool(verification.get("passed")),
             diagnostics=diagnostics,
             payload=verification,
-            summary="verification_passed" if bool(verification.get("passed")) else "verification_failed",
+            summary="verification_passed"
+            if bool(verification.get("passed"))
+            else "verification_failed",
         )
 
     @staticmethod
@@ -1049,7 +1128,9 @@ class StagedFunctionBuildOrchestrator:
     ) -> str:
         parts: list[str] = []
         if refined_spec.strip():
-            parts.append(f"Implementation Specification (from requirements analysis):\n{refined_spec}")
+            parts.append(
+                f"Implementation Specification (from requirements analysis):\n{refined_spec}"
+            )
             parts.append(f"\nOriginal Goal:\n{original_goal}")
         else:
             parts.append(original_goal)

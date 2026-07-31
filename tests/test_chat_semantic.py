@@ -11,7 +11,8 @@ from __future__ import annotations
 
 import json
 import uuid
-from typing import Any, AsyncGenerator
+from collections.abc import AsyncGenerator
+from typing import Any
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -73,11 +74,7 @@ class ScriptedLLM:
                 }
             yield {"choices": [{"delta": {}, "finish_reason": "tool_calls"}]}
         elif resp.get("content"):
-            yield {
-                "choices": [
-                    {"delta": {"content": resp["content"]}, "finish_reason": None}
-                ]
-            }
+            yield {"choices": [{"delta": {"content": resp["content"]}, "finish_reason": None}]}
             yield {"choices": [{"delta": {}, "finish_reason": "stop"}]}
         else:
             yield {"choices": [{"delta": {}, "finish_reason": "stop"}]}
@@ -100,6 +97,7 @@ def _tool_call_response(name: str, arguments: dict, call_id: str | None = None) 
 
 def _tool_result(success: bool = True, data: dict | None = None, error: str | None = None):
     from app.tools.registry import ToolResult
+
     if success:
         return ToolResult(success=True, data=data or {})
     return ToolResult(success=False, error={"code": "test_error", "message": error or "test error"})
@@ -150,15 +148,20 @@ async def test_tool_call_flows_through_react_loop():
     messages = [{"role": "user", "content": "切换到 sys 数据源"}]
 
     mock_tool = AsyncMock()
-    mock_tool.execute = AsyncMock(return_value=_tool_result(
-        success=True,
-        data={"message": "已切到数据源 sys", "datasource_id": 2},
-    ))
+    mock_tool.execute = AsyncMock(
+        return_value=_tool_result(
+            success=True,
+            data={"message": "已切到数据源 sys", "datasource_id": 2},
+        )
+    )
 
     with patch("app.services.chat.registry.get", return_value=mock_tool):
         events = await _collect_events(
-            service, messages,
-            tools=[{"type": "function", "function": {"name": "datasource_switch", "parameters": {}}}],
+            service,
+            messages,
+            tools=[
+                {"type": "function", "function": {"name": "datasource_switch", "parameters": {}}}
+            ],
             conversation_id=1,
         )
 
@@ -186,15 +189,17 @@ async def test_context_injection_conversation_id():
         await _collect_events(
             service,
             [{"role": "user", "content": "切换到数据源 3"}],
-            tools=[{"type": "function", "function": {"name": "datasource_switch", "parameters": {}}}],
+            tools=[
+                {"type": "function", "function": {"name": "datasource_switch", "parameters": {}}}
+            ],
             conversation_id=42,
         )
 
     mock_tool.execute.assert_called_once()
     call_kwargs = mock_tool.execute.call_args
-    assert call_kwargs.kwargs.get("conversation_id") == 42 or \
-        (call_kwargs.args and any(a == 42 for a in call_kwargs.args)), \
-        "conversation_id should be injected into datasource_switch"
+    assert call_kwargs.kwargs.get("conversation_id") == 42 or (
+        call_kwargs.args and any(a == 42 for a in call_kwargs.args)
+    ), "conversation_id should be injected into datasource_switch"
 
 
 @pytest.mark.anyio

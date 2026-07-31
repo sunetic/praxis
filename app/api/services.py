@@ -1,5 +1,3 @@
-from typing import List
-
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
@@ -12,7 +10,7 @@ router = APIRouter(prefix="/services", tags=["Services"])
 logger = get_logger("api.services")
 
 
-@router.get("", response_model=List[schemas.ServiceResponse])
+@router.get("", response_model=list[schemas.ServiceResponse])
 def list_services(db: Session = Depends(get_db)):
     records = db.query(models.Service).all()
     logger.info("list_services %s", fmt_kv(count=len(records)))
@@ -35,7 +33,9 @@ def create_service(payload: schemas.ServiceCreate, db: Session = Depends(get_db)
     db.refresh(db_service)
     logger.info(
         "create_service %s",
-        fmt_kv(service_id=db_service.id, name=db_service.name, service_type=db_service.service_type),
+        fmt_kv(
+            service_id=db_service.id, name=db_service.name, service_type=db_service.service_type
+        ),
     )
     return db_service
 
@@ -94,7 +94,10 @@ async def test_service_config(payload: schemas.ServiceCreate):
             resp.raise_for_status()
             return {"success": True, "message": "Connection successful"}
     except httpx.HTTPStatusError as e:
-        return {"success": False, "message": f"HTTP {e.response.status_code}: {e.response.text[:200]}"}
+        return {
+            "success": False,
+            "message": f"HTTP {e.response.status_code}: {e.response.text[:200]}",
+        }
     except Exception as e:
         return {"success": False, "message": str(e)}
 
@@ -127,6 +130,9 @@ async def test_service_connection(service_id: int, db: Session = Depends(get_db)
             resp.raise_for_status()
             return {"success": True, "message": "Connection successful"}
     except httpx.HTTPStatusError as e:
-        return {"success": False, "message": f"HTTP {e.response.status_code}: {e.response.text[:200]}"}
+        return {
+            "success": False,
+            "message": f"HTTP {e.response.status_code}: {e.response.text[:200]}",
+        }
     except Exception as e:
         return {"success": False, "message": str(e)}
