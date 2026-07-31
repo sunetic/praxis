@@ -48,6 +48,9 @@ COPY tools/ ./tools/
 # Built-in skills (separate from /app/data so user volume mounts don't shadow them)
 COPY data/skills/ ./builtin_skills/
 
+# Built-in knowledge packs metadata (app/builtin_knowledge/ already copied above in app/)
+# Skills themselves are in ./builtin_skills/, knowledge pack definitions just reference them
+
 # Copy frontend build output
 COPY --from=frontend-builder /frontend/dist ./frontend/dist
 

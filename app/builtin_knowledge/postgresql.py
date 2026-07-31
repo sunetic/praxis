@@ -1,4 +1,4 @@
-from app.core.config import DEFAULT_DATA_DIR
+from app.core.config import BUILTIN_SKILLS_DIR
 
 PACK_META = {
     "id": "builtin-postgresql-diagnosis",
@@ -10,7 +10,7 @@ PACK_META = {
     "tags": ["postgresql", "diagnosis"],
     "db_type": "postgresql",
     "type": "local",
-    "local_path": str(DEFAULT_DATA_DIR / "skills" / "postgresql"),
+    "local_path": str(BUILTIN_SKILLS_DIR / "postgresql"),
     "repo_url": "",
     "branch": "",
     "subdirectory": "",

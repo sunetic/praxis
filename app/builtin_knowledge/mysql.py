@@ -1,4 +1,4 @@
-from app.core.config import DEFAULT_DATA_DIR
+from app.core.config import BUILTIN_SKILLS_DIR
 
 PACK_META = {
     "id": "builtin-mysql-diagnosis",
@@ -10,7 +10,7 @@ PACK_META = {
     "tags": ["mysql", "diagnosis"],
     "db_type": "mysql",
     "type": "local",
-    "local_path": str(DEFAULT_DATA_DIR / "skills" / "mysql"),
+    "local_path": str(BUILTIN_SKILLS_DIR / "mysql"),
     "repo_url": "",
     "branch": "",
     "subdirectory": "",
