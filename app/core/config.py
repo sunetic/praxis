@@ -10,7 +10,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_ENV_FILE = PROJECT_ROOT / ".env"
 DEFAULT_DATA_DIR = PROJECT_ROOT / "data"
-BUILTIN_SKILLS_DIR = PROJECT_ROOT / "builtin_skills"
+BUILTIN_SKILLS_DIR = Path(__file__).resolve().parent.parent / "builtin_skills"
 DEFAULT_SQLITE_DB_PATH = DEFAULT_DATA_DIR / "praxis.db"
 DEFAULT_TRACING_DB_PATH = DEFAULT_DATA_DIR / "tracing.db"
 
