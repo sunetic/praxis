@@ -391,8 +391,8 @@ export function KnowledgeListPage() {
               <Badge variant="destructive" className="text-xs shrink-0">{t("knowledge.pack.error")}</Badge>
             ) : isInstalling ? (
               <Badge variant="secondary" className="text-xs shrink-0">{t("knowledge.pack.downloading")}</Badge>
-            ) : pack.default_version ? (
-              <Badge variant="outline" className="text-xs shrink-0">v{pack.default_version}</Badge>
+            ) : pack.current_version ? (
+              <Badge variant="outline" className="text-xs shrink-0">v{pack.current_version}</Badge>
             ) : (
               <Badge variant="outline" className="text-xs shrink-0">{t("knowledge.pack.available")}</Badge>
             )}
