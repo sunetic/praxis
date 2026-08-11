@@ -10,6 +10,7 @@ from .base import SceneAgentPayload
 
 class SqlAnalysisAgent(ChatCoreAgent):
     key = "sql_analysis"
+    display_name = "SqlAnalysisAgent"
     default_tools = ("execute_sql", "explain_sql")
     default_skills = ("sql_analysis",)
 

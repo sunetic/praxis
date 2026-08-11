@@ -44,6 +44,7 @@ class ChatCoreAgent:
     """
 
     key: str = ""
+    display_name: str = "Assistant"
     default_tools: tuple[str, ...] = ()
     default_skills: tuple[str, ...] = ()
 
@@ -90,20 +91,6 @@ class ChatCoreAgent:
 
     # ── Streaming ────────────────────────────────────────────────────────
 
-    @property
-    def display_name(self) -> str:
-        """Human-friendly agent name for UI display."""
-        _display_names: dict[str, str] = {
-            "general": "ChatAgent",
-            "function": "FunctionPlannerAgent",
-            "function_build": "FunctionChatAgent",
-            "page_build": "PageChatAgent",
-            "session_transaction": "SessionAnalysisAgent",
-            "stats_analysis": "StatsAnalysisAgent",
-            "sql_analysis": "SqlAnalysisAgent",
-        }
-        return _display_names.get(self.key, self.key or "Assistant")
-
     async def stream_general_chat(
         self,
         *,
@@ -140,4 +127,4 @@ class ChatAgent(ChatCoreAgent):
     Default System Agent for general chat — no domain-specific overrides.
     """
 
-    pass
+    display_name = "Assistant"

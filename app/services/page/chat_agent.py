@@ -21,6 +21,7 @@ class PageChatAgent(ChatCoreAgent):
     """
 
     key = "page_build"
+    display_name = "PageChatAgent"
 
     def __init__(
         self,

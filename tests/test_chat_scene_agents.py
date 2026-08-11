@@ -1,5 +1,32 @@
+import pytest
+
+from app.services.chat.agent import ChatAgent, ChatCoreAgent
 from app.services.chat.scene_agents import SceneAgentRegistry
+from app.services.chat.scene_agents.session_transaction import SessionTransactionAgent
+from app.services.chat.scene_agents.sql_analysis import SqlAnalysisAgent
+from app.services.chat.scene_agents.stats_analysis import StatsAnalysisAgent
 from app.services.chat.stream_helpers import _extract_scene_agent_payload
+from app.services.function.chat_agent import FunctionChatAgent
+from app.services.page.chat_agent import PageChatAgent
+from app.services.skill.skill_builder_agent import SkillBuilderAgent
+
+
+@pytest.mark.parametrize(
+    ("agent_type", "expected_display_name"),
+    [
+        (ChatAgent, "Assistant"),
+        (FunctionChatAgent, "FunctionChatAgent"),
+        (PageChatAgent, "PageChatAgent"),
+        (SessionTransactionAgent, "SessionAnalysisAgent"),
+        (SqlAnalysisAgent, "SqlAnalysisAgent"),
+        (StatsAnalysisAgent, "StatsAnalysisAgent"),
+        (SkillBuilderAgent, "skill_builder"),
+    ],
+)
+def test_agent_type_owns_its_display_name(
+    agent_type: type[ChatCoreAgent], expected_display_name: str
+) -> None:
+    assert agent_type.display_name == expected_display_name
 
 
 def test_extract_scene_agent_payload_prefers_scene_agent() -> None:

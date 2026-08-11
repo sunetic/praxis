@@ -10,6 +10,7 @@ from .base import SceneAgentPayload
 
 class SessionTransactionAgent(ChatCoreAgent):
     key = "session_transaction"
+    display_name = "SessionAnalysisAgent"
     default_tools = ("execute_sql",)
     default_skills = ("ob-session-ops",)
 

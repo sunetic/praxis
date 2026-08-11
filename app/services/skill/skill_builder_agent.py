@@ -9,6 +9,7 @@ from app.services.platform.prompt_loader import PromptLoader
 
 class SkillBuilderAgent(ChatCoreAgent):
     key = "skill_builder"
+    display_name = "skill_builder"
     default_tools: tuple[str, ...] = ()
     default_skills: tuple[str, ...] = ()
 

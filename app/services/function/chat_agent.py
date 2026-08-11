@@ -27,6 +27,7 @@ class FunctionChatAgent(ChatCoreAgent):
     """
 
     key = "function_build"
+    display_name = "FunctionChatAgent"
 
     def __init__(
         self,
