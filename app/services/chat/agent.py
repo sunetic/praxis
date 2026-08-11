@@ -3,8 +3,6 @@ from __future__ import annotations
 import inspect
 import json
 from collections.abc import AsyncGenerator, Callable
-from dataclasses import dataclass
-from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
 from app.core.logging import get_logger
@@ -17,19 +15,6 @@ logger = get_logger("chat.agent")
 
 if TYPE_CHECKING:
     from app.services.chat.scene_agents.base import SceneAgentPayload
-
-
-class ChatScope(StrEnum):
-    FUNCTION_BUILD = "function.build"
-    PAGE_BUILD = "page.build"
-    GENERAL_CHAT = "general.chat"
-
-
-@dataclass(frozen=True)
-class ScopedChatContext:
-    scope: ChatScope
-    conversation_id: int | None = None
-    metadata: dict[str, Any] | None = None
 
 
 class ChatCoreAgent:

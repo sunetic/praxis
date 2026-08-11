@@ -20,7 +20,6 @@ from app.core.logging import fmt_kv, get_logger
 from app.db.database import get_db
 from app.models import models
 from app.services.agent.core import summarize_build_goal
-from app.services.chat.agent import ChatScope, ScopedChatContext
 from app.services.chat.scene_agents import SceneAgentPayload, SceneAgentRegistry
 from app.services.function.authoring_agent import FunctionInvokeCommand
 from app.services.function.build_orchestrator import StagedFunctionBuildOrchestrator
@@ -1728,7 +1727,6 @@ async def run_function_chat_action(
 ):
     function = _get_function_or_404(db, function_id)
     action = str(payload.get("action") or "build").strip().lower()
-    context = ScopedChatContext(scope=ChatScope.FUNCTION_BUILD)
     chat_agent = FunctionChatAgent()
     scene_agent, scene_payload = _resolve_function_scene_agent(payload, function_id=function_id)
 
@@ -1788,7 +1786,6 @@ async def run_function_chat_action(
             function=function,
             prompt=prompt,
             conversation_context=conversation_context,
-            context=context,
         )
         rationale = str(suggestion.get("rationale") or "Test input suggestion generated.").strip()
         suggest_run = FunctionBuildRunResult(
@@ -1904,7 +1901,6 @@ async def run_function_chat_action(
                     timeout_seconds=float(invoke_payload.get("timeout_seconds", 30.0)),
                     trace_id=trace_id,
                 ),
-                context=context,
             )
         except LifecycleValidationError as err:
             _raise_lifecycle_http_error(err)
@@ -2282,7 +2278,6 @@ def suggest_function_input(
         function=function,
         prompt=prompt,
         conversation_context=conversation_context,
-        context=ScopedChatContext(scope=ChatScope.FUNCTION_BUILD),
     )
     return suggestion
 
@@ -2597,7 +2592,6 @@ async def invoke_function(function_id: int, payload: dict[str, Any], db: Session
                 timeout_seconds=float(payload.get("timeout_seconds", 30.0)),
                 trace_id=trace_id,
             ),
-            context=ScopedChatContext(scope=ChatScope.FUNCTION_BUILD),
         )
     except LifecycleValidationError as err:
         _raise_lifecycle_http_error(err)

@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from app.models import models
 from app.services.agent.core import AgentCore, BuildGoalRequest, normalize_build_attempts
 from app.services.chat import ChatService
-from app.services.chat.agent import ChatCoreAgent, ScopedChatContext
+from app.services.chat.agent import ChatCoreAgent
 from app.services.function.authoring_agent import (
     FunctionAuthoringAgent,
     FunctionBuildCommand,
@@ -66,9 +66,7 @@ class FunctionChatAgent(ChatCoreAgent):
         function: models.Function,
         prompt: str,
         ambiguity_mode: str,
-        context: ScopedChatContext | None = None,
     ) -> FunctionBuildRunResult:
-        _ = context
         return self._function_authoring_agent.build_draft(
             function=function,
             command=FunctionBuildCommand(prompt=prompt, ambiguity_mode=ambiguity_mode),
@@ -98,9 +96,7 @@ class FunctionChatAgent(ChatCoreAgent):
         function: models.Function,
         prompt: str,
         conversation_context: str,
-        context: ScopedChatContext | None = None,
     ) -> dict[str, Any]:
-        _ = context
         return self._function_authoring_agent.suggest_input(
             function=function,
             command=FunctionSuggestInputCommand(
@@ -115,9 +111,7 @@ class FunctionChatAgent(ChatCoreAgent):
         function: models.Function,
         runtime_session_factory: sessionmaker[Session],
         command: FunctionInvokeCommand,
-        context: ScopedChatContext | None = None,
     ) -> FunctionRuntimeResult:
-        _ = context
         return await self._function_authoring_agent.invoke(
             function=function,
             runtime_session_factory=runtime_session_factory,

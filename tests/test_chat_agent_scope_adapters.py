@@ -1,3 +1,7 @@
+import inspect
+
+import pytest
+
 from app.models import models
 from app.services.agent.core import summarize_build_goal
 from app.services.function.chat_agent import FunctionChatAgent
@@ -14,6 +18,15 @@ class _ContinuationTrueLLM:
     ):
         del messages, tools, stream, kwargs
         yield {"choices": [{"message": {"content": '{"continue_previous": true}'}}]}
+
+
+@pytest.mark.parametrize(
+    "method_name",
+    ["build_function_draft", "suggest_function_input", "invoke_function"],
+)
+def test_function_agent_actions_do_not_accept_unused_chat_context(method_name: str) -> None:
+    method = getattr(FunctionChatAgent, method_name)
+    assert "context" not in inspect.signature(method).parameters
 
 
 def test_chat_agent_compose_function_goal_uses_retry_history():
