@@ -7,14 +7,8 @@ from typing import Any
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.models import models
-from app.services.function.builder import FunctionBuilderService, FunctionBuildRunResult
+from app.services.function.builder import FunctionBuilderService
 from app.services.function.runtime import FunctionRuntimeResult, FunctionRuntimeService
-
-
-@dataclass(frozen=True)
-class FunctionBuildCommand:
-    prompt: str
-    ambiguity_mode: str = "default"
 
 
 @dataclass(frozen=True)
@@ -37,7 +31,7 @@ class FunctionAuthoringAgent:
     """
     Domain agent for Function authoring workflows.
 
-    This agent isolates Function build/suggest/invoke context and keeps API handlers
+    This agent isolates Function suggest/invoke context and keeps API handlers
     focused on transport and validation only.
     """
 
@@ -50,21 +44,6 @@ class FunctionAuthoringAgent:
         self._builder_factory = builder_factory or FunctionBuilderService
         self._runtime_factory = runtime_factory or (
             lambda sf: FunctionRuntimeService(session_factory=sf)
-        )
-
-    def build_draft(
-        self,
-        *,
-        function: models.Function,
-        command: FunctionBuildCommand,
-    ) -> FunctionBuildRunResult:
-        builder = self._builder_factory()
-        return builder.build_run(
-            current_code=function.draft_code,
-            current_dependencies=function.draft_dependencies,
-            prompt=command.prompt,
-            function_name=function.name,
-            ambiguity_mode=command.ambiguity_mode,
         )
 
     def suggest_input(

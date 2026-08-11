@@ -10,11 +10,9 @@ from app.services.chat import ChatService
 from app.services.chat.agent import ChatCoreAgent
 from app.services.function.authoring_agent import (
     FunctionAuthoringAgent,
-    FunctionBuildCommand,
     FunctionInvokeCommand,
     FunctionSuggestInputCommand,
 )
-from app.services.function.builder import FunctionBuildRunResult
 from app.services.function.runtime import FunctionRuntimeResult
 from app.services.function.scope_adapter import FunctionBuildScopeAdapter
 from app.services.platform.coding_engine import CodingEngineApplyResult
@@ -58,18 +56,6 @@ class FunctionChatAgent(ChatCoreAgent):
                 conversation_context=conversation_context,
                 skill_context=skill_context,
             ),
-        )
-
-    def build_function_draft(
-        self,
-        *,
-        function: models.Function,
-        prompt: str,
-        ambiguity_mode: str,
-    ) -> FunctionBuildRunResult:
-        return self._function_authoring_agent.build_draft(
-            function=function,
-            command=FunctionBuildCommand(prompt=prompt, ambiguity_mode=ambiguity_mode),
         )
 
     def apply_function_goal(

@@ -22,11 +22,15 @@ class _ContinuationTrueLLM:
 
 @pytest.mark.parametrize(
     "method_name",
-    ["build_function_draft", "suggest_function_input", "invoke_function"],
+    ["suggest_function_input", "invoke_function"],
 )
 def test_function_agent_actions_do_not_accept_unused_chat_context(method_name: str) -> None:
     method = getattr(FunctionChatAgent, method_name)
     assert "context" not in inspect.signature(method).parameters
+
+
+def test_function_agent_does_not_expose_replaced_draft_builder() -> None:
+    assert not hasattr(FunctionChatAgent, "build_function_draft")
 
 
 def test_chat_agent_compose_function_goal_uses_retry_history():
