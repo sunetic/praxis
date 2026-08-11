@@ -30,7 +30,8 @@ class PageChatAgent(ChatCoreAgent):
         agent_core: AgentCore | None = None,
         page_scope_adapter: PageBuildScopeAdapter | None = None,
     ) -> None:
-        super().__init__(chat_service=chat_service, agent_core=agent_core)
+        super().__init__(chat_service=chat_service)
+        self._agent_core = agent_core or AgentCore()
         self._page_scope_adapter = page_scope_adapter or PageBuildScopeAdapter()
 
     def compose_page_build_goal(

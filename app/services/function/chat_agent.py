@@ -37,7 +37,8 @@ class FunctionChatAgent(ChatCoreAgent):
         agent_core: AgentCore | None = None,
         function_scope_adapter: FunctionBuildScopeAdapter | None = None,
     ) -> None:
-        super().__init__(chat_service=chat_service, agent_core=agent_core)
+        super().__init__(chat_service=chat_service)
+        self._agent_core = agent_core or AgentCore()
         self._function_authoring_agent = function_authoring_agent or FunctionAuthoringAgent()
         self._function_scope_adapter = function_scope_adapter or FunctionBuildScopeAdapter()
 

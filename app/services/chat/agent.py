@@ -8,7 +8,6 @@ from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
 from app.core.logging import get_logger
-from app.services.agent.core import AgentCore
 from app.services.platform.prompt_loader import PromptLoader
 from app.tools.registry import registry as tool_registry
 
@@ -52,10 +51,8 @@ class ChatCoreAgent:
         self,
         *,
         chat_service: ChatService | None = None,
-        agent_core: AgentCore | None = None,
     ) -> None:
         self._chat_service: ChatService = chat_service or get_chat_service()
-        self._agent_core = agent_core or AgentCore()
 
     # ── Tool / Skill resolution ──────────────────────────────────────────
 

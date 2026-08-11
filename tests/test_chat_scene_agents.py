@@ -1,3 +1,5 @@
+import inspect
+
 import pytest
 
 from app.services.chat.agent import ChatAgent, ChatCoreAgent
@@ -27,6 +29,12 @@ def test_agent_type_owns_its_display_name(
     agent_type: type[ChatCoreAgent], expected_display_name: str
 ) -> None:
     assert agent_type.display_name == expected_display_name
+
+
+def test_build_core_dependency_is_owned_by_build_agents() -> None:
+    assert "agent_core" not in inspect.signature(ChatCoreAgent).parameters
+    assert "agent_core" in inspect.signature(FunctionChatAgent).parameters
+    assert "agent_core" in inspect.signature(PageChatAgent).parameters
 
 
 def test_extract_scene_agent_payload_prefers_scene_agent() -> None:
