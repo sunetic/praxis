@@ -5,6 +5,7 @@ from app.skills.store import SkillStore
 BUILTIN_DIR = str(Path(__file__).resolve().parents[1] / "data" / "skills")
 
 EXPECTED_SKILLS = {
+    "database-claim-provenance": ("general", False, "built_in"),
     "mysql-connection-diagnosis": ("mysql", False, "built_in"),
     "mysql-innodb-health": ("mysql", False, "built_in"),
     "mysql-lock-diagnosis": ("mysql", False, "built_in"),
@@ -73,6 +74,16 @@ def test_description_min_length():
     _, skills = _load_builtin()
     for s in skills:
         assert len(s.description) >= 20, f"{s.name} description too short: {s.description!r}"
+
+
+def test_database_claim_provenance_exposes_a_verifier_policy_extension():
+    store, _ = _load_builtin()
+    skill = store.get("database-claim-provenance")
+
+    assert skill is not None
+    assert skill.always_apply is False
+    assert "<completion_verification_policy>" in skill.rules_prompt
+    assert "actual query request and returned evidence" in skill.rules_prompt
 
 
 def test_all_versions_are_semver():

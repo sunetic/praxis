@@ -73,6 +73,7 @@ def event_to_vds(event: dict[str, Any]) -> str:
         )
         lines.append(_vds_finish_step("tool-calls"))
     elif event_type == "done":
+        lines.append(_vds_data([{"type": "done", **data}]))
         lines.append(_vds_finish_message("stop"))
     elif event_type == "error":
         lines.append(

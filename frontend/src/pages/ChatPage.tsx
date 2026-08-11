@@ -383,9 +383,9 @@ export function ChatPage() {
   // ── Render ──
 
   const primary = (
-    <div className="min-w-0 animate-in fade-in slide-in-from-bottom-1 duration-500 grid h-[calc(100vh-4.5rem)] grid-cols-[260px_minmax(0,1fr)] gap-4">
+    <div className="grid h-[calc(100vh-4.5rem)] min-w-0 animate-in grid-cols-1 gap-3 fade-in slide-in-from-bottom-1 duration-500 min-[901px]:grid-cols-[260px_minmax(0,1fr)] min-[901px]:gap-4">
       {/* Conversation sidebar */}
-      <Card className="min-h-0 overflow-hidden">
+      <Card className="hidden min-h-0 overflow-hidden min-[901px]:block">
         <CardHeader className="pb-3">
           <div className="flex items-center justify-between">
             <CardTitle className="text-base">{t("chat.sidebar.title")}</CardTitle>
@@ -491,6 +491,25 @@ export function ChatPage() {
         {/* Datasource + skills bar */}
         <Card className="min-w-0 overflow-visible">
           <CardContent className="space-y-3 py-3">
+            <select
+              aria-label={t("chat.sidebar.title")}
+              className="h-9 w-full rounded-lg border border-border bg-background px-3 text-sm text-foreground outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20 min-[901px]:hidden"
+              value={currentConversation?.id ?? ""}
+              disabled={controller.streaming || controller.savingAgent || conversations.length + sceneConversations.length === 0}
+              onChange={(event) => {
+                const conversationId = Number(event.target.value)
+                const selected = [...conversations, ...sceneConversations].find((item) => item.id === conversationId)
+                if (!selected) return
+                clearHandoffRouteFromParams()
+                setCurrentConversation(selected)
+              }}
+            >
+              {[...conversations, ...sceneConversations].map((item) => (
+                <option key={item.id} value={item.id}>
+                  #{item.id} {item.title || `${t("chat.sidebar.fallbackTitle")} ${item.id}`}
+                </option>
+              ))}
+            </select>
             <div className="flex flex-wrap items-center gap-3">
               <div ref={datasourceMenuRef} className="relative">
                 <Button

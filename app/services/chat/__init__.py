@@ -11,6 +11,7 @@ from typing import Any
 from opentelemetry import context as otel_context
 from opentelemetry import trace
 
+from app.core.config import get_settings
 from app.core.logging import fmt_kv, get_logger
 from app.services.agent.reasoning_engine import (
     VALID_TRANSITIONS as ENGINE_VALID_TRANSITIONS,
@@ -63,7 +64,20 @@ class ChatService:
 
     VALID_TRANSITIONS: dict[ChatPhase, set[ChatPhase]] = ENGINE_VALID_TRANSITIONS
 
-    def __init__(self, max_iterations: int = 50, max_reflections: int = 2, llm: Any | None = None):
+    def __init__(
+        self,
+        max_iterations: int = 50,
+        max_reflections: int = 2,
+        llm: Any | None = None,
+        *,
+        failure_episode_enabled: bool | None = None,
+        task_contract_enabled: bool | None = None,
+        completion_verifier_enabled: bool | None = None,
+        persistent_journal_enabled: bool | None = None,
+        parallel_read_only_enabled: bool | None = None,
+        adversarial_verification_enabled: bool | None = None,
+    ):
+        settings = get_settings()
         self.max_iterations = max_iterations
         self.max_reflections = max_reflections
         self.max_progress_bonus_iterations = 8
@@ -73,6 +87,43 @@ class ChatService:
         self._active_request_id: str | None = None
         self._active_agent_name: str = ""
         self.llm = llm or get_llm_client()
+        self.failure_episode_enabled = (
+            settings.agent_failure_episode_enabled
+            if failure_episode_enabled is None
+            else failure_episode_enabled
+        )
+        self.task_contract_enabled = (
+            settings.agent_task_contract_enabled
+            if task_contract_enabled is None
+            else task_contract_enabled
+        )
+        self.completion_verifier_enabled = (
+            settings.agent_completion_verifier_enabled
+            if completion_verifier_enabled is None
+            else completion_verifier_enabled
+        )
+        self.persistent_journal_enabled = (
+            settings.agent_persistent_journal_enabled
+            if persistent_journal_enabled is None
+            else persistent_journal_enabled
+        )
+        self.parallel_read_only_enabled = (
+            settings.agent_parallel_read_only_enabled
+            if parallel_read_only_enabled is None
+            else parallel_read_only_enabled
+        )
+        self.adversarial_verification_enabled = (
+            settings.agent_adversarial_verification_enabled
+            if adversarial_verification_enabled is None
+            else adversarial_verification_enabled
+        )
+        self.max_transient_retries = settings.agent_max_transient_retries
+        self.max_no_progress_rounds = settings.agent_max_no_progress_rounds
+        self.max_verification_retries = settings.agent_max_verification_retries
+        self.max_parallel_tools = settings.agent_max_parallel_tools
+        self.transient_backoff_base_seconds = settings.agent_transient_backoff_base_seconds
+        self.transient_backoff_max_seconds = settings.agent_transient_backoff_max_seconds
+        self.max_elapsed_seconds = settings.agent_max_elapsed_seconds
 
     async def chat_with_tools(
         self,
@@ -85,6 +136,7 @@ class ChatService:
         use_state_machine: bool | None = None,
         agent_name: str = "",
         is_cancelled: Callable[[], bool] | None = None,
+        task_state: dict[str, Any] | None = None,
     ) -> AsyncGenerator[dict[str, Any], None]:
         del use_state_machine
         chat_messages = list(messages)
@@ -127,6 +179,19 @@ class ChatService:
                 max_reflections=self.max_reflections,
                 max_progress_bonus=self.max_progress_bonus_iterations,
                 max_repeated_tool_rounds=self.max_repeated_tool_rounds,
+                failure_episode_enabled=self.failure_episode_enabled,
+                task_contract_enabled=self.task_contract_enabled,
+                completion_verifier_enabled=self.completion_verifier_enabled,
+                persistent_journal_enabled=self.persistent_journal_enabled,
+                parallel_read_only_enabled=self.parallel_read_only_enabled,
+                adversarial_verification_enabled=self.adversarial_verification_enabled,
+                max_transient_retries=self.max_transient_retries,
+                max_no_progress_rounds=self.max_no_progress_rounds,
+                max_verification_retries=self.max_verification_retries,
+                max_parallel_tools=self.max_parallel_tools,
+                transient_backoff_base_seconds=self.transient_backoff_base_seconds,
+                transient_backoff_max_seconds=self.transient_backoff_max_seconds,
+                max_elapsed_seconds=self.max_elapsed_seconds,
             ),
             llm=self.llm,
             tool_executor=_ChatToolExecutor(
@@ -142,6 +207,7 @@ class ChatService:
                 tools=tools,
                 system_prompt=system_prompt,
                 is_cancelled=is_cancelled,
+                task_state=task_state,
             ):
                 raw_phase = ChatPhase(raw_event["phase"])
                 final_phase = raw_phase
@@ -551,10 +617,32 @@ class ChatService:
             return "none"
         error_payload = payload.get("error")
         if isinstance(error_payload, dict):
+            category = str(error_payload.get("category") or "").strip().lower()
+            errno_raw = error_payload.get("db_errno", error_payload.get("errno"))
+            try:
+                errno = int(errno_raw) if errno_raw is not None else None
+            except (TypeError, ValueError):
+                errno = None
+            if category in {"unknown_table", "unknown_column", "schema_error"} or errno in {
+                1054,
+                1146,
+            }:
+                return "schema_error"
+            if category in {"permission", "permission_denied", "access_denied", "authorization"}:
+                return "permission_error"
+            if category in {"timeout", "query_timeout"}:
+                return "timeout_error"
+            if category in {"rate_limit", "rate_limited"}:
+                return "rate_limit_error"
+            if category in {"connection", "connection_error", "unavailable"}:
+                return "connection_error"
             error_text = " ".join(
                 [
                     str(error_payload.get("code") or ""),
+                    category,
                     str(error_payload.get("message") or ""),
+                    str(error_payload.get("db_message") or ""),
+                    str(error_payload.get("retry_hint") or ""),
                 ]
             ).lower()
         else:

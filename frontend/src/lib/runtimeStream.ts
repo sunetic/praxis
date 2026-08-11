@@ -69,11 +69,11 @@ const CORE_PHASE_FALLBACK_MAP: Record<string, RuntimeCoreEventName> = {
 }
 
 const CORE_STAGE_LABEL_MAP: Record<Exclude<RuntimeCoreEventName, "done" | "error">, string> = {
-  plan: "Plan",
-  act: "Execute",
-  observe: "Verify",
-  reflect: "Reflect",
-  retry: "Retry",
+  plan: "需求规划",
+  act: "变更执行",
+  observe: "结果校验",
+  reflect: "反思调整",
+  retry: "重试执行",
 }
 
 function asRecord(value: unknown): Record<string, unknown> {
@@ -104,12 +104,12 @@ function stripCorePrefix(summary: string): string {
 
 function normalizeCoreSummary(summary: string): string {
   return String(summary || "")
-    .replace(/^Attempt\s+(\d+)\s+执行中$/i, "Attempt $1 executing")
-    .replace(/^Attempt\s+(\d+)\s+校验中$/i, "Attempt $1 verifying")
-    .replace(/^Attempt\s+(\d+)\s+校验通过$/i, "Attempt $1 passed")
-    .replace(/^Attempt\s+(\d+)\s+校验失败[:：]?\s*/i, "Attempt $1 failed: ")
-    .replace(/^Attempt\s+(\d+)\s+构建失败[:：]?\s*/i, "Attempt $1 build failed: ")
-    .replace(/^发起\s+Attempt\s+(\d+)$/i, "Starting attempt $1")
+    .replace(/^Attempt\s+(\d+)\s+(?:执行中|executing)$/i, "第$1轮执行中")
+    .replace(/^Attempt\s+(\d+)\s+(?:校验中|verifying)$/i, "第$1轮校验中")
+    .replace(/^Attempt\s+(\d+)\s+(?:校验通过|passed)$/i, "第$1轮校验通过")
+    .replace(/^Attempt\s+(\d+)\s+(?:校验失败|failed)[:：]?\s*/i, "第$1轮校验失败：")
+    .replace(/^Attempt\s+(\d+)\s+(?:构建失败|build failed)[:：]?\s*/i, "第$1轮构建失败：")
+    .replace(/^(?:发起\s+Attempt|Starting attempt)\s+(\d+)$/i, "开始第$1轮")
     .trim()
 }
 
@@ -150,15 +150,16 @@ export function normalizeRuntimeStreamEvent(raw: unknown): RuntimeNormalizedEven
   }
 
   if (type === "done") {
-    const summary = toSummaryText(data, "Completed")
+    const doneData = Object.keys(data).length > 0 ? data : payload
+    const summary = toSummaryText(doneData, "Completed")
     return {
       kind: "core",
       name: "done",
-      status: String(data.status || "done"),
+      status: String(doneData.status || "done"),
       summary,
-      payload: data,
-      source: String(data.source || "runtime"),
-      agent: normalizeAgentLabel(data.agent_name || data.agent),
+      payload: doneData,
+      source: String(doneData.source || "runtime"),
+      agent: normalizeAgentLabel(doneData.agent_name || doneData.agent),
     }
   }
 
@@ -183,6 +184,28 @@ export function normalizeRuntimeStreamEvent(raw: unknown): RuntimeNormalizedEven
       payload: data,
       source: String(data.source || "runtime"),
       agent: normalizeAgentLabel(data.agent_name || data.agent),
+    }
+  }
+
+  if (
+    type === "task_contract" ||
+    type === "assistant_progress" ||
+    type === "progress" ||
+    type === "verification" ||
+    type === "task_state" ||
+    type === "checkpoint" ||
+    type === "context_compressed"
+  ) {
+    const eventPayload = Object.keys(data).length > 0 ? data : payload
+    return {
+      kind: "extension",
+      name: type,
+      summary: type === "assistant_progress"
+        ? String(eventPayload.text || eventPayload.message || "").trim()
+        : toSummaryText(eventPayload, ""),
+      payload: eventPayload,
+      source: String(eventPayload.source || "runtime"),
+      agent: normalizeAgentLabel(eventPayload.agent_name || eventPayload.agent),
     }
   }
 

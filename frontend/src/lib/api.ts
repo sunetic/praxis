@@ -436,6 +436,7 @@ export type ToolCallItem = {
 
 export type ContentPart =
   | { type: "text"; text: string }
+  | { type: "progress"; text: string; stage?: string | null }
   | { type: "tool_use"; id: string; name: string; input?: object | null; result?: unknown; pending_action_token?: string | null; pending_action_status?: "pending" | "confirmed" | "cancelled" | null }
 
 export type Message = {
@@ -462,9 +463,16 @@ export type ChatStreamEvent = {
   type:
     | "thinking"
     | "plan"
+    | "assistant_progress"
     | "step_start"
     | "step_result"
     | "reflect"
+    | "task_contract"
+    | "progress"
+    | "verification"
+    | "task_state"
+    | "checkpoint"
+    | "context_compressed"
     | "assistant"
     | "skill_delta"
     | "error"

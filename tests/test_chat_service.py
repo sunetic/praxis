@@ -109,9 +109,12 @@ async def test_chat_service_tool_failure_hits_retry_budget():
     events = await _collect_events(service)
     error_events = [event for event in events if event["type"] == "error"]
     assistant_events = [event for event in events if event["type"] == "assistant"]
+    checkpoint_events = [event for event in events if event["type"] == "checkpoint"]
     assert not error_events
     assert assistant_events
-    assert "阶段性结论" in (assistant_events[-1]["data"].get("text") or "")
+    assert assistant_events[-1]["data"].get("incomplete") is True
+    assert checkpoint_events
+    assert "unknown_tool" in (assistant_events[-1]["data"].get("text") or "")
     assert events[-1]["type"] == "done"
     assert events[-1]["data"]["text_emitted"] is True
 
@@ -174,11 +177,17 @@ async def test_chat_service_iteration_limit_returns_explicit_error():
 
 @pytest.mark.anyio
 async def test_chat_service_does_not_emit_planner_text_during_tool_iteration():
-    chunk_with_content_and_tool = {
+    content_chunk = {
+        "choices": [
+            {
+                "delta": {"content": "I will call tool now"},
+            }
+        ]
+    }
+    later_tool_chunk = {
         "choices": [
             {
                 "delta": {
-                    "content": "I will call tool now",
                     "tool_calls": [
                         {
                             "index": 0,
@@ -192,7 +201,7 @@ async def test_chat_service_does_not_emit_planner_text_during_tool_iteration():
     }
 
     service = ChatService(max_iterations=1, max_reflections=0)
-    service.llm = FakeLLM(responses=[[chunk_with_content_and_tool]])
+    service.llm = FakeLLM(responses=[[content_chunk, later_tool_chunk]])
     events = await _collect_events(service)
 
     assistant_text = "".join(
@@ -201,7 +210,13 @@ async def test_chat_service_does_not_emit_planner_text_during_tool_iteration():
         if event.get("type") == "assistant"
     )
     assert "I will call tool now" not in assistant_text
-    assert "阶段性结论" in assistant_text
+    assert "unknown_tool" in assistant_text
+    assert any(
+        event.get("type") == "assistant"
+        and (event.get("data") or {}).get("incomplete") is True
+        for event in events
+    )
+    assert any(event.get("type") == "checkpoint" for event in events)
 
 
 class DateTimeTool(BaseTool):
@@ -382,7 +397,13 @@ async def test_chat_service_uses_protocol_tool_messages_in_followup_round():
     }
     final_text_chunk = {"choices": [{"delta": {"content": "done"}}]}
 
-    service = ChatService(max_iterations=2, max_reflections=1)
+    # This test isolates protocol message shape; completion safety is covered
+    # separately by the reasoning-engine trajectory tests.
+    service = ChatService(
+        max_iterations=2,
+        max_reflections=1,
+        completion_verifier_enabled=False,
+    )
     fake_llm = FakeLLM(responses=[[tool_call_chunk], [final_text_chunk]])
     service.llm = fake_llm
     events = await _collect_events(service)

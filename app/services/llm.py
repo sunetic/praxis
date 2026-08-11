@@ -162,6 +162,7 @@ class LLMClient:
         temperature: float | None = None,
         response_format: dict[str, Any] | None = None,
         reasoning_config: dict[str, Any] | None = None,
+        tool_choice: str | dict[str, Any] | None = None,
     ) -> AsyncGenerator[dict[str, Any], None]:
         import litellm
 
@@ -178,9 +179,18 @@ class LLMClient:
             "api_base": self.base_url,
             "api_key": self.api_key,
         }
+        if stream:
+            # OpenAI-compatible providers emit token usage in a final empty-choice
+            # chunk when explicitly requested.  The reasoning engine consumes it
+            # for trajectory cost metrics without exposing it to the model.
+            kwargs["stream_options"] = {"include_usage": True}
         if tools:
             kwargs["tools"] = tools
-            kwargs["parallel_tool_calls"] = False
+            kwargs["parallel_tool_calls"] = bool(
+                get_settings().agent_parallel_read_only_enabled
+            )
+            if tool_choice is not None:
+                kwargs["tool_choice"] = tool_choice
         if temperature is not None:
             kwargs["temperature"] = temperature
         if response_format is not None:

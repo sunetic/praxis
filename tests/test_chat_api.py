@@ -12,6 +12,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.api import chat as chat_api
+from app.api import chat_history
 from app.api import chat_pending as chat_pending_api
 from app.api import conversations as conversations_api
 from app.core.config import Settings
@@ -66,6 +67,121 @@ def test_normalize_json_payload_serializes_datetime():
     assert normalized is not None
     assert normalized["ok"] is True
     assert normalized["nested"]["ts"] == "2026-03-11 12:00:00"
+
+
+@pytest.mark.anyio
+async def test_save_messages_to_db_upserts_streaming_snapshot(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    factory, engine = _build_session_factory(tmp_path)
+    monkeypatch.setattr("app.db.database.SessionLocal", factory)
+    db = factory()
+    try:
+        conversation = models.Conversation(title="stream-upsert")
+        db.add(conversation)
+        db.commit()
+        db.refresh(conversation)
+
+        message = models.Message(
+            conversation_id=conversation.id,
+            role="assistant",
+            content="",
+            tool_calls=[{"id": "tc-1", "name": "execute_sql", "result": None}],
+            content_parts=[
+                {
+                    "type": "tool_use",
+                    "id": "tc-1",
+                    "name": "execute_sql",
+                    "result": None,
+                }
+            ],
+        )
+        await chat_stream_helpers._save_messages_to_db([message])
+        assert message.id is not None
+
+        message.content = "查询完成"
+        message.tool_calls[0]["result"] = {"success": True}
+        message.content_parts[0]["result"] = {"success": True}
+        message.content_parts.append({"type": "text", "text": "查询完成"})
+        await chat_stream_helpers._save_messages_to_db([message])
+
+        db.expire_all()
+        rows = db.query(models.Message).filter_by(conversation_id=conversation.id).all()
+        assert len(rows) == 1
+        assert rows[0].id == message.id
+        assert rows[0].content == "查询完成"
+        assert rows[0].tool_calls[0]["result"]["success"] is True
+        assert rows[0].content_parts[-1] == {"type": "text", "text": "查询完成"}
+    finally:
+        db.close()
+        engine.dispose()
+
+
+def test_stream_user_message_persistence_is_idempotent_and_not_duplicated_in_llm_context(
+    tmp_path: Path,
+) -> None:
+    factory, engine = _build_session_factory(tmp_path)
+    db = factory()
+    try:
+        conversation = models.Conversation(title="stream-user-persistence")
+        db.add(conversation)
+        db.commit()
+        db.refresh(conversation)
+
+        created = chat_history.ensure_stream_user_message(db, conversation.id, "请检查数据")
+        reused = chat_history.ensure_stream_user_message(db, conversation.id, "请检查数据")
+        chat_messages, raw_messages = chat_history.load_chat_messages(
+            db,
+            conversation.id,
+            "请检查数据",
+        )
+
+        assert created is not None
+        assert reused is not None
+        assert reused.id == created.id
+        assert [(message.role, message.content) for message in raw_messages] == [
+            ("user", "请检查数据")
+        ]
+        assert chat_messages == [{"role": "user", "content": "请检查数据"}]
+        user_events = (
+            db.query(models.ChatEvent)
+            .filter(
+                models.ChatEvent.conversation_id == conversation.id,
+                models.ChatEvent.event_type == "user_message",
+            )
+            .all()
+        )
+        assert len(user_events) == 1
+        assert user_events[0].payload["message_id"] == created.id
+        assert user_events[0].turn_seq == 1
+        assert user_events[0].part_seq == 0
+    finally:
+        db.close()
+        engine.dispose()
+
+
+@pytest.mark.parametrize("event_type", ["tool_start", "tool_result"])
+def test_map_tool_event_to_step_event_preserves_parallel_flag(event_type: str) -> None:
+    event = {
+        "type": event_type,
+        "data": {
+            "tool_call_id": "call-parallel",
+            "name": "execute_sql",
+            "arguments": '{"sql":"SELECT 1"}',
+            "parallel": True,
+            "result": {"success": True, "data": {"rows": [{"value": 1}]}},
+        },
+    }
+
+    mapped = chat_stream_helpers._map_tool_event_to_step_event(
+        event,
+        trace_id="trace-parallel",
+        route_source="chat",
+    )
+
+    assert mapped["type"] == ("step_start" if event_type == "tool_start" else "step_result")
+    assert mapped["data"]["parallel"] is True
 
 
 class _FakeSelectorLLM:
@@ -377,6 +493,7 @@ class _FakeStreamingChatService:
         scope_context: dict | None = None,
         use_state_machine: bool | None = None,
         agent_name: str = "",
+        task_state: dict[str, Any] | None = None,
     ) -> Any:
         self.calls.append(
             {
@@ -388,6 +505,7 @@ class _FakeStreamingChatService:
                 "scope_context": scope_context,
                 "use_state_machine": use_state_machine,
                 "agent_name": agent_name,
+                "task_state": task_state,
             }
         )
         for event in self.events:
@@ -641,6 +759,146 @@ def test_list_chat_events_orders_by_turn_and_part_sequence(tmp_path: Path) -> No
             "assistant",
             "assistant",
         ]
+    finally:
+        db.close()
+        engine.dispose()
+
+
+def test_load_resumable_task_state_requires_explicit_resume_and_incomplete_state(
+    tmp_path: Path,
+) -> None:
+    factory, engine = _build_session_factory(tmp_path)
+    db = factory()
+    try:
+        conversation = models.Conversation(title="resume-task")
+        db.add(conversation)
+        db.flush()
+        state = {
+            "version": 1,
+            "task_run_id": "task-resume-1",
+            "status": "checkpointed",
+            "contract": {"objective": "run audit", "acceptance_criteria": []},
+        }
+        db.add(
+            models.ChatEvent(
+                conversation_id=conversation.id,
+                event_type="task_state",
+                phase="reflecting",
+                payload=state,
+            )
+        )
+        db.commit()
+
+        assert (
+            chat_api._load_resumable_task_state(
+                db,
+                conversation_id=conversation.id,
+                user_input="分析另一个问题",
+            )
+            is None
+        )
+        restored = chat_api._load_resumable_task_state(
+            db,
+            conversation_id=conversation.id,
+            user_input="继续执行",
+        )
+        assert restored is not None
+        assert restored["task_run_id"] == "task-resume-1"
+
+        db.add(
+            models.ChatEvent(
+                conversation_id=conversation.id,
+                event_type="task_state",
+                phase="responding",
+                payload={**state, "status": "completed"},
+            )
+        )
+        db.commit()
+        assert (
+            chat_api._load_resumable_task_state(
+                db,
+                conversation_id=conversation.id,
+                user_input="继续",
+            )
+            is None
+        )
+    finally:
+        db.close()
+        engine.dispose()
+
+
+@pytest.mark.anyio
+async def test_chat_stream_passes_persisted_checkpoint_to_reasoning_engine(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    async def _fake_select_dynamic_skills(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        del args, kwargs
+        return {
+            "active_skills": [],
+            "added": [],
+            "removed": [],
+            "reason": "test",
+            "selector_ok": True,
+        }
+
+    async def _noop_save_events(events: list[models.ChatEvent]) -> None:
+        del events
+
+    async def _noop_save_messages(messages: list[models.Message]) -> None:
+        del messages
+
+    fake_service = _FakeStreamingChatService(
+        events=[
+            {
+                "type": "done",
+                "phase": "done",
+                "data": {"status": "completed", "completed": True},
+                "meta": {},
+            }
+        ]
+    )
+    monkeypatch.setattr(chat_api, "_select_dynamic_skills", _fake_select_dynamic_skills)
+    monkeypatch.setattr(chat_api, "_save_chat_events_to_db", _noop_save_events)
+    monkeypatch.setattr(chat_api, "_save_messages_to_db", _noop_save_messages)
+    monkeypatch.setattr(chat_api, "get_chat_service", lambda: fake_service)
+
+    factory, engine = _build_session_factory(tmp_path)
+    db = factory()
+    try:
+        conversation = models.Conversation(title="resume-stream")
+        db.add(conversation)
+        db.flush()
+        state = {
+            "version": 1,
+            "task_run_id": "task-stream-resume",
+            "status": "checkpointed",
+            "contract": {"objective": "run audit", "acceptance_criteria": []},
+            "steps": [],
+            "evidence": [],
+            "failure_episodes": [],
+            "metrics": {},
+        }
+        db.add(
+            models.ChatEvent(
+                conversation_id=conversation.id,
+                event_type="checkpoint",
+                phase="reflecting",
+                payload={"status": "checkpointed", "task_state": state},
+            )
+        )
+        db.commit()
+
+        response = await chat_api.chat_stream(
+            conversation_id=conversation.id,
+            message=schemas.ChatStreamRequest(content="继续执行"),
+            db=db,
+        )
+        await _collect_stream_payloads(response)
+
+        assert len(fake_service.calls) == 1
+        assert fake_service.calls[0]["task_state"] is not None
+        assert fake_service.calls[0]["task_state"]["task_run_id"] == "task-stream-resume"
     finally:
         db.close()
         engine.dispose()
@@ -1264,16 +1522,33 @@ async def test_chat_stream_persists_assistant_segments_around_tool_events(
             "selector_ok": True,
         }
 
-    saved_messages: list[models.Message] = []
+    message_snapshots: list[dict[str, Any]] = []
+    persisted_event_types: list[str] = []
 
     async def _capture_messages(messages: list[models.Message]) -> None:
-        saved_messages.extend(messages)
+        for message in messages:
+            message_snapshots.append(
+                {
+                    "content": message.content,
+                    "tool_calls": json.loads(json.dumps(message.tool_calls)),
+                    "content_parts": json.loads(json.dumps(message.content_parts)),
+                }
+            )
 
-    async def _noop_save_events(events: list[models.ChatEvent]) -> None:
-        del events
+    async def _capture_events(events: list[models.ChatEvent]) -> None:
+        persisted_event_types.extend(event.event_type for event in events)
 
     fake_service = _FakeStreamingChatService(
         events=[
+            {
+                "type": "assistant_progress",
+                "phase": "planning",
+                "data": {
+                    "text": "我先确认实际表结构，再开始查询。",
+                    "stage": "planning",
+                },
+                "meta": {},
+            },
             {
                 "type": "assistant",
                 "phase": "responding",
@@ -1315,7 +1590,7 @@ async def test_chat_stream_persists_assistant_segments_around_tool_events(
 
     monkeypatch.setattr(chat_api, "_select_dynamic_skills", _fake_select_dynamic_skills)
     monkeypatch.setattr(chat_api, "_save_messages_to_db", _capture_messages)
-    monkeypatch.setattr(chat_api, "_save_chat_events_to_db", _noop_save_events)
+    monkeypatch.setattr(chat_api, "_save_chat_events_to_db", _capture_events)
     monkeypatch.setattr(chat_api, "get_chat_service", lambda: fake_service)
     monkeypatch.setattr(
         chat_api,
@@ -1353,16 +1628,213 @@ async def test_chat_stream_persists_assistant_segments_around_tool_events(
             item.get("type") == "step_start" or item.get("type") == "step_result"
             for item in payloads
         )
-        # After refactor, assistant text segments within a single turn are
-        # accumulated into content_parts and flushed as a single Message.
-        # The legacy content field holds only the first text segment.
-        assert len(saved_messages) >= 1
-        all_parts = saved_messages[0].content_parts or []
+        # Every visible part is committed as an update of the same logical
+        # assistant message, instead of waiting for the terminal event.
+        assert len(message_snapshots) >= 5
+        progress_snapshot = message_snapshots[0]
+        assert progress_snapshot["content_parts"] == [
+            {
+                "type": "progress",
+                "text": "我先确认实际表结构，再开始查询。",
+                "stage": "planning",
+            }
+        ]
+        tool_started = next(
+            snapshot
+            for snapshot in message_snapshots
+            if snapshot["tool_calls"]
+            and snapshot["tool_calls"][0]["result"] is None
+        )
+        assert tool_started["tool_calls"][0]["id"] == "tc-service"
+        tool_finished = next(
+            snapshot
+            for snapshot in message_snapshots
+            if snapshot["tool_calls"]
+            and snapshot["tool_calls"][0]["result"] is not None
+        )
+        assert tool_finished["tool_calls"][0]["result"]["success"] is True
+
+        final_snapshot = message_snapshots[-1]
+        assert "由于当前数据源缺少 OCP 集群关联信息" in final_snapshot["content"]
+        assert "不过我可以尝试通过数据库查询来获取 CPU 负载信息" in final_snapshot[
+            "content"
+        ]
+        all_parts = final_snapshot["content_parts"] or []
+        progress_parts = [
+            p for p in all_parts if isinstance(p, dict) and p.get("type") == "progress"
+        ]
+        assert progress_parts == [
+            {
+                "type": "progress",
+                "text": "我先确认实际表结构，再开始查询。",
+                "stage": "planning",
+            }
+        ]
+        assert "我先确认实际表结构" not in final_snapshot["content"]
         text_contents = [
             p["text"] for p in all_parts if isinstance(p, dict) and p.get("type") == "text"
         ]
         assert any("由于当前数据源缺少 OCP 集群关联信息" in t for t in text_contents)
         assert any("不过我可以尝试通过数据库查询来获取 CPU 负载信息" in t for t in text_contents)
+        assert persisted_event_types == [
+            "assistant_progress",
+            "assistant",
+            "step_start",
+            "step_result",
+            "assistant",
+            "done",
+        ]
+    finally:
+        db.close()
+        engine.dispose()
+
+
+@pytest.mark.anyio
+async def test_chat_stream_persists_tool_result_and_terminal_checkpoint_on_disconnect(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    async def _fake_select_dynamic_skills(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        del args, kwargs
+        return {
+            "active_skills": [],
+            "added": [],
+            "removed": [],
+            "reason": "test",
+            "selector_ok": True,
+        }
+
+    persisted_events: list[dict[str, Any]] = []
+    message_snapshots: list[dict[str, Any]] = []
+
+    async def _capture_events(events: list[models.ChatEvent]) -> None:
+        for event in events:
+            persisted_events.append(
+                {
+                    "type": event.event_type,
+                    "phase": event.phase,
+                    "payload": json.loads(json.dumps(event.payload)),
+                }
+            )
+
+    async def _capture_messages(messages: list[models.Message]) -> None:
+        for message in messages:
+            message_snapshots.append(
+                {
+                    "content": message.content,
+                    "tool_calls": json.loads(json.dumps(message.tool_calls)),
+                    "content_parts": json.loads(json.dumps(message.content_parts)),
+                }
+            )
+
+    class _DisconnectAfterToolResult:
+        def __init__(self) -> None:
+            self.checks = 0
+
+        async def is_disconnected(self) -> bool:
+            self.checks += 1
+            return self.checks >= 4
+
+    task_state = {
+        "version": 1,
+        "task_run_id": "task-disconnect-1",
+        "status": "running",
+        "contract": {"objective": "inspect service", "acceptance_criteria": []},
+        "steps": [],
+        "evidence": [],
+        "failure_episodes": [],
+        "metrics": {},
+    }
+    fake_service = _FakeStreamingChatService(
+        events=[
+            {"type": "thinking", "phase": "thinking", "data": {"message": "x"}, "meta": {}},
+            {
+                "type": "task_state",
+                "phase": "planning",
+                "data": task_state,
+                "meta": {},
+            },
+            {
+                "type": "tool_start",
+                "phase": "tool_running",
+                "data": {
+                    "tool_call_id": "tc-durable",
+                    "name": "execute_sql",
+                    "arguments": '{"sql":"SELECT 1"}',
+                },
+                "meta": {},
+            },
+            {
+                "type": "tool_result",
+                "phase": "tool_running",
+                "data": {
+                    "tool_call_id": "tc-durable",
+                    "name": "execute_sql",
+                    "arguments": '{"sql":"SELECT 1"}',
+                    "result": {"success": True, "data": {"rows": [{"value": 1}]}},
+                },
+                "meta": {},
+            },
+            {
+                "type": "assistant",
+                "phase": "responding",
+                "data": {"text": "should not be reached"},
+                "meta": {},
+            },
+        ]
+    )
+
+    monkeypatch.setattr(chat_api, "_select_dynamic_skills", _fake_select_dynamic_skills)
+    monkeypatch.setattr(chat_api, "_save_messages_to_db", _capture_messages)
+    monkeypatch.setattr(chat_api, "_save_chat_events_to_db", _capture_events)
+    monkeypatch.setattr(chat_api, "get_chat_service", lambda: fake_service)
+    monkeypatch.setattr(
+        chat_api,
+        "_filter_tools_by_agent",
+        lambda agent: [{"function": {"name": "execute_sql"}}],
+    )
+    monkeypatch.setattr(
+        chat_turn_context,
+        "_filter_tools_by_agent",
+        lambda agent: [{"function": {"name": "execute_sql"}}],
+    )
+
+    factory, engine = _build_session_factory(tmp_path)
+    db = factory()
+    try:
+        conversation = models.Conversation(title="durable-disconnect")
+        db.add(conversation)
+        db.commit()
+        db.refresh(conversation)
+
+        response = await chat_api.chat_stream(
+            conversation_id=conversation.id,
+            message=schemas.ChatStreamRequest(content="run durable test"),
+            request=_DisconnectAfterToolResult(),
+            db=db,
+        )
+        await _collect_stream_payloads(response)
+
+        event_types = [event["type"] for event in persisted_events]
+        assert event_types == [
+            "thinking",
+            "task_state",
+            "step_start",
+            "step_result",
+            "checkpoint",
+            "done",
+        ]
+        checkpoint = next(event for event in persisted_events if event["type"] == "checkpoint")
+        assert checkpoint["payload"]["reason_code"] == "client_disconnected"
+        assert checkpoint["payload"]["task_state"]["status"] == "checkpointed"
+        done = next(event for event in persisted_events if event["type"] == "done")
+        assert done["payload"]["status"] == "incomplete"
+        assert done["payload"]["completed"] is False
+
+        final_snapshot = message_snapshots[-1]
+        assert final_snapshot["tool_calls"][0]["id"] == "tc-durable"
+        assert final_snapshot["tool_calls"][0]["result"]["success"] is True
+        assert final_snapshot["content"] == ""
     finally:
         db.close()
         engine.dispose()

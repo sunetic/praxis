@@ -53,14 +53,14 @@ export function Sidebar() {
   const { locale, toggleLocale, t } = useShellI18n()
 
   return (
-    <aside className="w-56 shrink-0 border-r border-gray-100 bg-white flex flex-col">
-      <div className="flex h-14 items-center gap-2.5 px-4 border-b border-gray-100">
+    <aside className="flex w-16 shrink-0 flex-col border-r border-gray-100 bg-white min-[901px]:w-56">
+      <div className="flex h-14 items-center justify-center gap-2.5 border-b border-gray-100 px-2 min-[901px]:justify-start min-[901px]:px-4">
         <div className="flex size-8 items-center justify-center rounded-lg bg-indigo-100">
           <Sparkles className="size-4 text-indigo-500" />
         </div>
-        <span className="text-lg font-semibold text-gray-800">{t("sidebar.brand")}</span>
+        <span className="hidden text-lg font-semibold text-gray-800 min-[901px]:inline">{t("sidebar.brand")}</span>
       </div>
-      <nav className="flex-1 p-3">
+      <nav className="flex-1 px-2 py-3 min-[901px]:p-3">
         {navGroups.map((group, groupIndex) => (
           <div
             key={group.labelKey}
@@ -68,7 +68,7 @@ export function Sidebar() {
             aria-label={t(group.labelKey)}
             className={cn("space-y-1", groupIndex > 0 && "mt-3 border-t border-gray-100 pt-3")}
           >
-            <div className="px-3 pb-1 text-[11px] font-semibold uppercase tracking-[0.12em] text-gray-400">
+            <div className="hidden px-3 pb-1 text-[11px] font-semibold uppercase tracking-[0.12em] text-gray-400 min-[901px]:block">
               {t(group.labelKey)}
             </div>
             {group.items.map((item) => (
@@ -76,9 +76,11 @@ export function Sidebar() {
                 key={item.to}
                 to={item.to}
                 end
+                aria-label={t(item.labelKey)}
+                title={t(item.labelKey)}
                 className={({ isActive }) =>
                   cn(
-                    "flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition-colors",
+                    "flex items-center justify-center gap-3 rounded-xl px-2 py-2.5 text-sm font-medium transition-colors min-[901px]:justify-start min-[901px]:px-3",
                     isActive
                       ? "bg-indigo-50 text-indigo-600"
                       : "text-gray-500 hover:text-gray-700 hover:bg-gray-50"
@@ -86,21 +88,24 @@ export function Sidebar() {
                 }
               >
                 <item.icon className="size-4" />
-                {t(item.labelKey)}
+                <span className="hidden min-[901px]:inline">{t(item.labelKey)}</span>
               </NavLink>
             ))}
           </div>
         ))}
       </nav>
-      <div className="border-t border-gray-100 p-3">
+      <div className="border-t border-gray-100 px-2 py-3 min-[901px]:p-3">
         <button
           aria-label={t("topbar.locale.switchAria")}
-          className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium text-gray-500 transition-colors hover:bg-gray-50 hover:text-gray-700"
+          title={t("topbar.locale.switchAria")}
+          className="flex w-full items-center justify-center gap-3 rounded-xl px-2 py-2.5 text-sm font-medium text-gray-500 transition-colors hover:bg-gray-50 hover:text-gray-700 min-[901px]:justify-start min-[901px]:px-3"
           onClick={toggleLocale}
           type="button"
         >
           <Globe className="size-4" />
-          {locale === "zh-CN" ? t("topbar.locale.switchToEn") : t("topbar.locale.switchToZh")}
+          <span className="hidden min-[901px]:inline">
+            {locale === "zh-CN" ? t("topbar.locale.switchToEn") : t("topbar.locale.switchToZh")}
+          </span>
         </button>
       </div>
     </aside>

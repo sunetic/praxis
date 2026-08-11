@@ -114,6 +114,7 @@ class ChatCoreAgent:
         conversation_id: int | None,
         scope_context: dict[str, Any] | None,
         is_cancelled: Callable[[], bool] | None = None,
+        task_state: dict[str, Any] | None = None,
     ) -> AsyncGenerator[dict[str, Any], None]:
         chat_with_tools = self._chat_service.chat_with_tools
         chat_signature = inspect.signature(chat_with_tools)
@@ -128,6 +129,8 @@ class ChatCoreAgent:
         }
         if "is_cancelled" in chat_signature.parameters:
             kwargs["is_cancelled"] = is_cancelled
+        if "task_state" in chat_signature.parameters:
+            kwargs["task_state"] = task_state
         async for event in chat_with_tools(messages, **kwargs):
             yield event
 

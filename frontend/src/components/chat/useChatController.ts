@@ -926,6 +926,79 @@ export function useChatController({
             return
           }
 
+          // ── User-visible work narration ──
+          if (normalized.kind === "extension" && normalized.name === "assistant_progress") {
+            const d = raw?.data && typeof raw.data === "object"
+              ? (raw.data as Record<string, unknown>)
+              : (normalized as RuntimeExtensionEvent).payload
+            const progressText = String(d.text || normalized.summary || "").trim()
+            const stage = String(d.stage || "working")
+            if (progressText) {
+              setRuntimeStatus({
+                phase: stage === "planning" || stage === "acting" ? "plan" : "reflect",
+                text: progressText,
+              })
+              const lastPart = streamingPartsRef.current[streamingPartsRef.current.length - 1]
+              if (!(lastPart?.type === "progress" && lastPart.text === progressText)) {
+                streamingPartsRef.current.push({
+                  type: "progress",
+                  text: progressText,
+                  stage,
+                })
+                flushStreamingParts()
+              }
+            }
+            return
+          }
+
+          // ── Long-running task state ──
+          if (eventType === "task_contract") {
+            setRuntimeStatus({ phase: "plan", text: "Task acceptance criteria established. Planning execution..." })
+            return
+          }
+          if (eventType === "progress") {
+            const d = raw?.data && typeof raw.data === "object"
+              ? (raw.data as Record<string, unknown>)
+              : (raw && typeof raw === "object" ? raw : {})
+            const decision = String(d.decision || "")
+            const reason = typeof d.reason === "string" ? d.reason : ""
+            if (decision === "recoverable_failure" || decision === "transient_failure") {
+              setRuntimeStatus({ phase: "reflect", text: reason || "Recoverable failure detected. Adjusting strategy..." })
+            } else if (decision === "await_confirmation") {
+              setRuntimeStatus({ phase: "reflect", text: reason || "Waiting for authorization or confirmation..." })
+            } else if (decision === "blocked" || decision === "stalled") {
+              setRuntimeStatus({ phase: "reflect", text: reason || "Execution is blocked. A checkpoint has been saved." })
+            } else if (decision === "candidate_complete") {
+              setRuntimeStatus({ phase: "reflect", text: "Candidate answer ready. Verifying acceptance criteria..." })
+            } else {
+              setRuntimeStatus({ phase: "reflect", text: reason || "New evidence recorded. Continuing..." })
+            }
+            return
+          }
+          if (eventType === "verification") {
+            const d = raw?.data && typeof raw.data === "object"
+              ? (raw.data as Record<string, unknown>)
+              : (raw && typeof raw === "object" ? raw : {})
+            const satisfied = Boolean(d.satisfied)
+            const reason = typeof d.reason === "string" ? d.reason : ""
+            setRuntimeStatus({
+              phase: "reflect",
+              text: satisfied
+                ? "Acceptance criteria verified. Preparing final response..."
+                : (reason || "Verification found missing work. Continuing execution..."),
+            })
+            return
+          }
+          if (eventType === "checkpoint") {
+            const d = raw?.data && typeof raw.data === "object"
+              ? (raw.data as Record<string, unknown>)
+              : (raw && typeof raw === "object" ? raw : {})
+            const reason = typeof d.reason === "string" ? d.reason : ""
+            setRuntimeStatus({ phase: "reflect", text: reason || "Progress checkpoint saved. You can resume this task." })
+            return
+          }
+          if (eventType === "task_state" || eventType === "context_compressed") return
+
           // ── Core events (plan / act / observe / reflect / retry) ──
           if (
             normalized.kind === "core" &&
@@ -950,7 +1023,15 @@ export function useChatController({
 
           // ── Done ──
           if (normalized.kind === "core" && normalized.name === "done") {
-            setRuntimeStatus(null)
+            const d = raw?.data && typeof raw.data === "object"
+              ? (raw.data as Record<string, unknown>)
+              : (raw && typeof raw === "object" ? raw : {})
+            const status = String(d.status || "")
+            setRuntimeStatus(
+              status && status !== "completed"
+                ? { phase: "reflect", text: "I’m holding back a final conclusion until the remaining evidence gaps are resolved." }
+                : null
+            )
             return
           }
 

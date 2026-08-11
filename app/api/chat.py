@@ -15,7 +15,7 @@ from app.api.chat_handoff import (
     _handoff_status,
     _mark_handoff_consumed,
 )
-from app.api.chat_history import load_chat_messages
+from app.api.chat_history import ensure_stream_user_message, load_chat_messages
 from app.core.config import get_settings
 from app.core.logging import fmt_kv, get_logger
 from app.db.database import get_db
@@ -78,6 +78,10 @@ _XML_TOOL_CALL_STRIP_RE = re.compile(
     re.DOTALL,
 )
 _TRAILING_TOOL_CALL_STRIP_RE = re.compile(r"\s*</tool_call>\s*$")
+_RESUME_REQUEST_RE = re.compile(
+    r"^(?:请)?(?:继续执行|继续|接着|续跑|恢复|从上次继续|continue|resume)(?:\b|[\s，,。.！!:：]|$)",
+    re.I,
+)
 
 
 def _strip_xml_tool_calls(text: str) -> str:
@@ -85,6 +89,38 @@ def _strip_xml_tool_calls(text: str) -> str:
     text = _XML_TOOL_CALL_STRIP_RE.sub("", text)
     text = _TRAILING_TOOL_CALL_STRIP_RE.sub("", text)
     return text.rstrip()
+
+
+def _load_resumable_task_state(
+    db: Session,
+    *,
+    conversation_id: int,
+    user_input: str,
+) -> dict[str, Any] | None:
+    if not _RESUME_REQUEST_RE.search(str(user_input or "").strip()):
+        return None
+    events = (
+        db.query(models.ChatEvent)
+        .filter(
+            models.ChatEvent.conversation_id == conversation_id,
+            models.ChatEvent.event_type.in_(["task_state", "checkpoint"]),
+        )
+        .order_by(models.ChatEvent.id.desc())
+        .limit(20)
+        .all()
+    )
+    for event in events:
+        payload = event.payload if isinstance(event.payload, dict) else {}
+        state = payload.get("task_state") if event.event_type == "checkpoint" else payload
+        if not isinstance(state, dict):
+            continue
+        status = str(state.get("status") or payload.get("status") or "")
+        if status in {"completed", "error"}:
+            return None
+        if not state.get("task_run_id") or not isinstance(state.get("contract"), dict):
+            continue
+        return state
+    return None
 
 
 router = APIRouter(prefix="/chat", tags=["Chat"])
@@ -161,6 +197,8 @@ async def chat_stream(
         )
         pending_handoff_turn = _handoff_status(precheck_payload) == HANDOFF_STATUS_PENDING
 
+    ensure_stream_user_message(db, conversation_id, incoming_content)
+
     selected_datasource = None
     if conversation.datasource_id is not None:
         selected_datasource = (
@@ -205,6 +243,11 @@ async def chat_stream(
         )
 
     chat_messages, messages = load_chat_messages(db, conversation_id, incoming_content)
+    resumable_task_state = _load_resumable_task_state(
+        db,
+        conversation_id=conversation_id,
+        user_input=incoming_content,
+    )
 
     tools = _filter_tools_by_agent(conversation.agent)
     tools = _bind_default_datasource_to_tools(tools, conversation.datasource_id)
@@ -408,7 +451,7 @@ async def chat_stream(
 
     assistant_content = ""
     pending_parts: list[dict] = []
-    saved_messages: list[models.Message] = []
+    turn_message: models.Message | None = None
     display_agent_name = (
         resolved_scene_agent.display_name
         if resolved_scene_agent
@@ -523,9 +566,10 @@ async def chat_stream(
     )
 
     async def generate():
-        nonlocal assistant_content, pending_parts
+        nonlocal assistant_content, pending_parts, turn_message
         _cancelled = False
-        saved_timeline_events: list[models.ChatEvent] = []
+        terminal_event_persisted = False
+        latest_task_state: dict[str, Any] | None = None
         next_part_seq = 1
 
         def _is_cancelled() -> bool:
@@ -537,12 +581,11 @@ async def chat_stream(
             next_part_seq += 1
             return value
 
-        def _flush_turn() -> None:
-            nonlocal assistant_content, pending_parts
+        def _flush_text_buffer() -> None:
+            nonlocal assistant_content
             # Strip XML-style tool calls that some models emit as text content
             if assistant_content and _XML_TOOL_CALL_STRIP_RE.search(assistant_content):
                 assistant_content = _strip_xml_tool_calls(assistant_content)
-            # Flush any remaining text into parts
             if str(assistant_content or "").strip():
                 last = pending_parts[-1] if pending_parts else None
                 if last and last.get("type") == "text":
@@ -550,14 +593,18 @@ async def chat_stream(
                 else:
                     pending_parts.append({"type": "text", "text": assistant_content})
                 assistant_content = ""
+
+        async def _persist_turn_snapshot() -> None:
+            """Durably upsert the logical assistant message at its current state."""
+            nonlocal turn_message
+            _flush_text_buffer()
             if not pending_parts:
                 return
-            # Derive legacy fields for backward compat
             text_parts = [
                 p["text"] for p in pending_parts if p.get("type") == "text" and p.get("text")
             ]
             tool_use_parts = [p for p in pending_parts if p.get("type") == "tool_use"]
-            legacy_content = text_parts[0] if text_parts else ""
+            legacy_content = "".join(text_parts)
             legacy_tool_calls = (
                 [
                     {
@@ -573,47 +620,39 @@ async def chat_stream(
                 if tool_use_parts
                 else None
             )
-            created_at = datetime.utcnow()
-            saved_messages.append(
-                models.Message(
+            normalized_parts = json.loads(_json_dumps_safe(pending_parts))
+            normalized_tool_calls = (
+                json.loads(_json_dumps_safe(legacy_tool_calls)) if legacy_tool_calls else None
+            )
+            if turn_message is None:
+                turn_message = models.Message(
                     conversation_id=conversation_id,
                     role="assistant",
                     content=legacy_content,
                     agent_name=display_agent_name,
-                    tool_calls=json.loads(_json_dumps_safe(legacy_tool_calls))
-                    if legacy_tool_calls
-                    else None,
-                    content_parts=json.loads(_json_dumps_safe(pending_parts)),
-                    created_at=created_at,
+                    tool_calls=normalized_tool_calls,
+                    content_parts=normalized_parts,
+                    created_at=datetime.utcnow(),
                 )
-            )
-            saved_timeline_events.append(
-                models.ChatEvent(
-                    conversation_id=conversation_id,
-                    event_type="assistant",
-                    phase="responding",
-                    turn_id=current_turn_id,
-                    turn_seq=current_turn_seq,
-                    part_seq=_allocate_part_seq(),
-                    role="assistant",
-                    agent_name=display_agent_name,
-                    payload=_normalize_json_payload(
-                        {
-                            "content": legacy_content,
-                            "event_kind": "assistant_text",
-                            "trace_id": trace_id,
-                        }
-                    ),
-                    created_at=created_at,
-                )
-            )
-            pending_parts = []
-            assistant_content = ""
+            else:
+                turn_message.content = legacy_content
+                turn_message.agent_name = display_agent_name
+                turn_message.tool_calls = normalized_tool_calls
+                turn_message.content_parts = normalized_parts
+            await _save_messages_to_db([turn_message])
 
         async def _persist_runtime_event(
             event_type: str, phase: str | None, payload: dict | None
         ) -> None:
             normalized_payload = dict(payload or {})
+            if event_type == "assistant":
+                text = str(
+                    normalized_payload.get("content") or normalized_payload.get("text") or ""
+                )
+                normalized_payload["content"] = text
+                normalized_payload.setdefault("event_kind", "assistant_text")
+                if turn_message is not None and turn_message.id is not None:
+                    normalized_payload.setdefault("message_id", turn_message.id)
             if "trace_id" not in normalized_payload:
                 normalized_payload["trace_id"] = trace_id
             normalized_payload.setdefault("turn_id", current_turn_id)
@@ -651,21 +690,32 @@ async def chat_stream(
                 conversation_id=conversation_id,
                 scope_context=scope_context,
                 is_cancelled=_is_cancelled,
+                task_state=resumable_task_state,
             ):
                 event_type = event.get("type")
                 event_data = event.get("data") if isinstance(event.get("data"), dict) else {}
-                event_phase = event.get("phase")
                 event_meta = event.get("meta") or {}
 
-                if event_type == "tool_start":
-                    # Flush any accumulated text as a text part before the tool
-                    if str(assistant_content or "").strip():
+                if event_type == "assistant_progress":
+                    progress_text = str(event_data.get("text") or "").strip()
+                    if progress_text:
                         last = pending_parts[-1] if pending_parts else None
-                        if last and last.get("type") == "text":
-                            last["text"] = (last["text"] or "") + assistant_content
-                        else:
-                            pending_parts.append({"type": "text", "text": assistant_content})
-                        assistant_content = ""
+                        if not (
+                            last
+                            and last.get("type") == "progress"
+                            and last.get("text") == progress_text
+                        ):
+                            pending_parts.append(
+                                {
+                                    "type": "progress",
+                                    "text": progress_text,
+                                    "stage": str(event_data.get("stage") or "working"),
+                                }
+                            )
+                            await _persist_turn_snapshot()
+                elif event_type == "tool_start":
+                    # Flush any accumulated text as a text part before the tool
+                    _flush_text_buffer()
                     tc_id = event_data.get("tool_call_id") or ""
                     pending_parts.append(
                         {
@@ -678,6 +728,7 @@ async def chat_stream(
                             "pending_action_status": None,
                         }
                     )
+                    await _persist_turn_snapshot()
                 elif event_type == "tool_result":
                     tc_id = event_data.get("tool_call_id") or ""
                     result_payload = event_data.get("result") or {}
@@ -723,6 +774,7 @@ async def chat_stream(
                                 "pending_action_status": pending_action_status,
                             }
                         )
+                    await _persist_turn_snapshot()
 
                 if event_type == "assistant":
                     if event.get("phase") != "responding":
@@ -734,6 +786,7 @@ async def chat_stream(
                     raw_piece = event_data.get("text", "")
                     if raw_piece:
                         assistant_content += raw_piece
+                        await _persist_turn_snapshot()
                 elif event_type == "tool_result":
                     event_result = event_data.get("result") or {}
                     event_result_data = event_result.get("data") or {}
@@ -786,6 +839,17 @@ async def chat_stream(
                             route_source="chat_stream",
                         ):
                             yield chunk
+                        await _persist_turn_snapshot()
+                        await _persist_runtime_event(
+                            "done",
+                            "done",
+                            {
+                                "status": "completed",
+                                "completed": True,
+                                "reason_code": "save_agent_workflow_completed",
+                            },
+                        )
+                        terminal_event_persisted = True
                         return
                     elif event_result_data.get("action") == "run_agent":
                         mapped_event = _map_tool_event_to_step_event(
@@ -840,27 +904,100 @@ async def chat_stream(
                             )
                             if inner_type == "assistant":
                                 if event.get("phase") == "responding":
-                                    assistant_content += inner_data.get("text", "")
-                                    yield _event_to_vds(
-                                        _annotate_runtime_event(
-                                            event, agent_name=display_agent_name
-                                        )
+                                    assistant_content += str(inner_data.get("text") or "")
+                                    await _persist_turn_snapshot()
+                                    annotated_inner = _annotate_runtime_event(
+                                        event, agent_name=display_agent_name
                                     )
+                                    await _persist_runtime_event(
+                                        "assistant", "responding", inner_data
+                                    )
+                                    yield _event_to_vds(annotated_inner)
                             elif inner_type in {"tool_start", "tool_result"}:
                                 mapped = _map_tool_event_to_step_event(
                                     event, trace_id=trace_id, route_source="chat_stream"
                                 )
-                                yield _event_to_vds(
-                                    _annotate_runtime_event(mapped, agent_name=display_agent_name)
+                                mapped_inner_data = (
+                                    mapped.get("data")
+                                    if isinstance(mapped.get("data"), dict)
+                                    else {}
                                 )
+                                tool_call_id = str(
+                                    inner_data.get("tool_call_id")
+                                    or mapped_inner_data.get("step_id")
+                                    or ""
+                                )
+                                if inner_type == "tool_start":
+                                    _flush_text_buffer()
+                                    pending_parts.append(
+                                        {
+                                            "type": "tool_use",
+                                            "id": tool_call_id,
+                                            "name": inner_data.get("name") or "",
+                                            "input": _safe_parse_arguments(
+                                                inner_data.get("arguments")
+                                            ),
+                                            "result": None,
+                                            "pending_action_token": None,
+                                            "pending_action_status": None,
+                                        }
+                                    )
+                                else:
+                                    result_payload = inner_data.get("result") or {}
+                                    result_full = (
+                                        result_payload
+                                        if isinstance(result_payload, dict)
+                                        else {"data": result_payload}
+                                    )
+                                    matched = next(
+                                        (
+                                            part
+                                            for part in pending_parts
+                                            if part.get("type") == "tool_use"
+                                            and part.get("id") == tool_call_id
+                                        ),
+                                        None,
+                                    )
+                                    if matched:
+                                        matched["result"] = result_full
+                                    else:
+                                        pending_parts.append(
+                                            {
+                                                "type": "tool_use",
+                                                "id": tool_call_id,
+                                                "name": inner_data.get("name") or "",
+                                                "input": _safe_parse_arguments(
+                                                    inner_data.get("arguments")
+                                                ),
+                                                "result": result_full,
+                                                "pending_action_token": None,
+                                                "pending_action_status": None,
+                                            }
+                                        )
+                                await _persist_turn_snapshot()
+                                annotated_inner = _annotate_runtime_event(
+                                    mapped, agent_name=display_agent_name
+                                )
+                                await _persist_runtime_event(
+                                    str(mapped.get("type") or "step_result"),
+                                    str(mapped.get("phase") or event.get("phase") or "tool_running"),
+                                    mapped_inner_data,
+                                )
+                                yield _event_to_vds(annotated_inner)
                             elif inner_type == "error":
-                                yield _event_to_vds(
-                                    _annotate_runtime_event(event, agent_name=display_agent_name)
+                                annotated_inner = _annotate_runtime_event(
+                                    event, agent_name=display_agent_name
                                 )
+                                await _persist_runtime_event("error", "error", inner_data)
+                                yield _event_to_vds(annotated_inner)
                             elif inner_type == "done":
-                                yield _event_to_vds(
-                                    _annotate_runtime_event(event, agent_name=display_agent_name)
+                                await _persist_turn_snapshot()
+                                annotated_inner = _annotate_runtime_event(
+                                    event, agent_name=display_agent_name
                                 )
+                                await _persist_runtime_event("done", "done", inner_data)
+                                terminal_event_persisted = True
+                                yield _event_to_vds(annotated_inner)
                         return
                 elif event_type == "error":
                     error_payload = event.get("data") or {}
@@ -874,18 +1011,7 @@ async def chat_stream(
                         "error_class": error_class or "runtime_error",
                     }
                 elif event_type == "done":
-                    _flush_turn()
-
-                    if saved_timeline_events:
-                        await _save_chat_events_to_db(saved_timeline_events)
-                        saved_timeline_events.clear()
-                    await _persist_runtime_event(
-                        "done",
-                        str(event_phase) if event_phase else None,
-                        event.get("data") if isinstance(event.get("data"), dict) else None,
-                    )
-                    await _save_messages_to_db(saved_messages)
-                    saved_messages.clear()
+                    await _persist_turn_snapshot()
 
                 mapped_event = _map_tool_event_to_step_event(
                     event,
@@ -899,8 +1025,15 @@ async def chat_stream(
                     "step_start",
                     "step_result",
                     "assistant",
+                    "assistant_progress",
                     "done",
                     "error",
+                    "task_contract",
+                    "progress",
+                    "verification",
+                    "task_state",
+                    "checkpoint",
+                    "context_compressed",
                 }:
                     mapped_data_raw.setdefault("turn_id", current_turn_id)
                     mapped_data_raw.setdefault("turn_seq", current_turn_seq)
@@ -916,25 +1049,62 @@ async def chat_stream(
                     if isinstance(annotated_event.get("data"), dict)
                     else None
                 )
+                if mapped_type == "task_state" and isinstance(mapped_data, dict):
+                    latest_task_state = dict(mapped_data)
 
                 if mapped_type in {
                     "thinking",
                     "plan",
+                    "assistant",
+                    "assistant_progress",
                     "step_start",
                     "step_result",
                     "reflect",
                     "error",
+                    "task_contract",
+                    "progress",
+                    "verification",
+                    "task_state",
+                    "checkpoint",
+                    "context_compressed",
+                    "done",
                 }:
                     await _persist_runtime_event(
                         str(mapped_type),
                         str(mapped_phase) if mapped_phase else None,
                         mapped_data,
                     )
+                    if mapped_type == "done":
+                        terminal_event_persisted = True
                 yield _event_to_vds(annotated_event)
 
                 if request is not None and await request.is_disconnected():
                     _cancelled = True
                     logger.info("client_disconnected %s", fmt_kv(conversation_id=conversation_id))
+                    await _persist_turn_snapshot()
+                    resumable_state = dict(latest_task_state or {})
+                    if resumable_state:
+                        resumable_state["status"] = "checkpointed"
+                    await _persist_runtime_event(
+                        "checkpoint",
+                        "reflecting",
+                        {
+                            "status": "checkpointed",
+                            "reason_code": "client_disconnected",
+                            "reason": "客户端连接已结束；已保存当前执行进度。",
+                            "task_state": resumable_state or None,
+                        },
+                    )
+                    await _persist_runtime_event(
+                        "done",
+                        "done",
+                        {
+                            "status": "incomplete",
+                            "completed": False,
+                            "reason_code": "client_disconnected",
+                        },
+                    )
+                    terminal_event_persisted = True
                     break
 
         except Exception as e:
@@ -969,12 +1139,29 @@ async def chat_stream(
                     "error_class": "runtime_error",
                 },
             )
+            await _persist_turn_snapshot()
+            await _persist_runtime_event(
+                "done",
+                "done",
+                {
+                    "status": "error",
+                    "completed": False,
+                    "reason_code": "runtime_error",
+                },
+            )
+            terminal_event_persisted = True
         finally:
-            _flush_turn()
-            if saved_messages:
-                await _save_messages_to_db(saved_messages)
-            if saved_timeline_events:
-                await _save_chat_events_to_db(saved_timeline_events)
+            await _persist_turn_snapshot()
+            if not terminal_event_persisted:
+                await _persist_runtime_event(
+                    "done",
+                    "done",
+                    {
+                        "status": "incomplete",
+                        "completed": False,
+                        "reason_code": "stream_ended_without_terminal_event",
+                    },
+                )
 
     return StreamingResponse(generate(), media_type="text/plain; charset=utf-8")
 

@@ -1,6 +1,8 @@
 """Message history loading and context window management for chat stream."""
 
 import json
+import uuid
+from datetime import datetime
 from typing import Any
 
 from sqlalchemy.orm import Session
@@ -11,6 +13,97 @@ from app.models import models
 
 logger = get_logger("chat.history")
 settings = get_settings()
+
+
+def ensure_stream_user_message(
+    db: Session,
+    conversation_id: int,
+    incoming_content: str,
+) -> models.Message | None:
+    """Idempotently persist the user turn accepted by the stream endpoint.
+
+    The web client normally creates the user message immediately before opening
+    the stream. Direct API clients may call the stream endpoint on its own. This
+    helper supports both protocols without duplicating the web client's row.
+    """
+    normalized_content = str(incoming_content or "").strip()
+    if not normalized_content:
+        return None
+
+    latest_message = (
+        db.query(models.Message)
+        .filter(models.Message.conversation_id == conversation_id)
+        .order_by(models.Message.created_at.desc(), models.Message.id.desc())
+        .first()
+    )
+    if (
+        latest_message is not None
+        and latest_message.role == "user"
+        and str(latest_message.content or "").strip() == normalized_content
+    ):
+        user_message = latest_message
+    else:
+        user_message = models.Message(
+            conversation_id=conversation_id,
+            role="user",
+            content=normalized_content,
+        )
+        db.add(user_message)
+        db.flush()
+
+    latest_user_event = (
+        db.query(models.ChatEvent)
+        .filter(
+            models.ChatEvent.conversation_id == conversation_id,
+            models.ChatEvent.event_type == "user_message",
+        )
+        .order_by(models.ChatEvent.id.desc())
+        .first()
+    )
+    latest_user_payload = (
+        latest_user_event.payload
+        if latest_user_event is not None and isinstance(latest_user_event.payload, dict)
+        else {}
+    )
+    if latest_user_payload.get("message_id") != user_message.id:
+        latest_turn_event = (
+            db.query(models.ChatEvent)
+            .filter(
+                models.ChatEvent.conversation_id == conversation_id,
+                models.ChatEvent.turn_seq.is_not(None),
+            )
+            .order_by(
+                models.ChatEvent.turn_seq.desc(),
+                models.ChatEvent.part_seq.desc(),
+                models.ChatEvent.id.desc(),
+            )
+            .first()
+        )
+        next_turn_seq = int(latest_turn_event.turn_seq or 0) + 1 if latest_turn_event else 1
+        db.add(
+            models.ChatEvent(
+                conversation_id=conversation_id,
+                event_type="user_message",
+                phase="message_created",
+                turn_id=f"message-{user_message.id}-{uuid.uuid4().hex[:8]}",
+                turn_seq=next_turn_seq,
+                part_seq=0,
+                role="user",
+                payload={
+                    "content": normalized_content,
+                    "message_id": user_message.id,
+                    "event_kind": "user_message",
+                },
+                created_at=user_message.created_at or datetime.utcnow(),
+            )
+        )
+
+    conversation = db.get(models.Conversation, conversation_id)
+    if conversation is not None:
+        conversation.updated_at = user_message.created_at or datetime.utcnow()
+    db.commit()
+    db.refresh(user_message)
+    return user_message
 
 
 def load_chat_messages(
@@ -31,7 +124,12 @@ def load_chat_messages(
     )
 
     chat_messages = _format_messages_for_llm(raw_messages)
-    if incoming_content:
+    latest_persisted_user_matches = bool(
+        raw_messages
+        and raw_messages[-1].role == "user"
+        and str(raw_messages[-1].content or "").strip() == str(incoming_content or "").strip()
+    )
+    if incoming_content and not latest_persisted_user_matches:
         chat_messages.append({"role": "user", "content": incoming_content})
 
     _apply_sliding_window(chat_messages, settings.ai_context_char_limit)

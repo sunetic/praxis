@@ -11,7 +11,7 @@ export function AppLayout() {
   return (
     <div className="flex h-screen bg-background">
       <Sidebar />
-      <main className={`flex-1 overflow-y-auto overflow-x-hidden ${isPageWorkspaceRoute ? "p-0" : "p-6"}`}>
+      <main className={`min-w-0 flex-1 overflow-y-auto overflow-x-hidden ${isPageWorkspaceRoute ? "p-0" : "p-3 min-[901px]:p-6"}`}>
         <Outlet key={locale} />
       </main>
     </div>

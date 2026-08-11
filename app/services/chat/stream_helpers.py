@@ -24,15 +24,38 @@ logger = get_logger("chat.stream_helpers")
 
 
 async def _save_messages_to_db(messages: list[models.Message]) -> None:
-    """Save messages to database in thread pool to avoid blocking event loop."""
+    """Insert or update message snapshots without blocking the event loop.
+
+    A streaming assistant turn reuses the same ``Message`` instance and calls
+    this helper after every durable part (progress, tool call/result, or text).
+    The first call inserts the row; later calls update that row in place.
+    """
     from app.db.database import SessionLocal
 
     def _save():
         db = SessionLocal()
         try:
+            inserted: list[models.Message] = []
             for msg in messages:
-                db.add(msg)
+                if msg.id is None:
+                    db.add(msg)
+                    inserted.append(msg)
+                    continue
+                existing = db.get(models.Message, msg.id)
+                if existing is None:
+                    db.add(msg)
+                    inserted.append(msg)
+                    continue
+                existing.content = msg.content
+                existing.agent_name = msg.agent_name
+                existing.tool_calls = msg.tool_calls
+                existing.content_parts = msg.content_parts
             db.commit()
+            # Detach newly inserted objects with their generated primary keys so
+            # the caller can safely mutate and persist the next stream snapshot.
+            for msg in inserted:
+                db.refresh(msg)
+                db.expunge(msg)
         finally:
             db.close()
 
@@ -423,6 +446,7 @@ def _map_tool_event_to_step_event(
                 "name": str(data.get("name") or ""),
                 "arguments": str(data.get("arguments") or ""),
                 "message": f"Executing {str(data.get('name') or 'tool')}...",
+                "parallel": bool(data.get("parallel")),
                 "trace_id": trace_id,
                 "route_source": route_source,
             },
@@ -445,6 +469,7 @@ def _map_tool_event_to_step_event(
             "message": "Tool execution completed.",
             "trace_id": trace_id,
             "route_source": route_source,
+            "parallel": bool(data.get("parallel")),
         }
         if (
             tool_name == "datasource_switch"

@@ -92,6 +92,20 @@ class Settings(BaseSettings):
     ai_model: str = "gpt-4"
     ai_context_char_limit: int = 80_000
 
+    agent_failure_episode_enabled: bool = True
+    agent_task_contract_enabled: bool = True
+    agent_completion_verifier_enabled: bool = True
+    agent_persistent_journal_enabled: bool = True
+    agent_parallel_read_only_enabled: bool = True
+    agent_adversarial_verification_enabled: bool = True
+    agent_max_transient_retries: int = 3
+    agent_max_no_progress_rounds: int = 3
+    agent_max_verification_retries: int = 5
+    agent_max_parallel_tools: int = 4
+    agent_transient_backoff_base_seconds: float = 0.5
+    agent_transient_backoff_max_seconds: float = 4.0
+    agent_max_elapsed_seconds: float = 900.0
+
     vite_api_base_url: str = "http://localhost:8000/api/v1"
     builder_runtime_enabled: bool = True
     scheduler_autostart: bool = True

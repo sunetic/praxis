@@ -45,7 +45,7 @@ type ContentPart =
   | { type: "text"; text: string }
   | { type: "tool-call"; toolCallId: string; toolName: string; args: object; argsText: string; result?: unknown }
 
-function buildContentParts(msg: {
+export function buildContentParts(msg: {
   content?: string | null
   content_parts?: ApiContentPart[] | null
   tool_calls?: Array<{ id: string; name: string; input?: unknown; result?: unknown }> | null
@@ -54,6 +54,11 @@ function buildContentParts(msg: {
   if (msg.content_parts?.length) {
     for (const part of msg.content_parts as ApiContentPart[]) {
       if (part.type === "text" && part.text) {
+        parts.push({ type: "text", text: part.text })
+      } else if (part.type === "progress" && part.text) {
+        // Progress narration is part of the assistant's visible conversation,
+        // not private reasoning. Keep it as ordinary Markdown text so only
+        // actual reasoning parts receive the dedicated thinking treatment.
         parts.push({ type: "text", text: part.text })
       } else if (part.type === "tool_use") {
         parts.push({
@@ -84,7 +89,16 @@ function buildContentParts(msg: {
 
 // ── Main component ──────────────────────────────────────────────────────
 
-export function ChatThreadView({
+export function ChatThreadView(props: ChatThreadViewProps) {
+  return (
+    <ChatThreadViewSession
+      key={props.controller.conversationId ?? "new"}
+      {...props}
+    />
+  )
+}
+
+function ChatThreadViewSession({
   controller,
   title,
   readOnly = false,
@@ -118,6 +132,8 @@ export function ChatThreadView({
     stopMessage,
     confirmCurrentBatch,
     cancelCurrentBatch,
+    runtimeStatus,
+    conversationId,
   } = controller
 
   // Build the message list for assistant-ui.
@@ -129,6 +145,7 @@ export function ChatThreadView({
   const messages = useMemo<ThreadMessageLike[]>(() => {
     const result: ThreadMessageLike[] = []
     for (const msg of persistedMessages) {
+      if (conversationId !== null && msg.conversation_id !== conversationId) continue
       if (msg.role === "system") continue
       if (msg.role === "user") {
         result.push({
@@ -171,7 +188,7 @@ export function ChatThreadView({
       })
     }
     return result
-  }, [persistedMessages, streaming, streamingParts])
+  }, [conversationId, persistedMessages, streaming, streamingParts])
 
   const onNew = useCallback(
     async (msg: AppendMessage) => {
@@ -214,7 +231,7 @@ export function ChatThreadView({
     .join(" ")
 
   return (
-    <AssistantRuntimeProvider key={controller.conversationId ?? "new"} runtime={runtime}>
+    <AssistantRuntimeProvider runtime={runtime}>
       <div className={rootClass}>
         {/* Optional header */}
         {showHeader && (title || headerAction) ? (
@@ -263,10 +280,20 @@ export function ChatThreadView({
             suggestions={normalizedSuggestions}
             isWaiting={streaming && streamingParts.length === 0}
             footerContent={
+              (streaming && runtimeStatus) ||
               (enableBatchActions && currentBatchPendingActions.length > 0) ||
               (enableSaveAsAgent && showReuseSuggestion) ||
               (enableSaveAsAgent && saveAgentState) ? (
                 <div className="flex flex-col gap-2">
+                  {streaming && runtimeStatus ? (
+                    <div
+                      data-testid="chat-runtime-progress"
+                      className="flex items-start gap-2 rounded-lg border border-border/70 bg-muted/60 px-3 py-2 text-sm text-muted-foreground"
+                    >
+                      <Loader2 className="mt-0.5 size-3.5 shrink-0 animate-spin text-primary" />
+                      <p className="leading-5">{runtimeStatus.text}</p>
+                    </div>
+                  ) : null}
                   {enableBatchActions && currentBatchPendingActions.length > 0 ? (
                     <div className="flex items-center justify-between gap-3 rounded-lg border border-border bg-card px-3 py-2">
                       <div className="min-w-0">

@@ -225,4 +225,40 @@ describe("consumeVds", () => {
     }).catch(() => ({ donePayload: {}, assistantText: "", terminalError: "请求失败" }))
     expect(result.terminalError ?? "").toBeTruthy()
   })
+
+  it("preserves long-running progress and checkpoint events", async () => {
+    const response = createVdsResponse([
+      `2:[{"type":"progress","decision":"recoverable_failure","reason":"adjust strategy"}]`,
+      `2:[{"type":"checkpoint","status":"stalled","reason":"same failure repeated"}]`,
+      `2:[{"type":"done","status":"incomplete","completed":false,"task_run_id":"task-1"}]`,
+      `d:{"finishReason":"stop"}`,
+    ])
+    const names: string[] = []
+    const result = await consumeVds(response, {
+      onEvent(event) {
+        if (event.kind === "extension") names.push(event.name)
+      },
+    })
+
+    expect(names).toEqual(["progress", "checkpoint"])
+    expect(result.donePayload.status).toBe("incomplete")
+    expect(result.donePayload.task_run_id).toBe("task-1")
+  })
+})
+
+describe("long-running runtime normalization", () => {
+  it("normalizes top-level VDS progress payload as an extension", () => {
+    const event = normalizeRuntimeStreamEvent({
+      type: "progress",
+      decision: "candidate_complete",
+      reason: "verifying",
+      task_run_id: "task-1",
+    })
+
+    expect(event?.kind).toBe("extension")
+    if (!event || event.kind !== "extension") return
+    expect(event.name).toBe("progress")
+    expect(event.payload.decision).toBe("candidate_complete")
+    expect(event.payload.task_run_id).toBe("task-1")
+  })
 })

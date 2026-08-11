@@ -40,6 +40,9 @@ npm-debug.log*
 # Temp (per project rules)
 tmp/
 
+# Local implementation specs (not public documentation)
+spec/
+
 # Vite
 *.local
 
