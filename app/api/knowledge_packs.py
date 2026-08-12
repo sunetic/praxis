@@ -59,13 +59,10 @@ def list_packs(db: Session = Depends(get_db)):
                         schemas.PackVersion(branch=v["branch"], label=v["label"])
                         for v in kb_meta["versions"]
                     ]
-                if kb_meta:
-                    entry.current_version = kb_meta.get("version")
         elif pack_id in installed_map:
             entry.status = "installed"
             kb = installed_map[pack_id]
             entry.kb_id = kb.id
-            entry.current_version = kb.version
             kb_meta = read_kb_meta(_installer._data_root / str(kb.id))
             if kb_meta and kb_meta.get("versions"):
                 entry.versions = [
@@ -146,18 +143,6 @@ def get_pack_status(pack_id: str, db: Session = Depends(get_db)):
         )
 
     return schemas.KnowledgePackInstallStatus(pack_id=pack_id, status="available")
-
-
-@router.post("/{pack_id}/switch-version", response_model=schemas.SwitchVersionResponse)
-async def switch_version(pack_id: str, body: schemas.SwitchVersionRequest):
-    pack = _find_pack(pack_id)
-    try:
-        result = await _installer.switch_version(pack_id, body.version, pack, SessionLocal)
-        return schemas.SwitchVersionResponse(**result)
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    except RuntimeError as e:
-        raise HTTPException(status_code=502, detail=str(e))
 
 
 @router.delete("/{pack_id}", status_code=status.HTTP_204_NO_CONTENT)

@@ -2430,12 +2430,9 @@ async def test_general_chat_system_prompt_includes_kb_prompt_before_skill_conten
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    """Guard: _build_knowledge_base_prompt() must be called in the general chat handler
-    and its output must appear before 'Loaded Skills:' in the system prompt.
+    """Guard: the canonical knowledge_search prompt precedes loaded skill content.
 
-    Regression: a refactor accidentally removed the _build_knowledge_base_prompt() call,
-    causing LLM to skip the OCP API knowledge-discovery workflow and fall back to execute_sql
-    for monitoring requests (observed in conversation #9).
+    This protects the shared turn-context path used by interactive and scheduled agents.
     """
     factory, engine = _build_session_factory(tmp_path)
     db = factory()
@@ -2468,14 +2465,32 @@ async def test_general_chat_system_prompt_includes_kb_prompt_before_skill_conten
 
         monkeypatch.setattr("app.db.database.SessionLocal", factory)
 
+        skills_dir = tmp_path / "skills"
+        skills_dir.mkdir()
+        (skills_dir / "ocp-api-guide.md").write_text(
+            """---
+name: ocp-api-guide
+version: 1.0.0
+description: OCP API lookup guide
+database: general
+always_apply: false
+---
+Use call_praxis_service after knowledge lookup.
+""",
+            encoding="utf-8",
+        )
+        test_skill_store = SkillStore(skills_dir=str(skills_dir))
+        test_skill_store.load()
+        monkeypatch.setattr(chat_api, "skill_store", test_skill_store)
+        monkeypatch.setattr(chat_stream_helpers, "skill_store", test_skill_store)
+        monkeypatch.setattr(chat_turn_context, "skill_store", test_skill_store)
+
         async def _fake_select_dynamic_skills(
             conversation: Any,
             messages: list[dict],
             latest_user_input: str,
         ) -> dict[str, Any]:
             del conversation, messages, latest_user_input
-            # mirror real _select_dynamic_skills: populate the store so list_skills() is non-empty
-            chat_stream_helpers.skill_store.load()
             return {
                 "active_skills": ["ocp-api-guide"],
                 "added": ["ocp-api-guide"],
@@ -2514,8 +2529,7 @@ async def test_general_chat_system_prompt_includes_kb_prompt_before_skill_conten
         system_prompt = fake_service.calls[0]["system_prompt"]
 
         assert "Knowledge Base (知识库)" in system_prompt, (
-            "_build_knowledge_base_prompt() must be called in general chat handler; "
-            "missing → LLM skips knowledge-discovery and goes straight to execute_sql."
+            "canonical knowledge_search guidance must be present in general chat"
         )
         kb_pos = system_prompt.index("Knowledge Base (知识库)")
         loaded_skills_pos = system_prompt.index("Loaded Skills:")

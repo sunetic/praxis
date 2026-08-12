@@ -801,8 +801,6 @@ const ZH_CN_COPY = {
   "knowledge.pack.version": "版本",
   "knowledge.pack.versions": "可用版本",
   "knowledge.pack.defaultVersion": "默认版本",
-  "knowledge.pack.toast.versionSwitched": "默认版本已切换",
-  "knowledge.pack.toast.switchFailed": "版本切换失败",
 
   // ── Knowledge detail page ──
   "knowledgeDetail.loadFailed": "加载失败",
@@ -1824,8 +1822,6 @@ const EN_US_COPY: Record<ShellCopyKey, string> = {
   "knowledge.pack.version": "Version",
   "knowledge.pack.versions": "Versions",
   "knowledge.pack.defaultVersion": "Default version",
-  "knowledge.pack.toast.versionSwitched": "Default version switched",
-  "knowledge.pack.toast.switchFailed": "Version switch failed",
 
   // ── Knowledge detail page ──
   "knowledgeDetail.loadFailed": "Failed to load",

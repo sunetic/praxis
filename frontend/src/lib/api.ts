@@ -723,7 +723,6 @@ export type KnowledgePack = {
   estimated_size_mb: number;
   versions?: PackVersion[] | null;
   default_version?: string | null;
-  current_version?: string | null;
   status: 'available' | 'downloading' | 'installed' | 'error';
   kb_id?: number | null;
   error_message?: string | null;
@@ -737,20 +736,12 @@ export type KnowledgePackInstallStatus = {
   error_message?: string | null;
 }
 
-export type SwitchVersionResponse = {
-  pack_id: string;
-  version: string;
-  doc_count: number;
-}
-
 export const knowledgePackApi = {
   list: () => api.get<KnowledgePack[]>('/knowledge-packs').then(res => res.data),
   install: (packId: string) =>
     api.post<KnowledgePackInstallStatus>(`/knowledge-packs/${packId}/install`).then(res => res.data),
   status: (packId: string) =>
     api.get<KnowledgePackInstallStatus>(`/knowledge-packs/${packId}/status`).then(res => res.data),
-  switchVersion: (packId: string, version: string) =>
-    api.post<SwitchVersionResponse>(`/knowledge-packs/${packId}/switch-version`, { version }).then(res => res.data),
   uninstall: (packId: string) => api.delete(`/knowledge-packs/${packId}`),
 };
 

@@ -113,49 +113,6 @@ def _safe_parse_arguments(arguments: str | dict | None) -> dict:
     return {}
 
 
-def _build_knowledge_base_prompt() -> str:
-    try:
-        from app.db.database import SessionLocal
-        from app.models import models as m
-
-        db = SessionLocal()
-        try:
-            kbs = db.query(m.KnowledgeBase).order_by(m.KnowledgeBase.id).all()
-            if not kbs:
-                return ""
-            lines = [
-                "\n\nKnowledge Base:",
-                "When you need to look up documentation, you can access the platform knowledge bases:",
-                '1. Use object_crud(object_type="knowledge_base", action="list") to list all knowledge bases',
-                '2. Use object_crud(object_type="knowledge_document", action="list", payload={"kb_id": N}) to get document list and file paths',
-                '3. First use exec_command(command="ls", args=["data/knowledge/N/"]) to inspect directory structure; narrow down to relevant subdirectories before searching content',
-                "4. Break the user question into several retrieval categories and then search: target object / operation / metrics or attributes / API domain terms / abbreviations and full names",
-                "  - For each category, dynamically generate English technical keywords, synonyms, related operations, and object names; do not reuse fixed keyword templates or search only single terms",
-                "  - Form 2-3 keyword combinations first, then preferably use exec_command with rg for multi-keyword search; use alternation or multiple -e flags with dynamically generated keywords",
-                '  - Alternation example: exec_command(command="rg", args=["-n", "-i", "-e", "kw1|kw2|kw3", "data/knowledge/1/target-dir/"])',
-                '  - Multi-pattern example: exec_command(command="rg", args=["-n", "-i", "-e", "kw1", "-e", "kw2", "-e", "kw3", "data/knowledge/1/"])',
-                '  - After a match, use exec_command(command="sed", args=["-n", "20,80p", "data/knowledge/1/some.md"]) or cat to read the surrounding context',
-                "  - grep can still serve as a fallback, but prefer rg for complex searches; use sed only for reading, not for modifying files",
-                "5. After finding relevant documents, you must read the content to confirm API path, method, and query/body parameter format before proceeding",
-                "",
-                "Available knowledge bases:",
-            ]
-            for kb in kbs:
-                doc_count = (
-                    db.query(m.KnowledgeDocument).filter(m.KnowledgeDocument.kb_id == kb.id).count()
-                )
-                tags = ", ".join(kb.tags) if kb.tags else ""
-                tag_str = f" (tags: {tags})" if tags else ""
-                lines.append(
-                    f"- [id={kb.id}] {kb.name}{tag_str} — {doc_count} document(s) — data/knowledge/{kb.id}/"
-                )
-            return "\n".join(lines) + "\n"
-        finally:
-            db.close()
-    except Exception:
-        return ""
-
-
 def _json_loads_safe(raw: str) -> dict | None:
     try:
         payload = json.loads(raw)

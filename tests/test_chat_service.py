@@ -61,6 +61,18 @@ async def _collect_events(service: ChatService) -> list[dict]:
     return events
 
 
+def test_chat_service_auto_binds_datasource_to_knowledge_search() -> None:
+    service = ChatService(llm=FakeLLM(responses=[]))
+
+    bound = service._bind_tool_context(
+        "knowledge_search",
+        {"query": "ER_LOCK_DEADLOCK"},
+        default_datasource_id=17,
+    )
+
+    assert bound["datasource_id"] == 17
+
+
 @pytest.mark.anyio
 async def test_chat_service_success_path_emits_assistant_and_done():
     service = ChatService(max_iterations=2, max_reflections=1)
