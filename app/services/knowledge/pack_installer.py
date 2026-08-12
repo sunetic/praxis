@@ -104,12 +104,13 @@ def _resolve_install_branch(pack: dict[str, Any]) -> str:
 
 
 async def _discover_versions(repo_url: str, version_pattern: str) -> list[dict[str, str]]:
-    """Run git ls-remote to discover branches matching version_pattern."""
+    """Discover version refs, preferring immutable tags over same-named branches."""
     try:
         proc = await asyncio.create_subprocess_exec(
             "git",
             "ls-remote",
             "--heads",
+            "--tags",
             repo_url,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
@@ -123,17 +124,37 @@ async def _discover_versions(repo_url: str, version_pattern: str) -> list[dict[s
         return []
 
     pattern = re.compile(version_pattern)
-    versions: list[dict[str, str]] = []
+    versions_by_label: dict[str, dict[str, str]] = {}
     for line in stdout.decode("utf-8", errors="replace").splitlines():
         parts = line.split("\t")
         if len(parts) != 2:
             continue
-        ref = parts[1]
-        branch_name = ref.removeprefix("refs/heads/")
-        if pattern.match(branch_name):
-            versions.append({"branch": branch_name, "label": branch_name})
+        commit = parts[0]
+        raw_ref = parts[1]
+        peeled = raw_ref.endswith("^{}")
+        ref = raw_ref.removesuffix("^{}")
+        if ref.startswith("refs/heads/"):
+            ref_type = "branch"
+            label = ref.removeprefix("refs/heads/")
+        elif ref.startswith("refs/tags/"):
+            ref_type = "tag"
+            label = ref.removeprefix("refs/tags/")
+        else:
+            continue
+        if not pattern.fullmatch(label):
+            continue
+        entry = {
+            "branch": label,
+            "label": label,
+            "ref": ref,
+            "ref_type": ref_type,
+            "commit": commit,
+        }
+        current = versions_by_label.get(label)
+        if current is None or ref_type == "tag" or peeled:
+            versions_by_label[label] = entry
 
-    versions.sort(key=lambda v: v["label"], reverse=True)
+    versions = sorted(versions_by_label.values(), key=lambda value: value["label"], reverse=True)
     return versions
 
 
@@ -376,117 +397,6 @@ class PackInstaller:
             error_msg = str(e)[:500]
             progress.set(pack_id, "error", error_message=error_msg)
             logger.exception("local_pack_install_failed %s", fmt_kv(pack_id=pack_id))
-            raise
-        finally:
-            db.close()
-
-    async def switch_version(
-        self,
-        pack_id: str,
-        target_version: str,
-        manifest_pack: dict[str, Any],
-        db_session_factory: Any,
-    ) -> dict[str, Any]:
-        target_branch = target_version
-
-        from app.models import models
-
-        db = db_session_factory()
-        try:
-            kb = (
-                db.query(models.KnowledgeBase)
-                .filter(
-                    models.KnowledgeBase.pack_id == pack_id, models.KnowledgeBase.source == "pack"
-                )
-                .first()
-            )
-            if not kb:
-                raise ValueError(f"Pack '{pack_id}' is not installed")
-
-            if kb.version == target_version:
-                doc_count = (
-                    db.query(models.KnowledgeDocument)
-                    .filter(models.KnowledgeDocument.kb_id == kb.id)
-                    .count()
-                )
-                return {"pack_id": pack_id, "version": target_version, "doc_count": doc_count}
-
-            kb_dir = self._data_root / str(kb.id)
-            if not (kb_dir / ".git").is_dir():
-                raise RuntimeError(
-                    f"Pack '{pack_id}' was installed without git history. "
-                    "Please uninstall and reinstall to enable version switching."
-                )
-
-            subdirectory = kb.repo_subdirectory or manifest_pack.get("subdirectory", "")
-
-            try:
-                rc, _, err = await _run_git(
-                    ["fetch", "--depth", "1", "origin", target_branch],
-                    cwd=kb_dir,
-                    timeout=_CLONE_TIMEOUT,
-                )
-            except TimeoutError:
-                raise RuntimeError(
-                    f"Network timeout while fetching version '{target_version}'. "
-                    "Please check your internet connection and try again."
-                )
-            if rc != 0:
-                if "Could not resolve host" in err or "unable to access" in err.lower():
-                    raise RuntimeError(
-                        f"Cannot reach remote repository to fetch version '{target_version}'. "
-                        "Please check your internet connection and try again."
-                    )
-                raise RuntimeError(f"Failed to fetch version '{target_version}': {err[:300]}")
-
-            rc, _, err = await _run_git(
-                ["checkout", "FETCH_HEAD"],
-                cwd=kb_dir,
-                timeout=_CHECKOUT_TIMEOUT,
-            )
-            if rc != 0:
-                raise RuntimeError(f"git checkout failed: {err[:500]}")
-
-            src_dir = kb_dir / subdirectory if subdirectory else kb_dir
-            md_files = sorted(p for p in src_dir.rglob("*.md") if p.name.lower() != "readme.md")
-
-            db.query(models.KnowledgeDocument).filter(
-                models.KnowledgeDocument.kb_id == kb.id
-            ).delete()
-
-            for md_path in md_files:
-                rel = md_path.relative_to(src_dir)
-                doc = models.KnowledgeDocument(
-                    kb_id=kb.id,
-                    title=md_path.stem.replace("-", " ").replace("_", " "),
-                    filename=str(rel),
-                    content_path=str(md_path),
-                    size_bytes=md_path.stat().st_size,
-                )
-                db.add(doc)
-
-            kb.version = target_version
-            db.commit()
-
-            existing_meta = read_kb_meta(kb_dir)
-            existing_versions = existing_meta.get("versions") if existing_meta else None
-            _write_kb_meta(
-                kb_dir,
-                pack_id,
-                manifest_pack.get("db_type"),
-                target_version,
-                subdirectory,
-                existing_versions,
-            )
-
-            doc_count = len(md_files)
-            logger.info(
-                "pack_version_switched %s",
-                fmt_kv(pack_id=pack_id, kb_id=kb.id, version=target_version, doc_count=doc_count),
-            )
-            return {"pack_id": pack_id, "version": target_version, "doc_count": doc_count}
-        except Exception:
-            db.rollback()
             raise
         finally:
             db.close()

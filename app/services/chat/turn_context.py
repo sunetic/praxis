@@ -190,11 +190,15 @@ def _build_scope_block(scope_context: dict[str, Any] | None) -> str:
     )
 
 
-def _build_knowledge_block(knowledge_bases: list[Any]) -> str:
+def _build_knowledge_block(knowledge_bases: list[Any], *, current_db_type: str) -> str:
     if not knowledge_bases:
         return ""
+    from app.services.knowledge.search_tools import read_kb_meta
+
     kb_items: list[dict[str, Any]] = []
     for kb in knowledge_bases:
+        meta = read_kb_meta(int(kb.id)) or {}
+        versions = meta.get("versions") if isinstance(meta.get("versions"), list) else []
         doc_count = len(getattr(kb, "documents", []) or [])
         kb_items.append(
             {
@@ -202,9 +206,22 @@ def _build_knowledge_block(knowledge_bases: list[Any]) -> str:
                 "name": kb.name,
                 "tags": list(kb.tags or []),
                 "doc_count": doc_count,
+                "pack_id": getattr(kb, "pack_id", None),
+                "db_type": meta.get("db_type"),
+                "default_version": getattr(kb, "version", None) or meta.get("version"),
+                "versions": [
+                    str(item.get("label") or item.get("branch") or "").strip()
+                    for item in versions
+                    if isinstance(item, dict)
+                    and str(item.get("label") or item.get("branch") or "").strip()
+                ],
             }
         )
-    return PromptLoader.render("chat/prompts/knowledge_base.tpl", knowledge_bases=kb_items)
+    return PromptLoader.render(
+        "chat/prompts/knowledge_base.tpl",
+        knowledge_bases=kb_items,
+        current_db_type=current_db_type,
+    )
 
 
 def _build_scene_block(
@@ -360,7 +377,7 @@ def build_agent_turn_context(
             scene_payload=extra.scene_payload,
             scene_fallback_payload=extra.scene_fallback_payload,
         ),
-        knowledge_block=_build_knowledge_block(knowledge_bases),
+        knowledge_block=_build_knowledge_block(knowledge_bases, current_db_type=db_type),
         capability_block=capability_prompt,
         skills_block=skills_block,
     )

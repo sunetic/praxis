@@ -1,18 +1,18 @@
 from __future__ import annotations
 
+import asyncio
+import json
 from typing import Any
 
 from app.core.logging import fmt_kv, get_logger
-from app.services.agent.reasoning_engine import (
-    EngineConfig,
-    ReasoningEngine,
-    SimpleToolExecutor,
-)
+from app.services.agent.reasoning_engine import EngineConfig, ReasoningEngine, SimpleToolExecutor
+from app.services.knowledge.query_expansion import QueryPlan, build_query_plan
 from app.services.knowledge.search_tools import (
     TOOL_SCHEMAS,
-    execute_tool,
-    find_kb_by_db_type,
-    read_kb_meta,
+    KnowledgeToolExecutor,
+    SearchTarget,
+    resolve_search_targets,
+    target_document_count,
 )
 from app.services.llm import LLMClient, get_llm_client
 from app.services.platform.prompt_loader import PromptLoader
@@ -41,35 +41,46 @@ class KnowledgeSearchAgent:
         version: str | None = None,
         knowledge_bases: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
-        if db_type and not kb_ids:
-            resolved_kb_id = find_kb_by_db_type(db_type)
-            if resolved_kb_id is not None:
-                if version:
-                    await self._ensure_version(resolved_kb_id, version)
-                kb_ids = [resolved_kb_id]
-            else:
-                return self._build_result(f"No knowledge base found for db_type='{db_type}'.", [])
+        targets = await resolve_search_targets(
+            kb_ids=kb_ids,
+            db_type=db_type,
+            version=version,
+        )
+        query_plan = build_query_plan(query)
+        if not targets:
+            return self._build_result(
+                "No installed knowledge bases are available.",
+                [],
+                targets=[],
+                query_plan=query_plan,
+                coverage={
+                    "searched_term_groups": {},
+                    "uncovered_groups": {},
+                    "coverage_complete": False,
+                    "searched_patterns": [],
+                    "target_coverage": {},
+                },
+            )
 
-        if not knowledge_bases:
-            knowledge_bases = self._default_kb_list(kb_ids)
-
+        target_items = await self._target_items(targets, knowledge_bases)
         system_prompt = PromptLoader.render(
             "knowledge/prompts/knowledge_search.tpl",
-            knowledge_bases=knowledge_bases,
+            knowledge_bases=target_items,
+            query_plan_json=json.dumps(query_plan.to_prompt_dict(), ensure_ascii=False),
         )
 
+        knowledge_executor = KnowledgeToolExecutor(targets, query_plan)
         engine = ReasoningEngine(
             config=EngineConfig(
                 max_iterations=self._max_iterations,
                 max_reflections=self._max_reflections,
             ),
             llm=self._llm,
-            tool_executor=SimpleToolExecutor(execute_tool),
+            tool_executor=SimpleToolExecutor(knowledge_executor.execute),
         )
 
         final_text = ""
         tool_results: list[dict[str, Any]] = []
-
         async for event in engine.run(
             messages=[{"role": "user", "content": query}],
             tools=TOOL_SCHEMAS,
@@ -89,124 +100,122 @@ class KnowledgeSearchAgent:
                         }
                     )
 
+        coverage = knowledge_executor.coverage_report()
         logger.info(
             "knowledge_search_complete %s",
             fmt_kv(
                 query=query[:80],
                 tool_calls=len(tool_results),
                 response_len=len(final_text),
+                target_count=len(targets),
+                versions=[target.resolved_version for target in targets],
+                commits=[target.commit_sha for target in targets],
+                coverage_complete=coverage["coverage_complete"],
             ),
         )
+        return self._build_result(
+            final_text,
+            tool_results,
+            targets=targets,
+            query_plan=query_plan,
+            coverage=coverage,
+        )
 
-        return self._build_result(final_text, tool_results)
-
-    def _default_kb_list(self, kb_ids: list[int] | None) -> list[dict[str, Any]]:
-        from pathlib import Path
-
-        data_root = Path("data/knowledge")
-        if not data_root.is_dir():
-            return []
-        results = []
-        for entry in sorted(data_root.iterdir()):
-            if not entry.is_dir():
-                continue
-            try:
-                kid = int(entry.name)
-            except ValueError:
-                continue
-            if kb_ids and kid not in kb_ids:
-                continue
-            meta = read_kb_meta(kid)
-            if meta:
-                subdir = meta.get("subdirectory", "")
-                doc_root = entry / subdir if subdir else entry
-            else:
-                doc_root = entry
-            doc_count = sum(1 for _ in doc_root.rglob("*.md") if _.name.lower() != "readme.md")
-            item: dict[str, Any] = {"id": kid, "name": entry.name, "doc_count": doc_count}
-            if meta:
-                item["version"] = meta.get("version")
-                item["db_type"] = meta.get("db_type")
-                item["path"] = str(doc_root)
+    async def _target_items(
+        self,
+        targets: list[SearchTarget],
+        supplied: list[dict[str, Any]] | None,
+    ) -> list[dict[str, Any]]:
+        supplied_by_id = {
+            int(item["id"]): item
+            for item in supplied or []
+            if isinstance(item, dict) and item.get("id") is not None
+        }
+        counts = await asyncio.gather(
+            *(asyncio.to_thread(target_document_count, target) for target in targets)
+        )
+        results: list[dict[str, Any]] = []
+        for target, count in zip(targets, counts, strict=True):
+            provided = supplied_by_id.get(target.kb_id, {})
+            item = {
+                "id": target.kb_id,
+                "name": provided.get("name") or target.pack_id or str(target.kb_id),
+                "doc_count": count,
+                "db_type": target.db_type,
+                "version": target.resolved_version,
+                "commit_sha": target.commit_sha,
+                "source_type": target.source_type,
+            }
             results.append(item)
         return results
-
-    async def _ensure_version(self, kb_id: int, target_version: str) -> None:
-        meta = read_kb_meta(kb_id)
-        if not meta:
-            return
-        if meta.get("version") == target_version:
-            return
-
-        pack_id = meta.get("pack_id")
-        if not pack_id:
-            return
-
-        import json as _json
-        from pathlib import Path
-
-        from app.db.database import SessionLocal
-        from app.services.knowledge.pack_installer import PackInstaller
-
-        manifest_path = Path("data") / "knowledge_packs.json"
-        if not manifest_path.is_file():
-            return
-        manifest = _json.loads(manifest_path.read_text(encoding="utf-8"))
-        manifest_pack = next((p for p in manifest if p.get("id") == pack_id), None)
-        if not manifest_pack:
-            return
-
-        installer = PackInstaller()
-        try:
-            await installer.switch_version(pack_id, target_version, manifest_pack, SessionLocal)
-            logger.info(
-                "auto_version_switch %s",
-                fmt_kv(kb_id=kb_id, pack_id=pack_id, version=target_version),
-            )
-        except Exception:
-            logger.exception(
-                "auto_version_switch_failed %s",
-                fmt_kv(kb_id=kb_id, pack_id=pack_id, version=target_version),
-            )
 
     def _build_result(
         self,
         final_text: str,
         tool_results: list[dict[str, Any]],
+        *,
+        targets: list[SearchTarget],
+        query_plan: QueryPlan,
+        coverage: dict[str, Any],
     ) -> dict[str, Any]:
         snippets: list[dict[str, Any]] = []
-        for tr in tool_results:
-            data = tr.get("data")
-            if tr["tool"] == "kb_search" and isinstance(data, list):
+        for tool_result in tool_results:
+            data = tool_result.get("data")
+            if tool_result["tool"] == "kb_search" and isinstance(data, list):
                 for item in data:
-                    if isinstance(item, dict) and "file" in item:
-                        snippets.append(
-                            {
-                                "file": item["file"],
-                                "line": item.get("line", 0),
-                                "content": item.get("context") or item.get("match", ""),
-                            }
-                        )
-            elif tr["tool"] == "kb_read" and isinstance(data, dict):
+                    if not isinstance(item, dict) or "file" not in item:
+                        continue
+                    snippets.append(
+                        {
+                            "kb_id": item.get("kb_id"),
+                            "file": item["file"],
+                            "line": item.get("line", 0),
+                            "content": item.get("context") or item.get("match", ""),
+                            "version": item.get("version"),
+                            "commit_sha": item.get("commit_sha"),
+                        }
+                    )
+            elif tool_result["tool"] == "kb_read" and isinstance(data, dict):
                 content = data.get("content", "")
                 if content:
                     snippets.append(
                         {
-                            "file": "(read)",
+                            "kb_id": data.get("kb_id"),
+                            "file": data.get("file") or "(read)",
                             "line": data.get("start_line", 0),
                             "content": content[:2000],
+                            "version": data.get("version"),
+                            "commit_sha": data.get("commit_sha"),
                         }
                     )
 
         found = "none"
         if snippets:
-            found = "complete" if len(final_text) > 50 else "partial"
+            found = (
+                "complete"
+                if coverage.get("coverage_complete") and final_text.strip()
+                else "partial"
+            )
 
+        suggestion = None
+        if found != "complete":
+            suggestion = (
+                "Some keyword groups were not searched; refine the query or inspect additional "
+                "documents."
+                if coverage.get("uncovered_groups")
+                else "Try refining the query or adding more documents to the knowledge base."
+            )
+
+        sources = [target.provenance() for target in targets]
         return {
             "found": found,
             "snippets": snippets[:20],
             "summary": final_text[:3000] if final_text else "",
-            "suggestion": None
-            if found == "complete"
-            else "Try refining the query or adding more documents to the knowledge base.",
+            "suggestion": suggestion,
+            "query_plan": query_plan.to_prompt_dict(),
+            **coverage,
+            "sources": sources,
+            "requested_version": sources[0].get("requested_version") if len(sources) == 1 else None,
+            "resolved_version": sources[0].get("resolved_version") if len(sources) == 1 else None,
+            "commit_sha": sources[0].get("commit_sha") if len(sources) == 1 else None,
         }

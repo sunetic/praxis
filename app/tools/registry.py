@@ -1251,9 +1251,10 @@ class RenderChartTool(BaseTool):
 class KnowledgeSearchTool(BaseTool):
     name = "knowledge_search"
     description = (
-        "Search the platform knowledge base for relevant documentation. "
-        "An autonomous search agent will find, read, and synthesize information from knowledge base documents. "
-        "Returns structured results with snippets and a summary."
+        "Search an immutable, version-pinned platform knowledge snapshot. "
+        "The search agent expands exact errors/codes into bilingual and domain keyword variants, "
+        "then discovers, searches, reads, and cites matching documents. "
+        "Returns snippets, coverage, resolved version, Git commit, and summary."
     )
     parameters = {
         "type": "object",
@@ -1264,16 +1265,25 @@ class KnowledgeSearchTool(BaseTool):
             },
             "db_type": {
                 "type": "string",
-                "description": "Database type to search docs for (e.g. mysql, postgresql, oceanbase). Matches knowledge packs by database type.",
+                "description": (
+                    "Database type (for example mysql or postgresql). It is automatically "
+                    "bound from the current datasource when omitted."
+                ),
             },
             "version": {
                 "type": "string",
-                "description": "Database version (e.g. '8.0', '8.4'). If omitted, uses the currently installed version.",
+                "description": (
+                    "Exact documentation version (for example '8.0' or '8.4'). Unknown "
+                    "versions fail instead of falling back. If omitted, the pack default is used."
+                ),
             },
             "kb_ids": {
                 "type": "array",
                 "items": {"type": "integer"},
-                "description": "Optional list of knowledge base IDs to search. If omitted and db_type is provided, auto-selects the matching pack.",
+                "description": (
+                    "Optional knowledge base IDs. version still applies when kb_ids are supplied. "
+                    "If omitted, a compatible versioned pack is selected deterministically."
+                ),
             },
         },
         "required": ["query"],
@@ -1285,6 +1295,7 @@ class KnowledgeSearchTool(BaseTool):
         db_type: str | None = None,
         version: str | None = None,
         kb_ids: list[int] | None = None,
+        datasource_id: int | None = None,
         **params: object,
     ) -> ToolResult:
         del params
@@ -1293,6 +1304,21 @@ class KnowledgeSearchTool(BaseTool):
                 success=False, error={"code": "invalid_argument", "message": "query is required"}
             )
         from app.services.knowledge.search_agent import KnowledgeSearchAgent
+
+        if not db_type and datasource_id is not None:
+            db = SessionLocal()
+            try:
+                from app.models import models
+
+                datasource = (
+                    db.query(models.DataSource)
+                    .filter(models.DataSource.id == datasource_id)
+                    .first()
+                )
+                if datasource:
+                    db_type = str(datasource.db_type or "").strip() or None
+            finally:
+                db.close()
 
         agent = KnowledgeSearchAgent()
         try:

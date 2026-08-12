@@ -292,70 +292,14 @@ class TestUserKBStillEditable:
         assert resp.status_code == 204
 
 
-class TestSwitchVersion:
-    def test_unknown_pack_returns_404(self, client: TestClient):
+class TestListPacksVersionInfo:
+    def test_switch_version_endpoint_is_not_exposed(self, client: TestClient):
         resp = client.post(
-            "/api/v1/knowledge-packs/nonexistent/switch-version",
+            "/api/v1/knowledge-packs/test-pack-1/switch-version",
             json={"version": "8.0"},
         )
-        assert resp.status_code == 404
+        assert resp.status_code in {404, 405}
 
-    def test_not_installed_returns_400(self, client: TestClient):
-        with patch("app.api.knowledge_packs._installer") as mock_installer:
-            mock_installer.switch_version = AsyncMock(
-                side_effect=ValueError("Pack 'test-pack-1' is not installed")
-            )
-            resp = client.post(
-                "/api/v1/knowledge-packs/test-pack-1/switch-version",
-                json={"version": "8.0"},
-            )
-            assert resp.status_code == 400
-
-    def test_switch_version_succeeds(self, client: TestClient, db):
-        kb = models.KnowledgeBase(
-            name="Test Pack 1",
-            source="pack",
-            pack_id="test-pack-1",
-            version="8.4",
-        )
-        db.add(kb)
-        db.commit()
-
-        with patch("app.api.knowledge_packs._installer") as mock_installer:
-            mock_installer.switch_version = AsyncMock(
-                return_value={"pack_id": "test-pack-1", "version": "8.0", "doc_count": 15}
-            )
-            resp = client.post(
-                "/api/v1/knowledge-packs/test-pack-1/switch-version",
-                json={"version": "8.0"},
-            )
-            assert resp.status_code == 200
-            data = resp.json()
-            assert data["version"] == "8.0"
-            assert data["doc_count"] == 15
-
-    def test_invalid_version_returns_400(self, client: TestClient, db):
-        kb = models.KnowledgeBase(
-            name="Test Pack 1",
-            source="pack",
-            pack_id="test-pack-1",
-            version="8.4",
-        )
-        db.add(kb)
-        db.commit()
-
-        with patch("app.api.knowledge_packs._installer") as mock_installer:
-            mock_installer.switch_version = AsyncMock(
-                side_effect=ValueError("Version '9.9' not found in pack manifest")
-            )
-            resp = client.post(
-                "/api/v1/knowledge-packs/test-pack-1/switch-version",
-                json={"version": "9.9"},
-            )
-            assert resp.status_code == 400
-
-
-class TestListPacksVersionInfo:
     def test_uninstalled_pack_has_default_version(self, client: TestClient):
         resp = client.get("/api/v1/knowledge-packs")
         assert resp.status_code == 200
@@ -395,7 +339,7 @@ class TestListPacksVersionInfo:
         resp = client.get("/api/v1/knowledge-packs")
         data = resp.json()
         pack1 = next(p for p in data if p["id"] == "test-pack-1")
-        assert pack1["current_version"] == "8.0"
+        assert "current_version" not in pack1
         assert pack1["status"] == "installed"
         assert pack1["versions"] is not None
         assert len(pack1["versions"]) == 2
@@ -409,6 +353,8 @@ class TestDiscoverVersions:
         ls_output = (
             "abc123\trefs/heads/8.4\n"
             "def456\trefs/heads/8.0\n"
+            "tag000\trefs/tags/8.0\n"
+            "tag999\trefs/tags/8.0^{}\n"
             "ghi789\trefs/heads/main\n"
             "jkl012\trefs/heads/5.7\n"
         )
@@ -430,6 +376,9 @@ class TestDiscoverVersions:
         assert len(result) == 3
         assert result[0]["label"] == "8.4"
         assert result[1]["label"] == "8.0"
+        assert result[1]["ref_type"] == "tag"
+        assert result[1]["ref"] == "refs/tags/8.0"
+        assert result[1]["commit"] == "tag999"
         assert result[2]["label"] == "5.7"
 
     def test_returns_empty_on_timeout(self):
@@ -463,32 +412,6 @@ class TestDiscoverVersions:
             )
 
         assert result == []
-
-
-class TestSwitchVersionNetworkError:
-    def test_network_error_returns_502(self, client: TestClient, db):
-        kb = models.KnowledgeBase(
-            name="Test Pack 1",
-            source="pack",
-            pack_id="test-pack-1",
-            version="8.4",
-        )
-        db.add(kb)
-        db.commit()
-
-        with patch("app.api.knowledge_packs._installer") as mock_installer:
-            mock_installer.switch_version = AsyncMock(
-                side_effect=RuntimeError(
-                    "Cannot reach remote repository to fetch version '8.0'. "
-                    "Please check your internet connection and try again."
-                )
-            )
-            resp = client.post(
-                "/api/v1/knowledge-packs/test-pack-1/switch-version",
-                json={"version": "8.0"},
-            )
-            assert resp.status_code == 502
-            assert "internet connection" in resp.json()["detail"]
 
 
 class TestKbMetaAndSearchTools:

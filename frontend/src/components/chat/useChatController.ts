@@ -241,12 +241,23 @@ function parseToolArgs(argumentsText?: string): Record<string, unknown> | null {
 }
 
 function hydrateMessagesWithToolEvents(messages: Message[], events: ChatEvent[]): Message[] {
-  const persistedText = new Set(
-    messages
-      .filter((message) => message.role === "assistant")
-      .map((message) => message.content.trim())
-      .filter(Boolean)
-  )
+  const persistedText = new Set<string>()
+  const persistedToolIds = new Set<string>()
+  for (const message of messages) {
+    if (message.role !== "assistant") continue
+    const content = message.content.trim()
+    if (content) persistedText.add(content)
+    for (const part of message.content_parts ?? []) {
+      if ((part.type === "text" || part.type === "progress") && part.text.trim()) {
+        persistedText.add(part.text.trim())
+      } else if (part.type === "tool_use" && part.id) {
+        persistedToolIds.add(part.id)
+      }
+    }
+    for (const toolCall of message.tool_calls ?? []) {
+      if (toolCall.id) persistedToolIds.add(toolCall.id)
+    }
+  }
   const assistantMessages = events
     .filter((event) => event.event_type === "assistant" || event.event_type === "assistant_progress")
     .map((event): Message | null => {
@@ -273,6 +284,8 @@ function hydrateMessagesWithToolEvents(messages: Message[], events: ChatEvent[])
       if (!payload || typeof payload !== "object") return null
       const name = String(payload.name || payload.tool_name || "").trim()
       if (!name) return null
+      const toolCallId = String(payload.tool_call_id || payload.step_id || `event-${event.id}`)
+      if (persistedToolIds.has(toolCallId)) return null
       const input = typeof payload.input === "object" && payload.input
         ? payload.input as Record<string, unknown>
         : parseToolArgs(typeof payload.arguments === "string" ? payload.arguments : undefined) ?? {}
@@ -291,7 +304,7 @@ function hydrateMessagesWithToolEvents(messages: Message[], events: ChatEvent[])
         content: "",
         content_parts: [{
           type: "tool_use",
-          id: String(payload.tool_call_id || payload.step_id || `event-${event.id}`),
+          id: toolCallId,
           name,
           input,
           result,

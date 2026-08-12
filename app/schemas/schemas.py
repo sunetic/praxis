@@ -186,20 +186,9 @@ class KnowledgePackResponse(BaseModel):
     estimated_size_mb: float = 0.0
     versions: list[PackVersion] | None = None
     default_version: str | None = None
-    current_version: str | None = None
     status: str = "available"
     kb_id: int | None = None
     error_message: str | None = None
-
-
-class SwitchVersionRequest(BaseModel):
-    version: str
-
-
-class SwitchVersionResponse(BaseModel):
-    pack_id: str
-    version: str
-    doc_count: int
 
 
 class KnowledgePackInstallStatus(BaseModel):

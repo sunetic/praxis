@@ -321,6 +321,84 @@ describe("ChatPage workspace boundary and handoff", () => {
     )
   })
 
+  it("does not duplicate persisted progress and tool parts with matching history events", async () => {
+    messagesApi.list.mockResolvedValueOnce([
+      {
+        id: 11,
+        conversation_id: 1,
+        role: "user",
+        content: "检索 MySQL 8.0 文档",
+        created_at: "2026-03-14T00:00:01.000000",
+      },
+      {
+        id: 12,
+        conversation_id: 1,
+        role: "assistant",
+        content: "检索完成。",
+        content_parts: [
+          { type: "progress", text: "正在检索知识库。", stage: "searching" },
+          {
+            type: "tool_use",
+            id: "kb-step-1",
+            name: "knowledge_search",
+            input: { db_type: "mysql", version: "8.0" },
+            result: { success: true },
+          },
+          { type: "text", text: "检索完成。" },
+        ],
+        created_at: "2026-03-14T00:00:04.000000",
+      },
+    ])
+    chatApi.listEvents.mockResolvedValueOnce([
+      {
+        id: 301,
+        conversation_id: 1,
+        event_type: "assistant_progress",
+        turn_seq: 1,
+        part_seq: 1,
+        role: "assistant",
+        created_at: "2026-03-14T00:00:02.000000",
+        payload: { text: "正在检索知识库。" },
+      },
+      {
+        id: 302,
+        conversation_id: 1,
+        event_type: "step_result",
+        turn_seq: 1,
+        part_seq: 2,
+        created_at: "2026-03-14T00:00:03.000000",
+        payload: {
+          step_id: "kb-step-1",
+          name: "knowledge_search",
+          input: { db_type: "mysql", version: "8.0" },
+          result: { success: true },
+        },
+      },
+      {
+        id: 303,
+        conversation_id: 1,
+        event_type: "assistant",
+        turn_seq: 1,
+        part_seq: 3,
+        role: "assistant",
+        created_at: "2026-03-14T00:00:04.000000",
+        payload: { content: "检索完成。" },
+      },
+    ])
+
+    render(
+      <MemoryRouter>
+        <ChatPage />
+      </MemoryRouter>
+    )
+
+    await waitFor(() => {
+      expect(screen.getAllByText("正在检索知识库。")).toHaveLength(1)
+      expect(screen.getAllByRole("button", { name: /工具调用：knowledge_search/i })).toHaveLength(1)
+      expect(screen.getAllByText("检索完成。")).toHaveLength(1)
+    })
+  })
+
   it("shows handoff summary and sends handoff id on first turn", async () => {
     render(
       <MemoryRouter initialEntries={["/chat?conversationId=1&handoffId=77"]}>

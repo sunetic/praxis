@@ -16,7 +16,6 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { FilterToolbar, FilterToolbarGroup } from "@/components/shared/FilterToolbar"
 import { WorkbenchPage } from "@/components/shared/WorkbenchPage"
 import { useShellI18n } from "@/i18n/shellI18n"
@@ -70,7 +69,6 @@ export function KnowledgeListPage() {
   const [installingPacks, setInstallingPacks] = useState<Set<string>>(new Set())
   const [uninstallTarget, setUninstallTarget] = useState<{ id: string; name: string } | null>(null)
   const [uninstalling, setUninstalling] = useState(false)
-  const [switchingVersion, setSwitchingVersion] = useState<string | null>(null)
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   async function fetchData() {
@@ -253,27 +251,12 @@ export function KnowledgeListPage() {
     }
   }
 
-  async function handleSwitchVersion(packId: string, version: string) {
-    setSwitchingVersion(packId)
-    try {
-      await knowledgePackApi.switchVersion(packId, version)
-      toast.success(t("knowledge.pack.toast.versionSwitched"))
-      fetchPacks()
-      fetchData()
-    } catch (e) {
-      toast.error(getErrorMessage(e, t("knowledge.pack.toast.switchFailed")))
-    } finally {
-      setSwitchingVersion(null)
-    }
-  }
-
   // --- Card renderers ---
 
   function renderKBCard(kb: KnowledgeBase) {
     const isPack = kb.source === "pack"
     const packInfo = isPack ? packs.find((p) => p.id === kb.pack_id) : null
-    const hasVersions = packInfo?.versions && packInfo.versions.length > 1
-    const isSwitching = switchingVersion === kb.pack_id
+    const versions = packInfo?.versions ?? []
     return (
       <Card
         key={`kb-${kb.id}`}
@@ -283,24 +266,7 @@ export function KnowledgeListPage() {
         <CardHeader>
           <div className="flex items-start justify-between gap-2">
             <CardTitle className="text-base line-clamp-1">{kb.name}</CardTitle>
-            {hasVersions ? (
-              <div className="shrink-0" onClick={(e) => e.stopPropagation()}>
-                <Select
-                  value={packInfo!.current_version || packInfo!.default_version || ""}
-                  onValueChange={(v) => handleSwitchVersion(kb.pack_id!, v)}
-                  disabled={isSwitching}
-                >
-                  <SelectTrigger className="h-6 w-auto gap-0.5 rounded-full border px-2 text-xs font-medium shadow-none">
-                    {isSwitching ? <Loader2 className="size-3 animate-spin" /> : <>v<SelectValue /></>}
-                  </SelectTrigger>
-                  <SelectContent>
-                    {packInfo!.versions!.map((v) => (
-                      <SelectItem key={v.label} value={v.label} className="text-xs">{v.label}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-            ) : !isPack ? (
+            {!isPack ? (
               <Badge variant="secondary" className="text-xs shrink-0">
                 <User className="mr-1 size-3" />{t("knowledge.source.user")}
               </Badge>
@@ -316,6 +282,18 @@ export function KnowledgeListPage() {
               <Badge key={tag} variant="secondary" className="text-xs">{tag}</Badge>
             ))}
           </div>
+          {versions.length > 0 && (
+            <div className="mb-3">
+              <div className="mb-1.5 text-xs text-muted-foreground">{t("knowledge.pack.versions")}</div>
+              <div className="flex flex-wrap gap-1.5">
+                {versions.map((version) => (
+                  <Badge key={version.label} variant="outline" className="text-xs">
+                    v{version.label}
+                  </Badge>
+                ))}
+              </div>
+            </div>
+          )}
           <div className="text-xs text-muted-foreground">
             <span className="font-medium text-foreground tabular-nums">{kb.document_count}</span>{" "}
             {t("knowledge.docCountUnit")}
@@ -391,8 +369,6 @@ export function KnowledgeListPage() {
               <Badge variant="destructive" className="text-xs shrink-0">{t("knowledge.pack.error")}</Badge>
             ) : isInstalling ? (
               <Badge variant="secondary" className="text-xs shrink-0">{t("knowledge.pack.downloading")}</Badge>
-            ) : pack.current_version ? (
-              <Badge variant="outline" className="text-xs shrink-0">v{pack.current_version}</Badge>
             ) : (
               <Badge variant="outline" className="text-xs shrink-0">{t("knowledge.pack.available")}</Badge>
             )}

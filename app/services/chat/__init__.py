@@ -468,7 +468,7 @@ class ChatService:
         if (
             default_datasource_id is not None
             and "datasource_id" not in bound
-            and tool_name in {"execute_sql", "explain_sql"}
+            and tool_name in {"execute_sql", "explain_sql", "knowledge_search"}
         ):
             bound["datasource_id"] = default_datasource_id
         if (
