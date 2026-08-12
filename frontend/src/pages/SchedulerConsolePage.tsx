@@ -911,16 +911,16 @@ export function SchedulerConsolePage() {
                       <TableCell className="text-xs tabular-nums text-muted-foreground">{toDisplayTime(item.next_run_at)}</TableCell>
                       <TableCell className="text-right">
                         <div className="flex items-center justify-end gap-1" onClick={(e) => e.stopPropagation()}>
-                          <Button variant="ghost" size="icon-xs" onClick={() => handleRunAction("run-now", item)} disabled={rowBusy} title={t("scheduler.action.runNow")}>
+                          <Button aria-label={`${t("scheduler.action.runNow")} ${item.name}`} variant="ghost" size="icon-xs" onClick={() => handleRunAction("run-now", item)} disabled={rowBusy} title={t("scheduler.action.runNow")}>
                             <Rocket className="size-3.5" />
                           </Button>
-                          <Button variant="ghost" size="icon-xs" onClick={() => handleRunAction(item.status === "active" ? "disable" : "enable", item)} disabled={rowBusy} title={item.status === "active" ? t("scheduler.action.pause") : t("scheduler.action.enable")}>
+                          <Button aria-label={`${item.status === "active" ? t("scheduler.action.pause") : t("scheduler.action.enable")} ${item.name}`} variant="ghost" size="icon-xs" onClick={() => handleRunAction(item.status === "active" ? "disable" : "enable", item)} disabled={rowBusy} title={item.status === "active" ? t("scheduler.action.pause") : t("scheduler.action.enable")}>
                             {item.status === "active" ? <PauseCircle className="size-3.5" /> : <PlayCircle className="size-3.5" />}
                           </Button>
-                          <Button variant="ghost" size="icon-xs" onClick={() => openEditDialog(item)} disabled={rowBusy} title={item.kind === "built_in" ? t("scheduler.action.editTimingStatus") : t("scheduler.action.edit")}>
+                          <Button aria-label={`${t("scheduler.action.edit")} ${item.name}`} variant="ghost" size="icon-xs" onClick={() => openEditDialog(item)} disabled={rowBusy} title={item.kind === "built_in" ? t("scheduler.action.editTimingStatus") : t("scheduler.action.edit")}>
                             <SquarePen className="size-3.5" />
                           </Button>
-                          <Button variant="ghost" size="icon-xs" className="text-destructive hover:text-destructive" onClick={() => openDeleteDialog(item.id)} disabled={rowBusy || item.kind === "built_in"} title={item.kind === "built_in" ? t("scheduler.builtInDeleteDisabled") : t("scheduler.action.delete")}>
+                          <Button aria-label={`${t("scheduler.action.delete")} ${item.name}`} variant="ghost" size="icon-xs" className="text-destructive hover:text-destructive" onClick={() => openDeleteDialog(item.id)} disabled={rowBusy || item.kind === "built_in"} title={item.kind === "built_in" ? t("scheduler.builtInDeleteDisabled") : t("scheduler.action.delete")}>
                             <Trash2 className="size-3.5" />
                           </Button>
                         </div>
@@ -1019,7 +1019,10 @@ export function SchedulerConsolePage() {
           <DrawerHeader className="shrink-0 border-b border-border px-5 py-3">
             <div className="flex items-center justify-between">
               <DrawerTitle className="truncate text-sm font-semibold">{t("scheduler.drawer.title")}</DrawerTitle>
-              <DrawerClose className="shrink-0 rounded-md p-1.5 text-muted-foreground hover:bg-accent hover:text-foreground">
+              <DrawerClose
+                aria-label={t("ui.drawer.close")}
+                className="shrink-0 rounded-md p-1.5 text-muted-foreground hover:bg-accent hover:text-foreground"
+              >
                 <X className="size-4" />
               </DrawerClose>
             </div>
@@ -1033,6 +1036,17 @@ export function SchedulerConsolePage() {
               <div className="flex flex-col items-center gap-3 px-4 py-10 text-sm text-muted-foreground">
                 <Loader2 className="size-6 animate-spin text-primary" />
                 <span>{t("scheduler.drawer.running")}</span>
+                {isRepairableRun(selectedRun) ? (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => handleRepairRun(selectedRun)}
+                    disabled={busyAction === `repair-run:${selectedRun.id}`}
+                  >
+                    {busyAction === `repair-run:${selectedRun.id}` ? <Loader2 className="size-4 animate-spin" /> : <RefreshCw className="size-4" />}
+                    {t("scheduler.drawer.repairRunning")}
+                  </Button>
+                ) : null}
                 <div className="w-full space-y-2 pt-2">
                   <div className="h-3 w-3/4 animate-pulse rounded bg-muted" />
                   <div className="h-3 w-1/2 animate-pulse rounded bg-muted" />

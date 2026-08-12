@@ -1,8 +1,9 @@
-import { render, screen, waitFor } from "@testing-library/react"
+import { screen, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom"
 
+import { renderWithShell as render } from "@/test/renderWithShell"
 import { FunctionBuildPage } from "./FunctionBuildPage"
 import { FunctionListPage } from "./FunctionListPage"
 import { SchedulerConsolePage } from "./SchedulerConsolePage"
@@ -72,6 +73,8 @@ vi.mock("@/lib/api", () => ({
   chatApi,
   conversationsApi,
   messagesApi,
+  filterConnectableDatasources: (items: Array<{ status?: string }>) =>
+    items.filter((item) => item.status === "active"),
 }))
 
 function createSseResponse(events: Array<Record<string, any>>): Response {
@@ -89,6 +92,14 @@ function createSseResponse(events: Array<Record<string, any>>): Response {
   return new Response(lines.join(""), {
     status: 200,
     headers: { "Content-Type": "text/plain; charset=utf-8" },
+  })
+}
+
+function createRuntimeSseResponse(events: Array<Record<string, any>>): Response {
+  const body = events.map((event) => `data: ${JSON.stringify(event)}\n\n`).join("")
+  return new Response(body, {
+    status: 200,
+    headers: { "Content-Type": "text/event-stream; charset=utf-8" },
   })
 }
 
@@ -236,7 +247,7 @@ describe("Function and Scheduler consoles", () => {
     functionsApi.buildChatStream.mockImplementation(async (_id: number, data: Record<string, any>) => {
       const action = String(data?.action || "build")
       if (action === "suggest_input") {
-        return createSseResponse([
+        return createRuntimeSseResponse([
           { type: "phase", phase: "suggest_input", data: { status: "done", summary: "测试入参建议已生成。" } },
           { type: "assistant", data: { text: "已生成测试入参" } },
           {
@@ -256,7 +267,7 @@ describe("Function and Scheduler consoles", () => {
         ])
       }
       if (action === "invoke") {
-        return createSseResponse([
+        return createRuntimeSseResponse([
           { type: "phase", phase: "invoke_finished", data: { status: "success", summary: "测试已执行成功。" } },
           { type: "assistant", data: { text: "测试已执行成功。" } },
           {
@@ -272,7 +283,7 @@ describe("Function and Scheduler consoles", () => {
           },
         ])
       }
-      return createSseResponse([
+      return createRuntimeSseResponse([
         {
           type: "phase",
           phase: "plan",
@@ -858,8 +869,8 @@ describe("Function and Scheduler consoles", () => {
       </MemoryRouter>
     )
 
-    expect(await screen.findByRole("button", { name: "新建 Scheduler" })).toBeInTheDocument()
-    expect(await screen.findByRole("button", { name: "daily-job#100" })).toBeInTheDocument()
+    expect(await screen.findByRole("button", { name: "新建" })).toBeInTheDocument()
+    expect(await screen.findByText("daily-job")).toBeInTheDocument()
     expect(screen.queryByText("Page 绑定")).not.toBeInTheDocument()
     expect(screen.queryByRole("heading", { name: "执行详情" })).not.toBeInTheDocument()
 
@@ -874,7 +885,7 @@ describe("Function and Scheduler consoles", () => {
     await userEvent.click(screen.getByRole("button", { name: "关闭" }))
 
     await userEvent.click(screen.getByRole("tab", { name: "调度列表" }))
-    await userEvent.click(screen.getByRole("button", { name: "编辑调度 daily-job" }))
+    await userEvent.click(screen.getByRole("button", { name: "编辑 daily-job" }))
     await userEvent.type(
       screen.getByPlaceholderText("例如：改为每 10 分钟执行，失败重试 2 次，切换上海时区"),
       "改成每 5 分钟执行一次，失败重试 3 次"
@@ -930,7 +941,7 @@ describe("Function and Scheduler consoles", () => {
 
   it("shows failure message when invoke returns failed status", async () => {
     functionsApi.buildChatStream.mockImplementationOnce(async () =>
-      createSseResponse([
+      createRuntimeSseResponse([
         { type: "phase", phase: "invoke_finished", data: { status: "failed", summary: "测试执行失败：未发布版本禁止 production 执行" } },
         { type: "assistant", data: { text: "测试执行失败：未发布版本禁止 production 执行" } },
         {
@@ -983,7 +994,7 @@ describe("Function and Scheduler consoles", () => {
     expect(await screen.findByRole("heading", { name: "执行结果" })).toBeInTheDocument()
     expect(screen.getByText("入参 JSON")).toBeInTheDocument()
     expect(screen.getByText("执行输出")).toBeInTheDocument()
-    expect(screen.getByText(/"rows": 3/)).toBeInTheDocument()
+    expect(await screen.findByText(/"rows": 3/)).toBeInTheDocument()
   })
 
   it("passes datasource_id from selected datasource into invoke request", async () => {
@@ -1046,7 +1057,7 @@ describe("Function and Scheduler consoles", () => {
 
   it("maps sql syntax error to friendly message", async () => {
     functionsApi.buildChatStream.mockImplementationOnce(async () =>
-      createSseResponse([
+      createRuntimeSseResponse([
         { type: "phase", phase: "invoke_finished", data: { status: "failed", summary: "测试执行失败：(1064...)" } },
         { type: "assistant", data: { text: "测试执行失败：(1064...)" } },
         {

@@ -240,6 +240,76 @@ function parseToolArgs(argumentsText?: string): Record<string, unknown> | null {
   }
 }
 
+function hydrateMessagesWithToolEvents(messages: Message[], events: ChatEvent[]): Message[] {
+  const persistedText = new Set(
+    messages
+      .filter((message) => message.role === "assistant")
+      .map((message) => message.content.trim())
+      .filter(Boolean)
+  )
+  const assistantMessages = events
+    .filter((event) => event.event_type === "assistant" || event.event_type === "assistant_progress")
+    .map((event): Message | null => {
+      const payload = event.payload
+      if (!payload || typeof payload !== "object") return null
+      const content = String(payload.content || payload.text || "").trim()
+      if (!content || persistedText.has(content)) return null
+      persistedText.add(content)
+      return {
+        id: -2_000_000 - event.id,
+        conversation_id: event.conversation_id,
+        role: "assistant",
+        content,
+        agent_name: event.agent_name,
+        created_at: event.created_at,
+      }
+    })
+    .filter((message): message is Message => message !== null)
+
+  const toolMessages = events
+    .filter((event) => event.event_type === "step_result" || event.event_type === "tool_result")
+    .map((event): Message | null => {
+      const payload = event.payload
+      if (!payload || typeof payload !== "object") return null
+      const name = String(payload.name || payload.tool_name || "").trim()
+      if (!name) return null
+      const input = typeof payload.input === "object" && payload.input
+        ? payload.input as Record<string, unknown>
+        : parseToolArgs(typeof payload.arguments === "string" ? payload.arguments : undefined) ?? {}
+      const result = payload.result
+      const resultData = result && typeof result === "object"
+        ? (result as Record<string, unknown>).data
+        : undefined
+      const resultRecord = resultData && typeof resultData === "object"
+        ? resultData as Record<string, unknown>
+        : {}
+      const pendingToken = typeof resultRecord.action_token === "string" ? resultRecord.action_token : null
+      return {
+        id: -1_000_000 - event.id,
+        conversation_id: event.conversation_id,
+        role: "assistant",
+        content: "",
+        content_parts: [{
+          type: "tool_use",
+          id: String(payload.tool_call_id || payload.step_id || `event-${event.id}`),
+          name,
+          input,
+          result,
+          pending_action_token: pendingToken,
+          pending_action_status: pendingToken ? "pending" : null,
+        }],
+        created_at: event.created_at,
+      }
+    })
+    .filter((message): message is Message => message !== null)
+
+  return [...messages, ...assistantMessages, ...toolMessages].sort((left, right) => {
+    const timeDelta = Date.parse(left.created_at) - Date.parse(right.created_at)
+    if (Number.isFinite(timeDelta) && timeDelta !== 0) return timeDelta
+    return left.id - right.id
+  })
+}
+
 function parseNumericId(value: unknown): number | null {
   if (typeof value === "number" && Number.isFinite(value)) return value
   if (typeof value === "string" && value.trim()) {
@@ -485,7 +555,11 @@ export function useChatController({
       ])
       if (fetchConversationIdRef.current !== cid) return false
       if (options?.finalizeStream) setRuntimeStatus(null)
-      setMessages(messageData)
+      if (options?.finalizeStream && messageData.length === 0 && eventData.length === 0) {
+        setPendingActions(pendingData)
+        return false
+      }
+      setMessages(hydrateMessagesWithToolEvents(messageData, eventData))
       setPendingActions(pendingData)
       setShowReuseSuggestion(shouldShowReuseSuggestionFromEvents(eventData))
       const eventSkills = extractLatestActiveSkills(eventData)
@@ -516,10 +590,10 @@ export function useChatController({
         setSaveAgentState(null)
         setSavingAgent(false)
         setHandoff(null)
-        toast.error("The previous conversation has expired. Session has been reset.")
+        toast.error(t("chat.toast.conversationExpired"))
         return false
       }
-      toast.error("Failed to load messages")
+      toast.error(t("chat.toast.messagesLoadFailed"))
       return false
     }
   }
@@ -1135,9 +1209,9 @@ export function useChatController({
               })
             }
             flushStreamingParts()
-            if (requiresConfirmation) {
-              void refreshPendingActionsImpl(cid!)
-            }
+            // Pending actions are refreshed once after the stream settles. Doing
+            // it here as well races the final refresh and can briefly show stale
+            // confirmation state.
             return
           }
 
@@ -1210,18 +1284,20 @@ export function useChatController({
         // message (id="m-N") coexist. That coexistence followed by overlay removal
         // shrinks the content array and triggers tapClientLookup index OOB in
         // assistant-ui's ContentPartRuntime fibers.
+        const completedParts = [...streamingPartsRef.current]
         streamingPartsRef.current = []
         setStreamingParts([])
         const refreshOk = await fetchMessagesImpl(cid!, { finalizeStream: true })
         if (!refreshOk) {
           const fallbackText = streamTerminalError
-            ? `Sorry, an error occurred: ${streamTerminalError}`
+            ? `${t("chat.error.prefix")}${streamTerminalError}`
             : fullText.trim() || "No model response received. Please try again. If the issue persists, check the model service status."
           setMessages((prev) => [...prev, {
             id: nextLocalMessageId(),
             conversation_id: cid!,
             role: "assistant",
             content: fallbackText,
+            content_parts: completedParts.length > 0 ? completedParts : undefined,
             agent_name: capturedAgentName || undefined,
             created_at: new Date().toISOString(),
           }])
@@ -1235,7 +1311,7 @@ export function useChatController({
                 id: nextLocalMessageId(),
                 conversation_id: cid!,
                 role: "assistant",
-                content: `Sorry, an error occurred: ${streamTerminalError}`,
+                content: `${t("chat.error.prefix")}${streamTerminalError}`,
                 created_at: new Date().toISOString(),
               },
             ]
@@ -1309,7 +1385,7 @@ export function useChatController({
                 id: nextLocalMessageId(),
                 conversation_id: cid,
                 role: "assistant",
-                content: `Sorry, an error occurred: ${message}`,
+                content: `${t("chat.error.prefix")}${message}`,
                 created_at: new Date().toISOString(),
               },
             ]
@@ -1321,7 +1397,7 @@ export function useChatController({
               id: nextLocalMessageId(),
               conversation_id: cid,
               role: "assistant",
-              content: `Sorry, an error occurred: ${message}`,
+              content: `${t("chat.error.prefix")}${message}`,
               created_at: new Date().toISOString(),
             },
           ])

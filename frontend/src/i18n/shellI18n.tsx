@@ -142,6 +142,8 @@ const ZH_CN_COPY = {
   "chat.toast.createFailed": "创建会话失败",
   "chat.toast.clearFailed": "清空会话失败",
   "chat.toast.switchDsFailed": "切换数据源失败",
+  "chat.toast.conversationExpired": "原会话已失效，已重置当前对话。",
+  "chat.toast.messagesLoadFailed": "加载消息失败",
   "chat.readOnlyHint": "该会话来自其他页面的场景历史，只支持查看，不可在 Chat 页面继续对话。",
   "chat.suggestion.slowSql.label": "查最近慢 SQL",
   "chat.suggestion.slowSql.prompt": "帮我分析最近一小时的慢 SQL",
@@ -167,6 +169,9 @@ const ZH_CN_COPY = {
   "thread.edit": "编辑",
   "thread.editCancel": "取消",
   "thread.editUpdate": "更新",
+  "tool.used": "工具调用：",
+  "tool.cancelled": "已取消工具：",
+  "tool.result": "结果：",
 
   "chat.batch.countOne": "1 条待确认变更",
   "chat.batch.countMany": "条待确认变更",
@@ -174,6 +179,7 @@ const ZH_CN_COPY = {
   "chat.batch.confirm": "确认执行",
   "chat.batch.cancel": "取消",
   "chat.action.resumeAfterFailure": "执行失败，请重新尝试其他方式。",
+  "chat.error.prefix": "抱歉，发生了错误：",
   "chat.reuse.prompt": "检测到可复用场景，是否保存为 Agent？",
   "chat.reuse.save": "保存",
   "chat.reuse.ignore": "忽略",
@@ -1159,6 +1165,8 @@ const EN_US_COPY: Record<ShellCopyKey, string> = {
   "chat.toast.createFailed": "Failed to create conversation",
   "chat.toast.clearFailed": "Failed to clear conversations",
   "chat.toast.switchDsFailed": "Failed to switch datasource",
+  "chat.toast.conversationExpired": "The previous conversation has expired. Session has been reset.",
+  "chat.toast.messagesLoadFailed": "Failed to load messages",
   "chat.readOnlyHint": "This conversation is read-only scene history from another page. It cannot be continued here.",
   "chat.suggestion.slowSql.label": "Recent slow SQL",
   "chat.suggestion.slowSql.prompt": "Analyze recent slow SQL in the last hour",
@@ -1184,6 +1192,9 @@ const EN_US_COPY: Record<ShellCopyKey, string> = {
   "thread.edit": "Edit",
   "thread.editCancel": "Cancel",
   "thread.editUpdate": "Update",
+  "tool.used": "Used tool: ",
+  "tool.cancelled": "Cancelled tool: ",
+  "tool.result": "Result:",
 
   "chat.batch.countOne": "1 pending change",
   "chat.batch.countMany": "pending changes",
@@ -1191,6 +1202,7 @@ const EN_US_COPY: Record<ShellCopyKey, string> = {
   "chat.batch.confirm": "Confirm",
   "chat.batch.cancel": "Cancel",
   "chat.action.resumeAfterFailure": "Execution failed. Please try again with a different approach.",
+  "chat.error.prefix": "Sorry, an error occurred: ",
   "chat.reuse.prompt": "Reusable pattern detected. Save as Agent?",
   "chat.reuse.save": "Save",
   "chat.reuse.ignore": "Ignore",
@@ -2069,10 +2081,13 @@ const ShellI18nContext = createContext<ShellI18nContextValue>(defaultContext)
 
 type ShellI18nProviderProps = {
   children: ReactNode
+  initialLocale?: ShellLocale
 }
 
-export function ShellI18nProvider({ children }: ShellI18nProviderProps) {
-  const [locale, setLocaleState] = useState<ShellLocale>(() => readStoredLocale())
+export function ShellI18nProvider({ children, initialLocale }: ShellI18nProviderProps) {
+  const [locale, setLocaleState] = useState<ShellLocale>(() =>
+    initialLocale ? normalizeLocale(initialLocale) : readStoredLocale()
+  )
 
   const setLocale = useCallback((next: ShellLocale) => {
     const normalized = normalizeLocale(next)
@@ -2094,4 +2109,3 @@ export function ShellI18nProvider({ children }: ShellI18nProviderProps) {
 export function useShellI18n() {
   return useContext(ShellI18nContext)
 }
-

@@ -11,11 +11,6 @@ import {
   ReasoningText,
   ReasoningTrigger,
 } from "@/components/assistant-ui/reasoning";
-import {
-  ToolGroupContent,
-  ToolGroupRoot,
-  ToolGroupTrigger,
-} from "@/components/assistant-ui/tool-group";
 import { ToolFallback } from "@/components/assistant-ui/tool-fallback";
 import { TooltipIconButton } from "@/components/assistant-ui/tooltip-icon-button";
 import { Button } from "@/components/ui/button";
@@ -25,7 +20,6 @@ import {
   AuiIf,
   ComposerPrimitive,
   ErrorPrimitive,
-  getMcpAppFromToolPart,
   MessagePrimitive,
   ThreadPrimitive,
   useAuiState,
@@ -52,10 +46,12 @@ export type ThreadSuggestion = {
   prompt: string;
 };
 
-export const Thread: FC<{ suggestions?: ThreadSuggestion[]; footerContent?: ReactNode; isWaiting?: boolean }> = ({
+export const Thread: FC<{ suggestions?: ThreadSuggestion[]; footerContent?: ReactNode; isWaiting?: boolean; placeholder?: string; readOnly?: boolean }> = ({
   suggestions = [],
   footerContent,
   isWaiting = false,
+  placeholder,
+  readOnly = false,
 }) => {
   return (
     <ThreadPrimitive.Root
@@ -90,7 +86,7 @@ export const Thread: FC<{ suggestions?: ThreadSuggestion[]; footerContent?: Reac
           <ThreadPrimitive.ViewportFooter className="aui-thread-viewport-footer sticky bottom-0 mt-auto flex flex-col gap-3 overflow-visible bg-card pb-5">
             <ThreadScrollToBottom />
             {footerContent}
-            <Composer />
+            {!readOnly ? <Composer placeholder={placeholder} /> : null}
           </ThreadPrimitive.ViewportFooter>
         </div>
       </ThreadPrimitive.Viewport>
@@ -171,7 +167,7 @@ const ThreadSuggestionItem: FC<{ suggestion: ThreadSuggestion }> = ({ suggestion
   );
 };
 
-const Composer: FC = () => {
+const Composer: FC<{ placeholder?: string }> = ({ placeholder }) => {
   const { t } = useShellI18n();
   return (
     <ComposerPrimitive.Root className="aui-composer-root relative flex w-full flex-col">
@@ -182,7 +178,7 @@ const Composer: FC = () => {
         >
           <ComposerAttachments />
           <ComposerPrimitive.Input
-            placeholder={t("thread.input.placeholder")}
+            placeholder={placeholder || t("thread.input.placeholder")}
             className="aui-composer-input max-h-40 min-h-[2.5rem] w-full resize-none bg-transparent px-2 py-1.5 text-sm text-foreground outline-none placeholder:text-muted-foreground/70"
             rows={1}
             autoFocus
@@ -242,11 +238,6 @@ const MessageError: FC = () => {
   );
 };
 
-const ToolGroupTriggerWithMessageStatus: FC<{ count: number }> = ({ count }) => {
-  const isRunning = useAuiState((s) => s.message.status?.type === "running");
-  return <ToolGroupTrigger count={count} active={isRunning} />;
-};
-
 const AssistantMessage: FC = () => {
   return (
     <MessagePrimitive.Root
@@ -263,10 +254,7 @@ const AssistantMessage: FC = () => {
           groupBy={(part) => {
             if (part.type === "reasoning")
               return ["group-chainOfThought", "group-reasoning"];
-            if (part.type === "tool-call") {
-              if (getMcpAppFromToolPart(part)) return null;
-              return ["group-chainOfThought", "group-tool"];
-            }
+            if (part.type === "tool-call") return null;
             return null;
           }}
         >
@@ -285,13 +273,6 @@ const AssistantMessage: FC = () => {
                   </ReasoningRoot>
                 );
               }
-              case "group-tool":
-                return (
-                  <ToolGroupRoot>
-                    <ToolGroupTriggerWithMessageStatus count={part.indices.length} />
-                    <ToolGroupContent>{children}</ToolGroupContent>
-                  </ToolGroupRoot>
-                );
               case "text":
                 return <MarkdownText />;
               case "reasoning":

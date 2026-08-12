@@ -1,7 +1,8 @@
-import { render, screen } from "@testing-library/react"
+import { screen } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 
+import { renderWithShell as render } from "@/test/renderWithShell"
 import { DataSourcesPage } from "./DataSourcesPage"
 
 const { datasourcesApi, toast } = vi.hoisted(() => ({
@@ -73,7 +74,7 @@ describe("DataSourcesPage monitor datasource baseline", () => {
     await user.click(screen.getByRole("button", { name: /(新建|添加)数据源/i }))
 
     expect(screen.getByText("添加数据源")).toBeInTheDocument()
-    expect(screen.getByPlaceholderText("生产集群A-tenant1")).toBeInTheDocument()
+    expect(screen.getByPlaceholderText("my-database")).toBeInTheDocument()
   })
 
   it("edit button works when attributes is null", async () => {
