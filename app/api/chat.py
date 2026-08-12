@@ -980,7 +980,9 @@ async def chat_stream(
                                 )
                                 await _persist_runtime_event(
                                     str(mapped.get("type") or "step_result"),
-                                    str(mapped.get("phase") or event.get("phase") or "tool_running"),
+                                    str(
+                                        mapped.get("phase") or event.get("phase") or "tool_running"
+                                    ),
                                     mapped_inner_data,
                                 )
                                 yield _event_to_vds(annotated_inner)

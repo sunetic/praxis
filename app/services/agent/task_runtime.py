@@ -657,7 +657,9 @@ class TaskJournal:
             (
                 "expected_failure_observed"
                 if expected_failures
-                else "new_evidence" if new_evidence else "tools_succeeded"
+                else "new_evidence"
+                if new_evidence
+                else "tools_succeeded"
             ),
             (
                 "已观察到验收要求中的预期失败并保留证据，将继续其余任务。"
@@ -1061,7 +1063,11 @@ def enforce_compound_criterion_audit(
         if isinstance(item, dict)
     }
     for criterion in journal.contract.acceptance_criteria:
-        if not criterion.required or criterion.requires_tool_evidence or len(criterion.component_hints) < 2:
+        if (
+            not criterion.required
+            or criterion.requires_tool_evidence
+            or len(criterion.component_hints) < 2
+        ):
             continue
         criterion_result = by_id.get(criterion.id) or {}
         components = [
@@ -1075,9 +1081,7 @@ def enforce_compound_criterion_audit(
             if any(hint in str(item.get("component") or "") for item in components)
         ]
         if len(components) < 2 or len(covered_hints) != len(criterion.component_hints):
-            uncovered = [
-                item for item in criterion.component_hints if item not in covered_hints
-            ]
+            uncovered = [item for item in criterion.component_hints if item not in covered_hints]
             return VerificationResult(
                 satisfied=False,
                 reason="复合验收项没有逐项完成审计。",
@@ -1348,9 +1352,7 @@ def _extract_explicit_requirement_clauses(text: str) -> list[str]:
             requirement_marker.search(first) and list_introducer.search(first)
         )
         for clause in clauses:
-            cleaned = re.sub(r"^(?:[-*+]\s+|\d+[.)、]\s*)", "", clause).strip(
-                " ：:,，"
-            )
+            cleaned = re.sub(r"^(?:[-*+]\s+|\d+[.)、]\s*)", "", clause).strip(" ：:,，")
             cleaned = " ".join(cleaned.split())
             minimum_length = 2 if inherit_requirement else 8
             if len(cleaned) < minimum_length or not (
@@ -1390,7 +1392,9 @@ def _required_tool_outcome(description: str) -> str:
 
 
 def _fenced_action_payloads(text: str) -> list[str]:
-    return [item.strip() for item in re.findall(r"```(?:[^\n`]*)\n(.*?)```", text, re.S) if item.strip()]
+    return [
+        item.strip() for item in re.findall(r"```(?:[^\n`]*)\n(.*?)```", text, re.S) if item.strip()
+    ]
 
 
 def _action_payload_matches(request_summary: str, payload: str) -> bool:
@@ -1402,10 +1406,7 @@ def _action_payload_matches(request_summary: str, payload: str) -> bool:
     normalized_payload = normalize(payload)
     return bool(
         normalized_payload
-        and (
-            normalized_payload in normalized_request
-            or normalized_request in normalized_payload
-        )
+        and (normalized_payload in normalized_request or normalized_request in normalized_payload)
     )
 
 
