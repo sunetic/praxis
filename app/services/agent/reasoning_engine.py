@@ -1272,9 +1272,7 @@ class ReasoningEngine:
             return compound_audit
         primary = compound_audit
         if any(
-            item.required
-            and not item.requires_tool_evidence
-            and len(item.component_hints) >= 2
+            item.required and not item.requires_tool_evidence and len(item.component_hints) >= 2
             for item in journal.contract.acceptance_criteria
         ):
             component_evidence = await self._run_verifier(
@@ -2152,9 +2150,7 @@ def _extract_completion_verification_policies(system_prompt: str | None) -> list
     policies: list[str] = []
     seen: set[str] = set()
     for match in matches:
-        normalized = "\n".join(
-            line.rstrip() for line in dedent(match).strip().splitlines()
-        ).strip()
+        normalized = "\n".join(line.rstrip() for line in dedent(match).strip().splitlines()).strip()
         if not normalized or normalized in seen:
             continue
         policies.append(normalized[:4000])

@@ -212,8 +212,7 @@ async def test_chat_service_does_not_emit_planner_text_during_tool_iteration():
     assert "I will call tool now" not in assistant_text
     assert "unknown_tool" in assistant_text
     assert any(
-        event.get("type") == "assistant"
-        and (event.get("data") or {}).get("incomplete") is True
+        event.get("type") == "assistant" and (event.get("data") or {}).get("incomplete") is True
         for event in events
     )
     assert any(event.get("type") == "checkpoint" for event in events)

@@ -186,9 +186,7 @@ class LLMClient:
             kwargs["stream_options"] = {"include_usage": True}
         if tools:
             kwargs["tools"] = tools
-            kwargs["parallel_tool_calls"] = bool(
-                get_settings().agent_parallel_read_only_enabled
-            )
+            kwargs["parallel_tool_calls"] = bool(get_settings().agent_parallel_read_only_enabled)
             if tool_choice is not None:
                 kwargs["tool_choice"] = tool_choice
         if temperature is not None:

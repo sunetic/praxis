@@ -1642,23 +1642,19 @@ async def test_chat_stream_persists_assistant_segments_around_tool_events(
         tool_started = next(
             snapshot
             for snapshot in message_snapshots
-            if snapshot["tool_calls"]
-            and snapshot["tool_calls"][0]["result"] is None
+            if snapshot["tool_calls"] and snapshot["tool_calls"][0]["result"] is None
         )
         assert tool_started["tool_calls"][0]["id"] == "tc-service"
         tool_finished = next(
             snapshot
             for snapshot in message_snapshots
-            if snapshot["tool_calls"]
-            and snapshot["tool_calls"][0]["result"] is not None
+            if snapshot["tool_calls"] and snapshot["tool_calls"][0]["result"] is not None
         )
         assert tool_finished["tool_calls"][0]["result"]["success"] is True
 
         final_snapshot = message_snapshots[-1]
         assert "由于当前数据源缺少 OCP 集群关联信息" in final_snapshot["content"]
-        assert "不过我可以尝试通过数据库查询来获取 CPU 负载信息" in final_snapshot[
-            "content"
-        ]
+        assert "不过我可以尝试通过数据库查询来获取 CPU 负载信息" in final_snapshot["content"]
         all_parts = final_snapshot["content_parts"] or []
         progress_parts = [
             p for p in all_parts if isinstance(p, dict) and p.get("type") == "progress"

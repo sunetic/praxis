@@ -166,8 +166,7 @@ def test_complex_prose_contract_preserves_mandatory_actions_as_separate_criteria
                 "content": (
                     "请实际执行给定草稿并保留失败记录，失败后自主调整。\n"
                     "最终报告必须覆盖：真实结构；异常样例；事实和假设。\n"
-                    "全程只读，全部验收项完成后再回答。\n"
-                    + "背景信息。" * 80
+                    "全程只读，全部验收项完成后再回答。\n" + "背景信息。" * 80
                 ),
             }
         ]
@@ -204,7 +203,7 @@ def test_verifier_requires_dispatched_tool_result_for_explicit_action() -> None:
 
     prompt = build_verifier_prompt(journal, "检查已经完成。")
 
-    assert '\"requires_tool_evidence\": true' in prompt
+    assert '"requires_tool_evidence": true' in prompt
     assert "malformed arguments do not satisfy it" in prompt
     assert "failure result from the intended tool" in prompt
 
@@ -275,8 +274,7 @@ def test_explicit_action_criterion_uses_action_gate_not_component_audit() -> Non
                 "role": "user",
                 "content": (
                     "请实际执行下面检查，保留失败并自主修复。\n"
-                    "```text\nprobe --bad\n```\n"
-                    + "背景。" * 100
+                    "```text\nprobe --bad\n```\n" + "背景。" * 100
                 ),
             }
         ]
@@ -304,7 +302,8 @@ def test_completion_precheck_requires_real_failure_for_requested_failing_action(
                 "content": (
                     "请实际执行给定检查并保留失败记录。\n"
                     "```sql\nSELECT unsupported_function(created_at) FROM records\n```\n"
-                    + "背景。" * 100
+                    + "背景。"
+                    * 100
                 ),
             }
         ]

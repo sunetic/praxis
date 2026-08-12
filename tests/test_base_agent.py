@@ -772,7 +772,9 @@ async def test_tool_task_emits_task_plan_then_model_transition_before_tool() -> 
         del name, args
         return {"success": True, "data": {"status": "ok"}}
 
-    narration = "我先确认当前服务的实时状态，这一步能直接判断它现在是否可用；拿到结果后我会用一句话说明。"
+    narration = (
+        "我先确认当前服务的实时状态，这一步能直接判断它现在是否可用；拿到结果后我会用一句话说明。"
+    )
     llm = FakeLLM(
         responses=[
             [
@@ -798,7 +800,9 @@ async def test_tool_task_emits_task_plan_then_model_transition_before_tool() -> 
     progress_indexes = [
         index for index, event in enumerate(events) if event["type"] == "assistant_progress"
     ]
-    tool_start_index = next(index for index, event in enumerate(events) if event["type"] == "tool_start")
+    tool_start_index = next(
+        index for index, event in enumerate(events) if event["type"] == "tool_start"
+    )
     progress_notes = [events[index]["data"]["text"] for index in progress_indexes]
     assert progress_notes[0] == (
         "我先确认实际范围和可用信息，再用最直接的查询取得证据，然后给你简洁结论。"
@@ -807,7 +811,9 @@ async def test_tool_task_emits_task_plan_then_model_transition_before_tool() -> 
     assert progress_indexes[0] < progress_indexes[1] < tool_start_index
     system_prompts = [message["content"] for message in llm.calls[0] if message["role"] == "system"]
     assert any("Visible action narration" in prompt for prompt in system_prompts)
-    assert any("Evidence discipline for every tool-backed task" in prompt for prompt in system_prompts)
+    assert any(
+        "Evidence discipline for every tool-backed task" in prompt for prompt in system_prompts
+    )
     assert any("make each material claim traceable" in prompt for prompt in system_prompts)
     assert not any("missing schema dimension" in prompt for prompt in system_prompts)
     assert events[-1]["data"]["completed"] is True
@@ -1068,9 +1074,7 @@ async def test_complex_final_candidate_cannot_reference_hidden_failed_draft() ->
 
 
 def test_revision_reply_to_internal_feedback_is_not_a_final_answer() -> None:
-    journal = TaskJournal.create(
-        [{"role": "user", "content": "请完成复杂审计并输出完整报告。"}]
-    )
+    journal = TaskJournal.create([{"role": "user", "content": "请完成复杂审计并输出完整报告。"}])
     journal.contract.complex = True
     journal.metrics.verification_attempts = 2
 

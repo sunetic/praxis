@@ -213,17 +213,12 @@ def compare_profiles(
     max_token_multiplier: float = 2.0,
 ) -> dict[str, Any]:
     token_multiplier = (
-        candidate.average_tokens / baseline.average_tokens
-        if baseline.average_tokens > 0
-        else 1.0
+        candidate.average_tokens / baseline.average_tokens if baseline.average_tokens > 0 else 1.0
     )
     completion_gain = candidate.task_completion_rate - baseline.task_completion_rate
-    coverage_gain = (
-        candidate.acceptance_criteria_coverage - baseline.acceptance_criteria_coverage
-    )
+    coverage_gain = candidate.acceptance_criteria_coverage - baseline.acceptance_criteria_coverage
     recovery_gain = (
-        candidate.recoverable_failure_recovery_rate
-        - baseline.recoverable_failure_recovery_rate
+        candidate.recoverable_failure_recovery_rate - baseline.recoverable_failure_recovery_rate
     )
     quality_improved = completion_gain >= min_completion_gain or (
         completion_gain >= 0 and coverage_gain > 0 and recovery_gain >= 0
@@ -239,9 +234,7 @@ def compare_profiles(
         "completion_gain": completion_gain,
         "coverage_gain": coverage_gain,
         "recovery_gain": recovery_gain,
-        "premature_stop_delta": (
-            candidate.premature_stop_rate - baseline.premature_stop_rate
-        ),
+        "premature_stop_delta": (candidate.premature_stop_rate - baseline.premature_stop_rate),
         "token_multiplier": token_multiplier,
         "latency_delta_ms": candidate.average_latency_ms - baseline.average_latency_ms,
         "recommend_candidate": recommend,
