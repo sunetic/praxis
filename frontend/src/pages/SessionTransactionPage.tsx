@@ -451,7 +451,10 @@ export function SessionTransactionPage() {
     void loadDatasources()
   }, [loadDatasources])
 
-  const liveDatasources = allDatasources.filter((ds) => ds.db_type === "oceanbase")
+  const liveDatasources = useMemo(
+    () => allDatasources.filter((ds) => ds.db_type === "oceanbase"),
+    [allDatasources]
+  )
 
   const clusterOptions = useMemo(
     () => Array.from(new Set(liveDatasources.map((item) => item.cluster_key).filter((item) => item.trim().length > 0))).sort(),
@@ -473,7 +476,7 @@ export function SessionTransactionPage() {
   }, [scopedDatasources])
 
   const datasourceOptions = useMemo(() => {
-    const options: Array<{ value: string; label: string; tenantId?: number }> = [
+    const options: Array<{ value: string; label: string; tenantId?: number; tenantName?: string }> = [
       { value: "all", label: "全部数据源" },
     ]
     for (const ds of scopedDatasources) {
@@ -490,6 +493,7 @@ export function SessionTransactionPage() {
         value,
         label: ds.name,
         tenantId,
+        tenantName: typeof attrs.tenant_name === "string" ? attrs.tenant_name : undefined,
       })
     }
     return options
@@ -499,8 +503,9 @@ export function SessionTransactionPage() {
     if (selectedDatasourceScope.startsWith("datasource:")) {
       const selected = datasourceOptions.find((item) => item.value === selectedDatasourceScope)
       if (!selected) return {}
-      const params: { tenant_id?: number } = {}
+      const params: { tenant_id?: number; tenant_name?: string } = {}
       if (selected.tenantId != null) params.tenant_id = selected.tenantId
+      if (selected.tenantName) params.tenant_name = selected.tenantName
       return params
     }
     return {}
@@ -546,7 +551,7 @@ export function SessionTransactionPage() {
 
   const fetchData = useCallback(
     async (
-      requestScope: { datasource_id?: number | null; cluster_key?: string | null; tenant_id?: number },
+      requestScope: { datasource_id?: number | null; cluster_key?: string | null; tenant_id?: number; tenant_name?: string },
       silent = false
     ) => {
       if (!silent) {

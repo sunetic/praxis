@@ -1,7 +1,8 @@
-import { act, render, screen, waitFor } from "@testing-library/react"
+import { act, screen, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 
+import { renderWithShell as render } from "@/test/renderWithShell"
 import { SessionTransactionPage } from "./SessionTransactionPage"
 
 const { datasourcesApi, sessionAnalysisApi, chatApi, conversationsApi, messagesApi, toast } = vi.hoisted(() => ({
@@ -57,11 +58,10 @@ describe("SessionTransactionPage", () => {
         db_type: "oceanbase",
         cluster_key: "cluster-a",
         tenant_role: "user",
-        tenant_name: "wx",
         user: "root@wx",
         database: "oceanbase",
         status: "active",
-        attributes: { tenant_id: 1 },
+        attributes: { tenant_id: 1, tenant_name: "wx" },
         created_at: "2026-04-04T00:00:00Z",
         updated_at: "2026-04-04T00:00:00Z",
       },
@@ -73,11 +73,10 @@ describe("SessionTransactionPage", () => {
         db_type: "oceanbase",
         cluster_key: "cluster-a",
         tenant_role: "sys",
-        tenant_name: "core",
         user: "root@core",
         database: "oceanbase",
         status: "active",
-        attributes: { tenant_id: 2 },
+        attributes: { tenant_id: 2, tenant_name: "core" },
         created_at: "2026-04-04T00:00:00Z",
         updated_at: "2026-04-04T00:00:00Z",
       },
@@ -89,11 +88,10 @@ describe("SessionTransactionPage", () => {
         db_type: "oceanbase",
         cluster_key: "cluster-b",
         tenant_role: "user",
-        tenant_name: "wb",
         user: "root@wb",
         database: "oceanbase",
         status: "active",
-        attributes: { tenant_id: 3 },
+        attributes: { tenant_id: 3, tenant_name: "wb" },
         created_at: "2026-04-04T00:00:00Z",
         updated_at: "2026-04-04T00:00:00Z",
       },

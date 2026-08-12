@@ -1,5 +1,7 @@
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
+import { render, screen, waitFor } from "@testing-library/react"
+import userEvent from "@testing-library/user-event"
 import { describe, expect, it, vi } from "vitest"
+import { MemoryRouter } from "react-router-dom"
 
 import { ShellI18nProvider } from "@/i18n/shellI18n"
 
@@ -37,8 +39,10 @@ describe("SkillsPage", () => {
     )
 
     render(
-      <ShellI18nProvider>
-        <SkillsPage />
+      <ShellI18nProvider initialLocale="zh-CN">
+        <MemoryRouter>
+          <SkillsPage />
+        </MemoryRouter>
       </ShellI18nProvider>
     )
 
@@ -64,6 +68,7 @@ describe("SkillsPage", () => {
   })
 
   it("shows table skeleton immediately when source filter changes", async () => {
+    const user = userEvent.setup()
     const initialSkills = [
       {
         name: "ob-slow-query",
@@ -93,8 +98,10 @@ describe("SkillsPage", () => {
     )
 
     render(
-      <ShellI18nProvider>
-        <SkillsPage />
+      <ShellI18nProvider initialLocale="zh-CN">
+        <MemoryRouter>
+          <SkillsPage />
+        </MemoryRouter>
       </ShellI18nProvider>
     )
 
@@ -103,10 +110,9 @@ describe("SkillsPage", () => {
       expect(screen.getByText("builtin-review")).toBeInTheDocument()
     })
 
-    act(() => {
-      const selects = screen.getAllByRole("combobox")
-      fireEvent.change(selects[0], { target: { value: "built_in" } })
-    })
+    const selects = screen.getAllByRole("combobox")
+    await user.click(selects[0])
+    await user.click(await screen.findByRole("option", { name: "内建" }))
 
     expect(document.querySelectorAll('[data-slot="skeleton"]').length).toBeGreaterThan(0)
     expect(screen.queryByText("ob-slow-query")).not.toBeInTheDocument()

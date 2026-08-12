@@ -151,6 +151,7 @@ export function PageConsolePage() {
     conversationContextBuilder: (messages, nextInput) => buildConversationContext(messages as BuildChatMessageLike[], nextInput, 10),
     onStreamDone: handleBuildStreamDone,
   })
+  const setChatMessages = chatController.setMessages
 
   useEffect(() => {
     if (loading) return
@@ -226,20 +227,20 @@ export function PageConsolePage() {
               summary: String(run?.result_summary || run?.error_summary || "").trim(),
             }))
             .filter((item) => item.prompt || item.summary)
-          chatController.setMessages(hydrateFromHistory(buildHistory))
+          setChatMessages(hydrateFromHistory(buildHistory))
           return
         }
-        chatController.setMessages(hydrateFromHistory(draftHistory))
+        setChatMessages(hydrateFromHistory(draftHistory))
       })
       .catch(() => {
         if (cancelled) return
-        chatController.setMessages(hydrateFromHistory(draftHistory))
+        setChatMessages(hydrateFromHistory(draftHistory))
       })
 
     return () => {
       cancelled = true
     }
-  }, [chatController, selectedPage?.id])
+  }, [setChatMessages, selectedPage?.id])
 
   useEffect(() => {
     if (previewScaleTouched) return

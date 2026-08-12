@@ -19,6 +19,7 @@ import {
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
 import { cn } from "@/lib/utils";
+import { useShellI18n } from "@/i18n/shellI18n";
 
 const ANIMATION_DURATION = 200;
 
@@ -99,13 +100,14 @@ function ToolFallbackTrigger({
   toolName: string;
   status?: ToolCallMessagePartStatus;
 }) {
+  const { t } = useShellI18n();
   const statusType = status?.type ?? "complete";
   const isRunning = statusType === "running";
   const isCancelled =
     status?.type === "incomplete" && status.reason === "cancelled";
 
   const Icon = statusIconMap[statusType];
-  const label = isCancelled ? "Cancelled tool" : "Used tool";
+  const label = isCancelled ? t("tool.cancelled") : t("tool.used");
 
   return (
     <CollapsibleTrigger
@@ -131,16 +133,14 @@ function ToolFallbackTrigger({
           isCancelled && "text-muted-foreground line-through",
         )}
       >
-        <span>
-          {label}: <b>{toolName}</b>
-        </span>
+        <span>{label}{toolName}</span>
         {isRunning && (
           <span
             aria-hidden
             data-slot="tool-fallback-trigger-shimmer"
             className="aui-tool-fallback-trigger-shimmer shimmer pointer-events-none absolute inset-0 motion-reduce:animate-none"
           >
-            {label}: <b>{toolName}</b>
+            {label}{toolName}
           </span>
         )}
       </span>
@@ -212,7 +212,28 @@ function ToolFallbackResult({
 }: React.ComponentProps<"div"> & {
   result?: unknown;
 }) {
+  const { locale, t } = useShellI18n();
   if (result === undefined) return null;
+
+  const resultRecord = result && typeof result === "object" ? result as Record<string, unknown> : null;
+  const data = resultRecord?.data && typeof resultRecord.data === "object"
+    ? resultRecord.data as Record<string, unknown>
+    : null;
+  const rowCount = typeof data?.row_count === "number"
+    ? data.row_count
+    : Array.isArray(data?.rows) ? data.rows.length : null;
+  const successSummary = resultRecord?.success === true && rowCount !== null
+    ? locale === "zh-CN"
+      ? `执行成功，返回 ${rowCount} 条记录`
+      : `Succeeded, returned ${rowCount} ${rowCount === 1 ? "row" : "rows"}`
+    : null;
+  const errorRecord = resultRecord?.error && typeof resultRecord.error === "object"
+    ? resultRecord.error as Record<string, unknown>
+    : null;
+  const errorMessage = typeof errorRecord?.message === "string" ? errorRecord.message : null;
+  const errorSummary = resultRecord?.success === false && errorMessage
+    ? locale === "zh-CN" ? `执行失败：${errorMessage}` : `Execution failed: ${errorMessage}`
+    : null;
 
   return (
     <div
@@ -223,7 +244,9 @@ function ToolFallbackResult({
       )}
       {...props}
     >
-      <p className="aui-tool-fallback-result-header font-semibold">Result:</p>
+      {successSummary ? <p className="aui-tool-fallback-result-summary font-medium">{successSummary}</p> : null}
+      {errorSummary ? <p className="aui-tool-fallback-result-summary font-medium text-destructive">{errorSummary}</p> : null}
+      <p className="aui-tool-fallback-result-header font-semibold">{t("tool.result")}</p>
       <pre className="aui-tool-fallback-result-content whitespace-pre-wrap">
         {typeof result === "string" ? result : JSON.stringify(result, null, 2)}
       </pre>
@@ -279,6 +302,7 @@ const ToolFallbackImpl: ToolCallMessagePartComponent = ({
 
   return (
     <ToolFallbackRoot
+      defaultOpen
       className={cn(isCancelled && "border-muted-foreground/30 bg-muted/30")}
     >
       <ToolFallbackTrigger toolName={toolName} status={status} />

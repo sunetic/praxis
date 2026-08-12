@@ -157,7 +157,7 @@ export function buildAttemptTimelineEntries({
         message: {
           id: `${idPrefix}-observe-${idx}`,
           role: "status",
-          content: `Observe · Attempt ${no} failed${summary ? `: ${summary}` : ""}`,
+          content: `Observe · Attempt ${no} 失败${summary ? `: ${summary}` : ""}`,
         },
         phaseMs: 0,
       })
@@ -176,7 +176,7 @@ export function buildAttemptTimelineEntries({
           message: {
             id: `${idPrefix}-retry-${idx}`,
             role: "status",
-            content: `Retry · Starting attempt ${no + 1}`,
+            content: `Retry · 发起 Attempt ${no + 1}`,
           },
           phaseMs: 0,
         })
@@ -187,7 +187,7 @@ export function buildAttemptTimelineEntries({
       message: {
         id: `${idPrefix}-act-${idx}`,
         role: "status",
-        content: `Act · Attempt ${no} succeeded${summary ? `: ${summary}` : ""}`,
+        content: `Act · Attempt ${no} 成功${summary ? `: ${summary}` : ""}`,
       },
       phaseMs: 0,
     })

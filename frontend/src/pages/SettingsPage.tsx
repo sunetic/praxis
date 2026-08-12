@@ -202,8 +202,9 @@ function BuildTab() {
       {engine === "external_cli" && (
         <div className="space-y-4 rounded-lg border bg-muted/30 p-4">
           <div className="space-y-1.5">
-            <label className="text-sm font-medium">{t("settings.engine.command")}</label>
+            <label htmlFor="external-cli-command" className="text-sm font-medium">{t("settings.engine.command")}</label>
             <Input
+              id="external-cli-command"
               value={command}
               onChange={(e) => { setCommand(e.target.value); setTestResult(null) }}
               placeholder={t("settings.engine.commandPlaceholder")}

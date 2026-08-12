@@ -1,8 +1,9 @@
-import { render, screen, waitFor } from "@testing-library/react"
+import { screen, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom"
 
+import { renderWithShell as render } from "@/test/renderWithShell"
 import { ChatPage } from "./ChatPage"
 
 const {
@@ -111,6 +112,7 @@ describe("ChatPage workspace boundary and handoff", () => {
     vi.clearAllMocks()
     conversationsApi.list.mockImplementation(async (params?: { category?: string }) => {
       if (params?.category === "scene") return []
+      if (params?.category === "agent_run") return []
       return [buildConversation()]
     })
     conversationsApi.create.mockResolvedValue({
@@ -197,7 +199,7 @@ describe("ChatPage workspace boundary and handoff", () => {
       </MemoryRouter>
     )
 
-    expect(await screen.findByText("开始一个新话题")).toBeInTheDocument()
+    await waitFor(() => expect(screen.getByPlaceholderText("输入问题...")).toBeInTheDocument())
     expect(screen.queryByText("进入 Build Mode")).not.toBeInTheDocument()
     expect(screen.queryByText("Build Scope")).not.toBeInTheDocument()
     expect(screen.queryByTestId("build-preview-pane")).not.toBeInTheDocument()
@@ -210,12 +212,12 @@ describe("ChatPage workspace boundary and handoff", () => {
       </MemoryRouter>
     )
 
-    expect(await screen.findByText("开始一个新话题")).toBeInTheDocument()
+    await waitFor(() => expect(screen.getByPlaceholderText("输入问题...")).toBeInTheDocument())
 
     const workbenchRoot = container.firstElementChild as HTMLElement | null
     const primaryGrid = container.querySelector('[data-slot="workbench-primary"] > div') as HTMLElement | null
     const mainColumn = primaryGrid?.lastElementChild as HTMLElement | null
-    const composerInput = screen.getByPlaceholderText("输入消息...")
+    const composerInput = screen.getByPlaceholderText("输入问题...")
     const panelRoot = composerInput.closest("div.rounded-xl.border.border-border.bg-card") as HTMLElement | null
 
     expect(workbenchRoot).not.toBeNull()
@@ -327,7 +329,7 @@ describe("ChatPage workspace boundary and handoff", () => {
     )
 
     expect(await screen.findByText("继续分析 SQL sql-2")).toBeInTheDocument()
-    expect(screen.getByText("已带入页面上下文：SQL Analysis")).toBeInTheDocument()
+    expect(screen.getByText("来自：SQL Analysis")).toBeInTheDocument()
 
     await userEvent.click(screen.getByRole("button", { name: "继续分析这条 SQL 的主要风险" }))
 
@@ -340,7 +342,7 @@ describe("ChatPage workspace boundary and handoff", () => {
     )
   })
 
-  it("navigates to page console build mode from suggestion card", async () => {
+  it("keeps reusable chat suggestions out of the page-builder flow", async () => {
     messagesApi.list.mockResolvedValueOnce([
       {
         id: 11,
@@ -359,30 +361,10 @@ describe("ChatPage workspace boundary and handoff", () => {
       },
     ])
 
-    render(
-      <MemoryRouter initialEntries={["/chat"]}>
-        <Routes>
-          <Route path="/chat" element={<ChatPage />} />
-          <Route
-            path="/page"
-            element={
-              <div>
-                <div>PAGE_CONSOLE</div>
-                <LocationProbe />
-              </div>
-            }
-          />
-        </Routes>
-      </MemoryRouter>
-    )
+    render(<MemoryRouter initialEntries={["/chat"]}><ChatPage /></MemoryRouter>)
 
-    const button = await screen.findByRole("button", { name: "保存为新页面" })
-    await userEvent.click(button)
-
-    await waitFor(() => expect(screen.getByText("PAGE_CONSOLE")).toBeInTheDocument())
-    expect(screen.getByTestId("location-probe")).toHaveTextContent(
-      "/page?handoff=chat-save-page"
-    )
+    expect(await screen.findByText("检测到可复用场景，是否保存为 Agent？")).toBeInTheDocument()
+    expect(screen.queryByRole("button", { name: "保存为新页面" })).not.toBeInTheDocument()
   })
 
   it("saves agent in chat and then navigates to agent editor", async () => {
@@ -421,11 +403,11 @@ describe("ChatPage workspace boundary and handoff", () => {
       </MemoryRouter>
     )
 
-    const button = await screen.findByRole("button", { name: "保存为 Agent" })
+    const button = await screen.findByRole("button", { name: "保存" })
     await userEvent.click(button)
 
-    await waitFor(() => expect(screen.getByText("前往 Agent 编辑")).toBeInTheDocument())
-    await userEvent.click(screen.getByRole("button", { name: "前往 Agent 编辑" }))
+    await waitFor(() => expect(screen.getByText("前往编辑")).toBeInTheDocument())
+    await userEvent.click(screen.getByRole("button", { name: "前往编辑" }))
 
     await waitFor(() => expect(screen.getByText("AGENT_CONSOLE")).toBeInTheDocument())
     expect(screen.getByTestId("location-probe")).toHaveTextContent(
@@ -458,13 +440,13 @@ describe("ChatPage workspace boundary and handoff", () => {
       </MemoryRouter>
     )
 
-    const input = await screen.findByPlaceholderText("输入消息...")
+    const input = await screen.findByPlaceholderText("输入问题...")
     await userEvent.type(input, "保存为 Agent")
     await userEvent.keyboard("{Enter}")
 
     await waitFor(() => expect(chatApi.stream).toHaveBeenCalled())
     expect(chatApi.saveAgentStream).not.toHaveBeenCalled()
-    await waitFor(() => expect(screen.getByText("前往 Agent 编辑")).toBeInTheDocument())
+    await waitFor(() => expect(screen.getByText("前往编辑")).toBeInTheDocument())
   })
 
   it("prefers backend user_message for stream errors", async () => {
@@ -480,7 +462,7 @@ describe("ChatPage workspace boundary and handoff", () => {
       </MemoryRouter>
     )
 
-    const input = await screen.findByPlaceholderText("输入消息...")
+    const input = await screen.findByPlaceholderText("输入问题...")
     await userEvent.type(input, "帮我查一下")
     await userEvent.keyboard("{Enter}")
 
@@ -584,6 +566,7 @@ describe("ChatPage workspace boundary and handoff", () => {
           }),
         ]
       }
+      if (params?.category === "agent_run") return []
       return [buildConversation({ id: 1, title: "普通对话" })]
     })
 
@@ -614,6 +597,7 @@ describe("ChatPage workspace boundary and handoff", () => {
           }),
         ]
       }
+      if (params?.category === "agent_run") return []
       return [buildConversation({ id: 1, title: "普通对话" })]
     })
 
@@ -629,7 +613,7 @@ describe("ChatPage workspace boundary and handoff", () => {
     expect(
       await screen.findByText("该会话来自其他页面的场景历史，只支持查看，不可在 Chat 页面继续对话。")
     ).toBeInTheDocument()
-    expect(screen.queryByPlaceholderText("输入消息...")).not.toBeInTheDocument()
+    expect(screen.queryByPlaceholderText("输入问题...")).not.toBeInTheDocument()
     const datasourceButton = Array.from(container.querySelectorAll("button")).find((element) =>
       element.className.includes("max-w-[280px]")
     )

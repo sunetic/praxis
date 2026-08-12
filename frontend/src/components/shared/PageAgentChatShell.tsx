@@ -131,7 +131,7 @@ export function SceneAgentChatShell({
         showHeader={!embeddedInDrawer}
         enableSaveAsAgent={false}
         enableHandoff={false}
-        enableBatchActions={false}
+        enableBatchActions={true}
         headerAction={
           focusObject && !embeddedInDrawer ? (
             <Button size="sm" variant="outline" onClick={() => onJumpToFocusObject?.(focusObject)}>

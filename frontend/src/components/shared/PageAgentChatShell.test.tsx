@@ -1,8 +1,9 @@
-import { act, render, screen, waitFor } from "@testing-library/react"
+import { act, screen, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { StrictMode } from "react"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 
+import { renderWithShell as render } from "@/test/renderWithShell"
 import { PageAgentChatShell } from "./PageAgentChatShell"
 
 const { toastError, conversationsApi, chatApi, messagesApi, consumeRuntimeSse } = vi.hoisted(() => ({
@@ -36,6 +37,7 @@ vi.mock("sonner", () => ({
 
 vi.mock("@/lib/runtimeStream", () => ({
   consumeRuntimeSse,
+  consumeVds: consumeRuntimeSse,
   formatRuntimeCoreMessage: (event: { summary?: string }) => event.summary || "处理中",
 }))
 
@@ -154,7 +156,7 @@ describe("PageAgentChatShell", () => {
       />
     )
 
-    expect(screen.getByDisplayValue("请继续分析")).toBeInTheDocument()
+    expect(await screen.findByDisplayValue("请继续分析")).toBeInTheDocument()
     await userEvent.click(screen.getByRole("button", { name: "回到对象详情" }))
     expect(onJump).toHaveBeenCalled()
   })
@@ -411,7 +413,7 @@ describe("PageAgentChatShell", () => {
     expect(await screen.findByText("这是中止前已显示的内容。", { exact: false })).toBeInTheDocument()
 
     await act(async () => {
-      await user.click(await screen.findByRole("button", { name: "中止" }))
+      await user.click(await screen.findByRole("button", { name: "停止生成" }))
       releaseStream?.()
     })
 

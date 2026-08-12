@@ -1,4 +1,4 @@
-import { useCallback, useMemo } from "react"
+import { useCallback, useEffect, useMemo } from "react"
 import type { ReactNode } from "react"
 import {
   useExternalStoreRuntime,
@@ -101,6 +101,7 @@ export function ChatThreadView(props: ChatThreadViewProps) {
 function ChatThreadViewSession({
   controller,
   title,
+  placeholder,
   readOnly = false,
   readOnlyHint,
   suggestions = [],
@@ -220,10 +221,18 @@ function ChatThreadViewSession({
     onCancel,
   })
 
+  // Suggested prompts are owned by the Praxis controller, while assistant-ui
+  // owns the composer DOM. Keep the two stores in sync for programmatic input.
+  useEffect(() => {
+    if (runtime.thread.composer.getState().text !== controller.input) {
+      runtime.thread.composer.setText(controller.input)
+    }
+  }, [controller.input, runtime])
+
   const actionsDisabled = streaming || savingAgent || readOnly
 
   const rootClass = [
-    "flex h-full min-h-0 flex-col",
+    "flex h-full min-h-0 min-w-0 max-w-full flex-col",
     embedded ? "" : "rounded-xl border border-border bg-card shadow-sm",
     className || "",
   ]
@@ -279,6 +288,8 @@ function ChatThreadViewSession({
           <Thread
             suggestions={normalizedSuggestions}
             isWaiting={streaming && streamingParts.length === 0}
+            placeholder={placeholder}
+            readOnly={readOnly}
             footerContent={
               (streaming && runtimeStatus) ||
               (enableBatchActions && currentBatchPendingActions.length > 0) ||

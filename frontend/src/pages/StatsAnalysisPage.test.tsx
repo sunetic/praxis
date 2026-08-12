@@ -1,7 +1,8 @@
-import { render, screen, waitFor } from "@testing-library/react"
+import { screen, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 
+import { renderWithShell as render } from "@/test/renderWithShell"
 import { StatsAnalysisPage } from "./StatsAnalysisPage"
 
 const { datasourcesApi, statsAnalysisApi, toast } = vi.hoisted(() => ({
@@ -58,6 +59,7 @@ vi.mock("sonner", () => ({
 
 vi.mock("@/lib/runtimeStream", () => ({
   consumeRuntimeSse,
+  consumeVds: consumeRuntimeSse,
   formatRuntimeCoreMessage: (event: { summary?: string }) => event.summary || "处理中",
 }))
 
