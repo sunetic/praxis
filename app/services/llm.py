@@ -1,10 +1,10 @@
 # semantic-guard: allow — message here is an LLM API message dict, not user input
 import json
 import logging
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Iterator
+from contextlib import contextmanager
 from typing import Any
 
-from opentelemetry import context as otel_context
 from opentelemetry import trace
 
 from app.core.config import get_settings
@@ -20,6 +20,18 @@ tracer = trace.get_tracer("app.services.llm")
 _MAX_TRACE_TEXT = 800
 _MAX_TRACE_MESSAGES = 12
 _MAX_TRACE_TOOLS = 8
+
+
+@contextmanager
+def _activate_span(span: trace.Span) -> Iterator[None]:
+    """Make a span current for one operation without owning its lifetime."""
+    with trace.use_span(
+        span,
+        end_on_exit=False,
+        record_exception=False,
+        set_status_on_exception=False,
+    ):
+        yield
 
 
 def _clip_text(value: Any, limit: int = _MAX_TRACE_TEXT) -> str:
@@ -219,17 +231,30 @@ class LLMClient:
                 "llm.has_tools": bool(tools),
             },
         )
-        _ctx = trace.set_span_in_context(_span)
-        _token = otel_context.attach(_ctx)
+        span_ended = False
 
         try:
             if stream:
-                response = await litellm.acompletion(**kwargs)
-                async for chunk in response:
-                    yield chunk.model_dump()
+                with _activate_span(_span):
+                    response = await litellm.acompletion(**kwargs)
+                iterator = response.__aiter__()
+                while True:
+                    try:
+                        with _activate_span(_span):
+                            chunk = await anext(iterator)
+                            payload = chunk.model_dump()
+                    except StopAsyncIteration:
+                        break
+                    yield payload
             else:
-                response = await litellm.acompletion(**kwargs)
-                yield response.model_dump()
+                with _activate_span(_span):
+                    response = await litellm.acompletion(**kwargs)
+                    payload = response.model_dump()
+                _span.set_status(trace.StatusCode.OK)
+                _span.end()
+                span_ended = True
+                yield payload
+                return
 
             _span.set_status(trace.StatusCode.OK)
         except litellm.RateLimitError as e:
@@ -248,8 +273,8 @@ class LLMClient:
             _span.set_status(trace.StatusCode.ERROR, str(e))
             raise
         finally:
-            otel_context.detach(_token)
-            _span.end()
+            if not span_ended:
+                _span.end()
 
 
 _llm_client: LLMClient | None = None
