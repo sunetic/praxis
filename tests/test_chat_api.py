@@ -16,7 +16,7 @@ from app.api import chat as chat_api
 from app.api import chat_history
 from app.api import chat_pending as chat_pending_api
 from app.api import conversations as conversations_api
-from app.core.config import Settings
+from app.core.config import PROJECT_ROOT, Settings
 from app.db.database import Base
 from app.models import models
 from app.schemas import schemas
@@ -43,8 +43,8 @@ def test_settings_normalize_relative_sqlite_paths(monkeypatch: pytest.MonkeyPatc
 
     settings = Settings()
 
-    assert settings.database_url == "sqlite:////workspace/praxis/frontend/praxis.db"
-    assert settings.tracing_db_path == "/workspace/praxis/frontend/tracing.db"
+    assert settings.database_url == f"sqlite:///{PROJECT_ROOT / 'frontend/praxis.db'}"
+    assert settings.tracing_db_path == str(PROJECT_ROOT / "frontend/tracing.db")
 
 
 def test_settings_keep_absolute_and_non_sqlite_urls(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -13,8 +13,26 @@ venv/
 .venv/
 env/
 .env
-.env.local
-.env.*.local
+.env.*
+!.env.example
+!**/.env.example
+
+# Credentials and private key material
+*.pem
+*.key
+*.p12
+*.pfx
+*.jks
+*.keystore
+id_rsa*
+id_ed25519*
+.netrc
+.npmrc
+.pypirc
+credentials.json
+service-account*.json
+.aws/
+.kube/
 
 # Build
 dist/
@@ -60,11 +78,15 @@ logs/
 .captain
 .cursor
 .codex
+.agents
 .opencode
+.continue
+.windsurf
 .claude
 openspec
 CLAUDE.md
 AGENTS.md
+GEMINI.md
 .codegraph
 frontend/.captain
 

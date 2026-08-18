@@ -6,6 +6,11 @@
 
 REPO_ROOT="$(git rev-parse --show-toplevel)"
 
+# Repository hygiene (every push)
+if ! "$REPO_ROOT/tools/check-repository-hygiene.sh"; then
+  exit 1
+fi
+
 # ── ruff lint + format (every push) ─────────────────────────────────────────
 if command -v uv >/dev/null 2>&1; then
   echo "[pre-push] Running ruff check..."

@@ -11,6 +11,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Reject local-only and credential files
+        run: tools/check-repository-hygiene.sh
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
