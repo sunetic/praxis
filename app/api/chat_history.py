@@ -7,12 +7,10 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
-from app.core.config import get_settings
 from app.core.logging import fmt_kv, get_logger
 from app.models import models
 
 logger = get_logger("chat.history")
-settings = get_settings()
 
 
 def ensure_stream_user_message(
@@ -123,7 +121,7 @@ def load_chat_messages(
         .all()
     )
 
-    chat_messages = _format_messages_for_llm(raw_messages)
+    chat_messages = format_messages_for_llm(raw_messages)
     latest_persisted_user_matches = bool(
         raw_messages
         and raw_messages[-1].role == "user"
@@ -132,8 +130,6 @@ def load_chat_messages(
     if incoming_content and not latest_persisted_user_matches:
         chat_messages.append({"role": "user", "content": incoming_content})
 
-    _apply_sliding_window(chat_messages, settings.ai_context_char_limit)
-
     logger.info(
         "fetch_messages_done %s",
         fmt_kv(conversation_id=conversation_id, message_count=len(chat_messages)),
@@ -141,7 +137,7 @@ def load_chat_messages(
     return chat_messages, raw_messages
 
 
-def _format_messages_for_llm(messages: list) -> list[dict[str, Any]]:
+def format_messages_for_llm(messages: list) -> list[dict[str, Any]]:
     """Convert DB messages into LLM-consumable dicts."""
     chat_messages: list[dict[str, Any]] = []
     for m in messages:
@@ -226,15 +222,3 @@ def _format_messages_for_llm(messages: list) -> list[dict[str, Any]]:
         else:
             chat_messages.append({"role": m.role, "content": m.content})
     return chat_messages
-
-
-def _apply_sliding_window(chat_messages: list[dict], context_char_limit: int) -> None:
-    """Drop oldest messages (keeping first) until under char limit."""
-    while len(chat_messages) > 2:
-        total = sum(
-            len(json.dumps(m.get("content", ""), ensure_ascii=False, default=str))
-            for m in chat_messages
-        )
-        if total <= context_char_limit:
-            break
-        chat_messages.pop(1)

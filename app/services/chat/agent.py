@@ -82,6 +82,8 @@ class ChatCoreAgent:
         default_datasource_id: int | None,
         conversation_id: int | None,
         scope_context: dict[str, Any] | None,
+        context_window_tokens: int | None = None,
+        compression_threshold_tokens: int | None = None,
         is_cancelled: Callable[[], bool] | None = None,
         task_state: dict[str, Any] | None = None,
     ) -> AsyncGenerator[dict[str, Any], None]:
@@ -96,6 +98,10 @@ class ChatCoreAgent:
             "use_state_machine": True,
             "agent_name": self.display_name,
         }
+        if "context_window_tokens" in chat_signature.parameters:
+            kwargs["context_window_tokens"] = context_window_tokens
+        if "compression_threshold_tokens" in chat_signature.parameters:
+            kwargs["compression_threshold_tokens"] = compression_threshold_tokens
         if "is_cancelled" in chat_signature.parameters:
             kwargs["is_cancelled"] = is_cancelled
         if "task_state" in chat_signature.parameters:

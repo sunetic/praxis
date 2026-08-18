@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react"
-import { BrainCircuit, ShieldCheck, Wrench } from "lucide-react"
+import { BrainCircuit, Gauge, ShieldCheck, Wrench } from "lucide-react"
 import { useShellI18n } from "@/i18n/shellI18n"
 import { settingsApi } from "@/lib/api"
 import { WorkbenchPage } from "@/components/shared/WorkbenchPage"
@@ -21,6 +21,8 @@ function LlmTab() {
   const [apiKey, setApiKey] = useState("")
   const [model, setModel] = useState("")
   const [baseUrl, setBaseUrl] = useState("")
+  const [contextWindow, setContextWindow] = useState("128000")
+  const [compressionThreshold, setCompressionThreshold] = useState("75")
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
   const [loaded, setLoaded] = useState(false)
@@ -30,6 +32,8 @@ function LlmTab() {
       setApiKey(typeof data.ai_api_key === "string" ? data.ai_api_key : "")
       setModel(typeof data.ai_model === "string" ? data.ai_model : "")
       setBaseUrl(typeof data.ai_base_url === "string" ? data.ai_base_url : "")
+      setContextWindow(String(data.context_window_tokens || 128000))
+      setCompressionThreshold(String(data.context_compression_threshold_percent || 75))
       setLoaded(true)
     })
   }, [])
@@ -42,13 +46,28 @@ function LlmTab() {
         ai_api_key: apiKey.trim(),
         ai_model: model.trim(),
         ai_base_url: baseUrl.trim(),
+        context_window_tokens: Number(contextWindow),
+        context_compression_threshold_percent: Number(compressionThreshold),
       })
       setSaved(true)
       setTimeout(() => setSaved(false), 2000)
     } finally {
       setSaving(false)
     }
-  }, [apiKey, model, baseUrl])
+  }, [apiKey, model, baseUrl, contextWindow, compressionThreshold])
+
+  const contextWindowNumber = Number(contextWindow)
+  const compressionThresholdNumber = Number(compressionThreshold)
+  const contextSettingsValid =
+    Number.isInteger(contextWindowNumber) &&
+    contextWindowNumber >= 8192 &&
+    contextWindowNumber <= 2000000 &&
+    Number.isInteger(compressionThresholdNumber) &&
+    compressionThresholdNumber >= 50 &&
+    compressionThresholdNumber <= 95
+  const triggerTokens = contextSettingsValid
+    ? Math.round(contextWindowNumber * compressionThresholdNumber / 100)
+    : 0
 
   if (!loaded) {
     return (
@@ -100,11 +119,67 @@ function LlmTab() {
         </p>
       </div>
 
+      <div className="space-y-4 border-t border-border pt-5">
+        <div className="flex items-center gap-2">
+          <Gauge className="size-4 text-primary" />
+          <div>
+            <p className="text-sm font-medium">{t("settings.context.title")}</p>
+            <p className="text-xs text-muted-foreground">{t("settings.context.description")}</p>
+          </div>
+        </div>
+
+        <div className="grid gap-4 sm:grid-cols-2">
+          <div className="space-y-1.5">
+            <label htmlFor="context-window-tokens" className="text-sm font-medium">
+              {t("settings.context.window")}
+            </label>
+            <Input
+              id="context-window-tokens"
+              type="number"
+              min={8192}
+              max={2000000}
+              step={1024}
+              value={contextWindow}
+              onChange={(event) => setContextWindow(event.target.value)}
+              aria-describedby="context-window-hint"
+            />
+            <p id="context-window-hint" className="text-xs text-muted-foreground">
+              {t("settings.context.windowHint")}
+            </p>
+          </div>
+
+          <div className="space-y-1.5">
+            <label htmlFor="context-compression-threshold" className="text-sm font-medium">
+              {t("settings.context.threshold")}
+            </label>
+            <div className="relative">
+              <Input
+                id="context-compression-threshold"
+                type="number"
+                min={50}
+                max={95}
+                step={1}
+                value={compressionThreshold}
+                onChange={(event) => setCompressionThreshold(event.target.value)}
+                className="pr-9"
+                aria-describedby="context-threshold-hint"
+              />
+              <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">%</span>
+            </div>
+            <p id="context-threshold-hint" className="text-xs text-muted-foreground">
+              {contextSettingsValid
+                ? `${triggerTokens.toLocaleString()} tokens · ${t("settings.context.thresholdHint")}`
+                : t("settings.context.invalid")}
+            </p>
+          </div>
+        </div>
+      </div>
+
       <div className="flex items-center gap-3 pt-1">
         <Button
           size="sm"
           onClick={handleSave}
-          disabled={saving || !apiKey.trim() || !model.trim()}
+          disabled={saving || !model.trim() || !contextSettingsValid}
         >
           {saving ? t("settings.saving") : t("settings.save")}
         </Button>

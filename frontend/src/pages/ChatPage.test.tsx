@@ -27,6 +27,7 @@ const {
   },
   chatApi: {
     stream: vi.fn(),
+    getContextStatus: vi.fn(),
     saveAgentStream: vi.fn(),
     listEvents: vi.fn(),
     createHandoff: vi.fn(),
@@ -174,6 +175,7 @@ describe("ChatPage workspace boundary and handoff", () => {
       },
     })
     chatApi.listPendingActions.mockResolvedValue([])
+    chatApi.getContextStatus.mockResolvedValue(null)
     chatApi.confirmPendingAction.mockResolvedValue({})
     chatApi.cancelPendingAction.mockResolvedValue({})
     chatApi.saveAgentStream.mockResolvedValue(

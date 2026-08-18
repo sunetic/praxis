@@ -14,8 +14,9 @@ def anyio_backend():
 
 def test_estimate_tokens_basic():
     assert estimate_tokens("") == 1
-    assert estimate_tokens("hello world") == max(1, len("hello world") // 4)
+    assert estimate_tokens("hello world") == 3
     assert estimate_tokens("a" * 400) == 100
+    assert estimate_tokens("数据库上下文") == 6
 
 
 def test_estimate_messages_tokens():
@@ -24,7 +25,8 @@ def test_estimate_messages_tokens():
         {"role": "assistant", "content": "b" * 200},
     ]
     tokens = estimate_messages_tokens(messages)
-    assert tokens == 75  # 25 + 50
+    # Includes role/message framing overhead as well as content.
+    assert tokens == 90
 
 
 def test_estimate_messages_tokens_with_tool_calls():

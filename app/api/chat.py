@@ -20,12 +20,17 @@ from app.core.config import get_settings
 from app.core.logging import fmt_kv, get_logger
 from app.db.database import get_db
 from app.models import models
-from app.schemas.schemas import ChatCompleteRequest, ChatStreamRequest
+from app.schemas.schemas import (
+    ChatCompleteRequest,
+    ChatContextStatusResponse,
+    ChatStreamRequest,
+)
 from app.services.chat import get_chat_service
 from app.services.chat.agent import ChatAgent
 from app.services.chat.capabilities import (
     list_active_skill_models,
 )
+from app.services.chat.context_manager import ConversationContextManager
 from app.services.chat.scene_agents import SceneAgentPayload, SceneAgentRegistry
 from app.services.chat.stream_helpers import (
     _annotate_runtime_event,
@@ -126,6 +131,21 @@ def _load_resumable_task_state(
 router = APIRouter(prefix="/chat", tags=["Chat"])
 logger = get_logger("chat.api")
 settings = get_settings()
+
+
+@router.get("/{conversation_id}/context", response_model=ChatContextStatusResponse)
+def get_chat_context_status(
+    conversation_id: int,
+    db: Session = Depends(get_db),
+) -> ChatContextStatusResponse:
+    conversation = db.get(models.Conversation, conversation_id)
+    if conversation is None:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    payload = ConversationContextManager().get_status(
+        db,
+        conversation_id=conversation_id,
+    )
+    return ChatContextStatusResponse.model_validate(payload)
 
 
 @router.post("/{conversation_id}/stream")
@@ -435,6 +455,8 @@ async def chat_stream(
     if handoff_payload:
         tools = _filter_tools_for_handoff_turn(tools)
 
+    context_manager = ConversationContextManager()
+
     chat_agent = ChatAgent(chat_service=get_chat_service())
     logger.info(
         "chat_agent_start %s",
@@ -675,6 +697,69 @@ async def chat_stream(
             )
 
         try:
+            preview_status, compression_required = context_manager.preview(
+                db,
+                conversation_id=conversation_id,
+                raw_messages=messages,
+                system_prompt=system_prompt,
+                tools=tools if tools else None,
+            )
+            if compression_required:
+                compression_started_event = _annotate_runtime_event(
+                    {
+                        "type": "context_status",
+                        "phase": "thinking",
+                        "data": preview_status,
+                    },
+                    agent_name=display_agent_name,
+                )
+                await _persist_runtime_event(
+                    "context_status",
+                    "thinking",
+                    preview_status,
+                )
+                yield _event_to_vds(compression_started_event)
+
+            prepared_context = await context_manager.prepare(
+                db,
+                conversation_id=conversation_id,
+                raw_messages=messages,
+                system_prompt=system_prompt,
+                tools=tools if tools else None,
+            )
+            chat_messages = prepared_context.messages
+
+            if prepared_context.compression is not None:
+                compression_event = _annotate_runtime_event(
+                    {
+                        "type": "context_compressed",
+                        "phase": "thinking",
+                        "data": prepared_context.compression,
+                    },
+                    agent_name=display_agent_name,
+                )
+                await _persist_runtime_event(
+                    "context_compressed",
+                    "thinking",
+                    prepared_context.compression,
+                )
+                yield _event_to_vds(compression_event)
+
+            context_status_event = _annotate_runtime_event(
+                {
+                    "type": "context_status",
+                    "phase": "thinking",
+                    "data": prepared_context.status,
+                },
+                agent_name=display_agent_name,
+            )
+            await _persist_runtime_event(
+                "context_status",
+                "thinking",
+                prepared_context.status,
+            )
+            yield _event_to_vds(context_status_event)
+
             skill_delta_event = {
                 "type": "skill_delta",
                 "data": skill_delta_payload,
@@ -689,6 +774,10 @@ async def chat_stream(
                 default_datasource_id=conversation.datasource_id,
                 conversation_id=conversation_id,
                 scope_context=scope_context,
+                context_window_tokens=prepared_context.status["context_window_tokens"],
+                compression_threshold_tokens=prepared_context.status[
+                    "compression_threshold_tokens"
+                ],
                 is_cancelled=_is_cancelled,
                 task_state=resumable_task_state,
             ):
@@ -1036,6 +1125,7 @@ async def chat_stream(
                     "task_state",
                     "checkpoint",
                     "context_compressed",
+                    "context_status",
                 }:
                     mapped_data_raw.setdefault("turn_id", current_turn_id)
                     mapped_data_raw.setdefault("turn_seq", current_turn_seq)
@@ -1051,6 +1141,10 @@ async def chat_stream(
                     if isinstance(annotated_event.get("data"), dict)
                     else None
                 )
+                if mapped_type == "context_status" and isinstance(mapped_data, dict):
+                    mapped_data = {**prepared_context.status, **mapped_data}
+                    mapped_data["conversation_id"] = conversation_id
+                    annotated_event["data"] = mapped_data
                 if mapped_type == "task_state" and isinstance(mapped_data, dict):
                     latest_task_state = dict(mapped_data)
 
@@ -1069,6 +1163,7 @@ async def chat_stream(
                     "task_state",
                     "checkpoint",
                     "context_compressed",
+                    "context_status",
                     "done",
                 }:
                     await _persist_runtime_event(

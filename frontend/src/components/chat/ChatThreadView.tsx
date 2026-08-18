@@ -5,12 +5,20 @@ import {
 } from "@assistant-ui/react"
 import type { AppendMessage, ThreadMessageLike } from "@assistant-ui/react"
 import { AssistantRuntimeProvider } from "@assistant-ui/core/react"
-import { Loader2, WandSparkles } from "lucide-react"
+import { ArchiveRestore, Gauge, Loader2, WandSparkles } from "lucide-react"
 
 import { Thread } from "@/components/assistant-ui/thread"
 import type { ThreadSuggestion } from "@/components/assistant-ui/thread"
 import { Button } from "@/components/ui/button"
-import type { ChatHandoff, DataSource, ContentPart as ApiContentPart } from "@/lib/api"
+import { Progress } from "@/components/ui/progress"
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
+import type {
+  ChatContextStatus,
+  ChatHandoff,
+  ContextCompressionNotice,
+  DataSource,
+  ContentPart as ApiContentPart,
+} from "@/lib/api"
 import type { ChatControllerReturn } from "./useChatController"
 import { useShellI18n } from "@/i18n/shellI18n"
 
@@ -134,6 +142,8 @@ function ChatThreadViewSession({
     confirmCurrentBatch,
     cancelCurrentBatch,
     runtimeStatus,
+    contextStatus,
+    contextCompressionNotice,
     conversationId,
   } = controller
 
@@ -230,6 +240,22 @@ function ChatThreadViewSession({
   }, [controller.input, runtime])
 
   const actionsDisabled = streaming || savingAgent || readOnly
+  const visibleContextStatus: ChatContextStatus = contextStatus ?? {
+    conversation_id: conversationId ?? 0,
+    context_window_tokens: 128000,
+    estimated_tokens: 0,
+    used_percent: 0,
+    compression_progress_percent: 0,
+    compression_threshold_percent: 75,
+    compression_threshold_tokens: 96000,
+    remaining_tokens: 128000,
+    summary_tokens: 0,
+    recent_message_count: 0,
+    compacted_through_message_id: null,
+    last_compacted_at: null,
+    token_source: "estimate",
+    state: "ready",
+  }
 
   const rootClass = [
     "flex h-full min-h-0 min-w-0 max-w-full flex-col",
@@ -291,11 +317,11 @@ function ChatThreadViewSession({
             placeholder={placeholder}
             readOnly={readOnly}
             footerContent={
-              (streaming && runtimeStatus) ||
-              (enableBatchActions && currentBatchPendingActions.length > 0) ||
-              (enableSaveAsAgent && showReuseSuggestion) ||
-              (enableSaveAsAgent && saveAgentState) ? (
-                <div className="flex flex-col gap-2">
+              <div className="flex flex-col gap-2">
+                  {contextCompressionNotice ? (
+                    <ContextCompressionBanner notice={contextCompressionNotice} />
+                  ) : null}
+                  <ContextUsageIndicator status={visibleContextStatus} />
                   {streaming && runtimeStatus ? (
                     <div
                       data-testid="chat-runtime-progress"
@@ -405,8 +431,7 @@ function ChatThreadViewSession({
                       ) : null}
                     </div>
                   ) : null}
-                </div>
-              ) : undefined
+              </div>
             }
           />
         </div>
@@ -419,5 +444,88 @@ function ChatThreadViewSession({
         ) : null}
       </div>
     </AssistantRuntimeProvider>
+  )
+}
+
+export function ContextUsageIndicator({ status }: { status: ChatContextStatus }) {
+  const { t } = useShellI18n()
+  const percent = Math.max(0, Math.min(100, status.compression_progress_percent))
+  const isCompressing = status.state === "compressing"
+  const compressionFailed = status.state === "compression_failed"
+  const indicatorClassName = compressionFailed
+    ? "bg-negative"
+    : isCompressing || percent >= 85
+      ? "bg-warning"
+      : "bg-primary"
+  const label = isCompressing
+    ? t("chat.context.compressing")
+    : compressionFailed
+      ? t("chat.context.compressionFailed")
+      : t("chat.context.label")
+
+  return (
+    <TooltipProvider delayDuration={150}>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <div
+            data-testid="chat-context-usage"
+            data-state={status.state}
+            role={isCompressing || compressionFailed ? "status" : undefined}
+            aria-live={isCompressing || compressionFailed ? "polite" : undefined}
+            className="flex min-h-6 items-center gap-2 px-1 text-xs text-muted-foreground"
+          >
+            {isCompressing ? (
+              <Loader2 className="size-3.5 shrink-0 animate-spin text-warning" />
+            ) : (
+              <Gauge className="size-3.5 shrink-0" />
+            )}
+            <span className={compressionFailed ? "shrink-0 text-negative" : "shrink-0"}>{label}</span>
+            <Progress
+              value={percent}
+              aria-label={`${label} ${percent}%`}
+              className="w-24"
+              indicatorClassName={`${indicatorClassName}${isCompressing ? " animate-pulse" : ""}`}
+            />
+            <span className="min-w-10 tabular-nums text-foreground">{percent.toFixed(1)}%</span>
+            {status.compacted_through_message_id ? (
+              <span className="hidden text-muted-foreground @md:inline">{t("chat.context.memoryActive")}</span>
+            ) : null}
+          </div>
+        </TooltipTrigger>
+        <TooltipContent side="top" sideOffset={6}>
+          <p className="tabular-nums">
+            {Math.round(status.estimated_tokens).toLocaleString()} / {status.compression_threshold_tokens.toLocaleString()} tokens · {t("chat.context.budget")}
+          </p>
+          <p>
+            {t("chat.context.windowUsage")} {status.used_percent.toFixed(1)}%
+            {` · ${t("chat.context.compressAt")} ${status.compression_threshold_percent}%`}
+            {status.token_source === "provider" ? ` · ${t("chat.context.measured")}` : ` · ${t("chat.context.estimated")}`}
+          </p>
+        </TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
+  )
+}
+
+export function ContextCompressionBanner({ notice }: { notice: ContextCompressionNotice }) {
+  const { t } = useShellI18n()
+  return (
+    <div
+      data-testid="chat-context-compressed"
+      className="animate-in fade-in slide-in-from-bottom-1 flex items-center gap-2 rounded-lg bg-accent px-3 py-2 text-xs text-accent-foreground duration-300"
+    >
+      <ArchiveRestore className="size-3.5 shrink-0 text-primary" />
+      <p className="min-w-0 flex-1">
+        {t("chat.context.compressed")} {notice.summarized_turn_count} {t("chat.context.turns")}
+        <span className="mx-2 text-muted-foreground">·</span>
+        <span className="tabular-nums">{notice.before_percent.toFixed(1)}% → {notice.after_percent.toFixed(1)}%</span>
+        {notice.duplicate_messages_omitted > 0 ? (
+          <span className="hidden @md:inline">
+            <span className="mx-2 text-muted-foreground">·</span>
+            {t("chat.context.deduplicated")} {notice.duplicate_messages_omitted}
+          </span>
+        ) : null}
+      </p>
+    </div>
   )
 }

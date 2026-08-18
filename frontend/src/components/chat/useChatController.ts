@@ -14,8 +14,10 @@ import {
   conversationsApi,
   messagesApi,
   type ChatEvent,
+  type ChatContextStatus,
   type ChatHandoff,
   type ContentPart,
+  type ContextCompressionNotice,
   type Conversation,
   type DataSource,
   type Message,
@@ -109,6 +111,8 @@ export type ChatControllerReturn = {
   streamingAgentName: string
   streaming: boolean
   runtimeStatus: RuntimeStatus | null
+  contextStatus: ChatContextStatus | null
+  contextCompressionNotice: ContextCompressionNotice | null
   conversationId: number | null
 
   // Pending actions
@@ -389,6 +393,8 @@ export function useChatController({
   const [runtimeAgentName, setRuntimeAgentName] = useState("")
   const [streaming, setStreaming] = useState(false)
   const [runtimeStatus, setRuntimeStatus] = useState<RuntimeStatus | null>(null)
+  const [contextStatus, setContextStatus] = useState<ChatContextStatus | null>(null)
+  const [contextCompressionNotice, setContextCompressionNotice] = useState<ContextCompressionNotice | null>(null)
   // streamingParts is the live content accumulator during streaming.
   // It is exposed to ChatThreadView so that the streaming message can be rendered
   // as a separate overlay that never appears in `messages`, avoiding the
@@ -561,10 +567,11 @@ export function useChatController({
     fetchConversationIdRef.current = cid
     staleConversationResetRef.current = null
     try {
-      const [messageData, eventData, pendingData] = await Promise.all([
+      const [messageData, eventData, pendingData, contextData] = await Promise.all([
         messagesApi.list(cid),
         chatApi.listEvents(cid).catch(() => []),
         chatApi.listPendingActions(cid).catch(() => []),
+        chatApi.getContextStatus(cid).catch(() => null),
       ])
       if (fetchConversationIdRef.current !== cid) return false
       if (options?.finalizeStream) setRuntimeStatus(null)
@@ -574,6 +581,7 @@ export function useChatController({
       }
       setMessages(hydrateMessagesWithToolEvents(messageData, eventData))
       setPendingActions(pendingData)
+      setContextStatus(contextData)
       setShowReuseSuggestion(shouldShowReuseSuggestionFromEvents(eventData))
       const eventSkills = extractLatestActiveSkills(eventData)
       if (eventSkills) {
@@ -597,6 +605,8 @@ export function useChatController({
         setInternalConversationId(null)
         setMessages([])
         setRuntimeStatus(null)
+        setContextStatus(null)
+        setContextCompressionNotice(null)
         setPendingActions([])
         setProcessingActionToken(null)
         setShowReuseSuggestion(false)
@@ -628,6 +638,7 @@ export function useChatController({
       setActiveSkills(managedConversation.active_skills ?? [])
       setShowReuseSuggestion(false)
       setRuntimeStatus(null)
+      setContextCompressionNotice(null)
       setPendingActions([])
       setProcessingActionToken(null)
       setSavingAgent(false)
@@ -636,6 +647,8 @@ export function useChatController({
     } else {
       setMessages([])
       setRuntimeStatus(null)
+      setContextStatus(null)
+      setContextCompressionNotice(null)
       setPendingActions([])
       setProcessingActionToken(null)
       setSavingAgent(false)
@@ -662,6 +675,8 @@ export function useChatController({
     builderSessionRef.current = null
     setInternalConversationId(null)
     setRuntimeStatus(null)
+    setContextStatus(null)
+    setContextCompressionNotice(null)
     setPendingActions([])
     setProcessingActionToken(null)
   }, [builderScope?.scopeObjectType, builderScope?.scopeObjectId, managedConversation])
@@ -677,6 +692,8 @@ export function useChatController({
     setInternalConversationId(null)
     setMessages([])
     setRuntimeStatus(null)
+    setContextStatus(null)
+    setContextCompressionNotice(null)
     setPendingActions([])
     setProcessingActionToken(null)
     setShowReuseSuggestion(false)
@@ -915,6 +932,7 @@ export function useChatController({
 
     setInput("")
     setStreaming(true)
+    setContextCompressionNotice(null)
     setRuntimeAgentName("")
     streamingPartsRef.current = []
     setStreamingParts([])
@@ -1084,7 +1102,23 @@ export function useChatController({
             setRuntimeStatus({ phase: "reflect", text: reason || "Progress checkpoint saved. You can resume this task." })
             return
           }
-          if (eventType === "task_state" || eventType === "context_compressed") return
+          if (eventType === "context_status") {
+            const data = raw?.data && typeof raw.data === "object"
+              ? (raw.data as Record<string, unknown>)
+              : (raw && typeof raw === "object" ? raw : null)
+            const parsed = parseContextStatus(data)
+            if (parsed) setContextStatus(parsed)
+            return
+          }
+          if (eventType === "context_compressed") {
+            const data = raw?.data && typeof raw.data === "object"
+              ? (raw.data as Record<string, unknown>)
+              : (raw && typeof raw === "object" ? raw : null)
+            const parsed = parseCompressionNotice(data)
+            if (parsed) setContextCompressionNotice(parsed)
+            return
+          }
+          if (eventType === "task_state") return
 
           // ── Core events (plan / act / observe / reflect / retry) ──
           if (
@@ -1457,6 +1491,8 @@ export function useChatController({
     streamingAgentName: runtimeAgentName,
     streaming,
     runtimeStatus,
+    contextStatus,
+    contextCompressionNotice,
     conversationId,
     pendingActions,
     currentBatchPendingActions,
@@ -1488,6 +1524,75 @@ export function useChatController({
 }
 
 // ── Internal helpers ───────────────────────────────────────────────────
+
+function finiteNumber(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null
+}
+
+function parseContextStatus(data: Record<string, unknown> | null): ChatContextStatus | null {
+  if (!data) return null
+  const conversationId = finiteNumber(data.conversation_id)
+  const contextWindowTokens = finiteNumber(data.context_window_tokens)
+  const estimatedTokens = finiteNumber(data.estimated_tokens)
+  const usedPercent = finiteNumber(data.used_percent)
+  const thresholdPercent = finiteNumber(data.compression_threshold_percent)
+  const thresholdTokens = finiteNumber(data.compression_threshold_tokens)
+  const remainingTokens = finiteNumber(data.remaining_tokens)
+  if (
+    conversationId === null || contextWindowTokens === null || estimatedTokens === null ||
+    usedPercent === null || thresholdPercent === null || thresholdTokens === null ||
+    remainingTokens === null
+  ) return null
+  const progressPercent = finiteNumber(data.compression_progress_percent)
+    ?? Math.min(100, Math.round((estimatedTokens / thresholdTokens) * 1000) / 10)
+  const state = data.state === "compressing" || data.state === "compression_failed"
+    ? data.state
+    : "ready"
+  return {
+    conversation_id: conversationId,
+    context_window_tokens: contextWindowTokens,
+    estimated_tokens: estimatedTokens,
+    used_percent: usedPercent,
+    compression_progress_percent: progressPercent,
+    compression_threshold_percent: thresholdPercent,
+    compression_threshold_tokens: thresholdTokens,
+    remaining_tokens: remainingTokens,
+    summary_tokens: finiteNumber(data.summary_tokens) ?? 0,
+    recent_message_count: finiteNumber(data.recent_message_count) ?? 0,
+    compacted_through_message_id: finiteNumber(data.compacted_through_message_id),
+    last_compacted_at: typeof data.last_compacted_at === "string" ? data.last_compacted_at : null,
+    token_source: typeof data.token_source === "string" ? data.token_source : "estimate",
+    state,
+  }
+}
+
+function parseCompressionNotice(data: Record<string, unknown> | null): ContextCompressionNotice | null {
+  if (!data || data.mode !== "persistent") return null
+  const required = [
+    "revision",
+    "summarized_message_count",
+    "summarized_turn_count",
+    "duplicate_messages_omitted",
+    "before_tokens",
+    "after_tokens",
+    "before_percent",
+    "after_percent",
+    "summary_tokens",
+  ] as const
+  if (required.some((key) => finiteNumber(data[key]) === null)) return null
+  return {
+    mode: "persistent",
+    revision: data.revision as number,
+    summarized_message_count: data.summarized_message_count as number,
+    summarized_turn_count: data.summarized_turn_count as number,
+    duplicate_messages_omitted: data.duplicate_messages_omitted as number,
+    before_tokens: data.before_tokens as number,
+    after_tokens: data.after_tokens as number,
+    before_percent: data.before_percent as number,
+    after_percent: data.after_percent as number,
+    summary_tokens: data.summary_tokens as number,
+  }
+}
 
 function extractApiErrorStatus(error: unknown): number | null {
   if (!error || typeof error !== "object") return null

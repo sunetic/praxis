@@ -450,6 +450,37 @@ export type Message = {
   created_at: string;
 }
 
+export type ChatContextStatus = {
+  conversation_id: number
+  context_window_tokens: number
+  estimated_tokens: number
+  used_percent: number
+  compression_progress_percent: number
+  compression_threshold_percent: number
+  compression_threshold_tokens: number
+  remaining_tokens: number
+  summary_tokens: number
+  recent_message_count: number
+  compacted_through_message_id?: number | null
+  last_compacted_at?: string | null
+  token_source: "estimate" | "provider" | string
+  state: "ready" | "compressing" | "compression_failed"
+}
+
+export type ContextCompressionNotice = {
+  mode: string
+  revision: number
+  summarized_message_count: number
+  summarized_turn_count: number
+  duplicate_messages_omitted: number
+  through_message_id?: number
+  before_tokens: number
+  after_tokens: number
+  before_percent: number
+  after_percent: number
+  summary_tokens: number
+}
+
 export type PageBuildOrchestration = {
   enabled?: boolean;
   mode?: string;
@@ -473,6 +504,7 @@ export type ChatStreamEvent = {
     | "task_state"
     | "checkpoint"
     | "context_compressed"
+    | "context_status"
     | "assistant"
     | "skill_delta"
     | "error"
@@ -983,6 +1015,8 @@ export const chatApi = {
     api.post<{content: string}>('/chat/complete', { content }).then(res => res.data),
   listEvents: (conversationId: number) =>
     api.get<ChatEvent[]>(`/chat/${conversationId}/events`).then(res => res.data),
+  getContextStatus: (conversationId: number) =>
+    api.get<ChatContextStatus>(`/chat/${conversationId}/context`).then(res => res.data),
   createHandoff: (data: ChatHandoffCreateInput) =>
     api.post<ChatHandoffCreateResponse>("/chat/handoffs", data).then((res) => res.data),
   getHandoff: (conversationId: number, handoffId: number) =>
@@ -1774,7 +1808,14 @@ export const sessionAnalysisApi = {
 export type PlatformSettings = {
   build_engine: "pi_lite" | "external_cli"
   external_cli_command: string
+  external_cli_pre_flags?: string
+  external_cli_post_flags?: string
   sql_allow_mutating?: boolean
+  ai_api_key?: string
+  ai_model?: string
+  ai_base_url?: string
+  context_window_tokens: number
+  context_compression_threshold_percent: number
   [key: string]: unknown
 }
 

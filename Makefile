@@ -1,4 +1,4 @@
-.PHONY: install dev test lint guard-semantic migrate rollback migrate-create clean seed testbed-init testbed-once testbed-start testbed-stop testbed-status testbed-case rules-health handbook-build handbook-serve docker-build docker-up docker-down
+.PHONY: install dev test lint guard-semantic migrate rollback migrate-create clean seed eval-context testbed-init testbed-once testbed-start testbed-stop testbed-status testbed-case rules-health handbook-build handbook-serve docker-build docker-up docker-down
 
 TESTBED_DATASOURCE_ID ?=
 TESTBED_PREFIX ?= tb_
@@ -41,6 +41,9 @@ dev:
 
 test:
 	uv run pytest
+
+eval-context:
+	uv run python -m evals.context_compaction.run
 
 lint:
 	uv run ruff check app/

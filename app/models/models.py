@@ -97,6 +97,9 @@ class Conversation(Base):
     build_sessions: Mapped[list["BuildSession"]] = relationship(
         back_populates="conversation", cascade="all, delete-orphan"
     )
+    context_snapshots: Mapped[list["ConversationContextSnapshot"]] = relationship(
+        back_populates="conversation", cascade="all, delete-orphan"
+    )
 
 
 class Message(Base):
@@ -114,6 +117,37 @@ class Message(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
     conversation: Mapped["Conversation"] = relationship(back_populates="messages")
+
+
+class ConversationContextSnapshot(Base):
+    """Versioned long-term memory produced by conversation compaction."""
+
+    __tablename__ = "conversation_context_snapshots"
+    __table_args__ = (
+        UniqueConstraint("conversation_id", "revision", name="uq_context_snapshot_revision"),
+        UniqueConstraint(
+            "conversation_id",
+            "through_message_id",
+            name="uq_context_snapshot_boundary",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    conversation_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("conversations.id"), nullable=False, index=True
+    )
+    revision: Mapped[int] = mapped_column(Integer, nullable=False)
+    through_message_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    summary: Mapped[str] = mapped_column(Text, nullable=False)
+    source_message_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    source_token_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    summary_token_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    model_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    prompt_version: Mapped[str] = mapped_column(String(50), nullable=False, default="v1")
+    details: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+    conversation: Mapped["Conversation"] = relationship(back_populates="context_snapshots")
 
 
 class ChatEvent(Base):

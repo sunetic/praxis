@@ -1553,6 +1553,12 @@ async def test_context_compression_triggered() -> None:
     assert compressor.compressed
     compressed_events = [event for event in events if event["type"] == "context_compressed"]
     assert len(compressed_events) == 1
+    context_states = [
+        event["data"]["state"]
+        for event in events
+        if event["type"] == "context_status" and event["data"].get("state")
+    ]
+    assert context_states[:2] == ["compressing", "ready"]
 
 
 @pytest.mark.anyio

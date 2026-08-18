@@ -1,7 +1,7 @@
 import re
 from datetime import datetime
 from enum import Enum
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -1073,3 +1073,76 @@ class ChatStreamRequest(BaseModel):
 
 class ChatCompleteRequest(BaseModel):
     content: str = ""
+
+
+class ChatContextStatusResponse(BaseModel):
+    conversation_id: int
+    context_window_tokens: int
+    estimated_tokens: int
+    used_percent: float
+    compression_progress_percent: float = 0
+    compression_threshold_percent: int
+    compression_threshold_tokens: int
+    remaining_tokens: int
+    summary_tokens: int = 0
+    recent_message_count: int = 0
+    compacted_through_message_id: int | None = None
+    last_compacted_at: datetime | None = None
+    token_source: str = "estimate"
+    state: Literal["ready", "compressing", "compression_failed"] = "ready"
+
+
+# ---------------------------------------------------------------------------
+# Platform Settings
+# ---------------------------------------------------------------------------
+
+
+class PlatformSettingsUpdateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    ai_api_key: str | None = None
+    ai_model: str | None = None
+    ai_base_url: str | None = None
+    build_engine: str | None = None
+    external_cli_command: str | None = None
+    external_cli_pre_flags: str | None = None
+    external_cli_post_flags: str | None = None
+    sql_allow_mutating: bool | None = None
+    context_window_tokens: int | None = Field(default=None, ge=8_192, le=2_000_000)
+    context_compression_threshold_percent: int | None = Field(default=None, ge=50, le=95)
+
+    @field_validator("build_engine")
+    @classmethod
+    def validate_build_engine(cls, value: str | None) -> str | None:
+        if value is None:
+            return value
+        normalized = value.strip().lower()
+        if normalized not in {"pi_lite", "external_cli"}:
+            raise ValueError("build_engine must be one of: pi_lite, external_cli")
+        return normalized
+
+
+class PlatformSettingsResponse(BaseModel):
+    build_engine: str = "pi_lite"
+    external_cli_command: str = ""
+    external_cli_pre_flags: str = ""
+    external_cli_post_flags: str = ""
+    sql_allow_mutating: bool = False
+    ai_api_key: str | None = None
+    ai_model: str | None = None
+    ai_base_url: str | None = None
+    context_window_tokens: int = 128_000
+    context_compression_threshold_percent: int = 75
+    praxis_edition: str | None = None
+
+
+class SettingsEngineTestRequest(BaseModel):
+    command: str = ""
+
+
+class SettingsEngineTestResponse(BaseModel):
+    ok: bool
+    message: str
+    suggested_command: str | None = None
+    flags_added: list[str] = Field(default_factory=list)
+    env_issues: list[str] = Field(default_factory=list)

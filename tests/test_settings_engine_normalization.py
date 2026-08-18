@@ -43,6 +43,33 @@ def test_patch_settings_normalizes_external_cli_command(tmp_path: Path, monkeypa
     monkeypatch.setattr("app.main.configure_logging", lambda debug: None)
 
     with TestClient(main_module.app) as client:
+        defaults = client.get("/api/v1/settings")
+        assert defaults.status_code == 200, defaults.text
+        assert defaults.json()["context_window_tokens"] == 128_000
+        assert defaults.json()["context_compression_threshold_percent"] == 75
+
+        context_update = client.patch(
+            "/api/v1/settings",
+            json={
+                "context_window_tokens": 131_072,
+                "context_compression_threshold_percent": 82,
+            },
+        )
+        assert context_update.status_code == 200, context_update.text
+        assert context_update.json()["context_window_tokens"] == 131_072
+        assert context_update.json()["context_compression_threshold_percent"] == 82
+
+        below_minimum = client.patch(
+            "/api/v1/settings",
+            json={"context_compression_threshold_percent": 49},
+        )
+        assert below_minimum.status_code == 422
+        above_maximum = client.patch(
+            "/api/v1/settings",
+            json={"context_compression_threshold_percent": 96},
+        )
+        assert above_maximum.status_code == 422
+
         seed = client.patch(
             "/api/v1/settings",
             json={

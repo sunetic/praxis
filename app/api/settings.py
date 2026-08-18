@@ -10,6 +10,12 @@ from app.core.config import get_settings
 from app.core.logging import fmt_kv, get_logger
 from app.db.database import get_db
 from app.models.models import PlatformSetting
+from app.schemas.schemas import (
+    PlatformSettingsResponse,
+    PlatformSettingsUpdateRequest,
+    SettingsEngineTestRequest,
+    SettingsEngineTestResponse,
+)
 
 router = APIRouter(prefix="/settings", tags=["Settings"])
 logger = get_logger("api.settings")
@@ -20,6 +26,8 @@ _DEFAULTS: dict[str, Any] = {
     "external_cli_pre_flags": "",
     "external_cli_post_flags": "",
     "sql_allow_mutating": False,
+    "context_window_tokens": 128_000,
+    "context_compression_threshold_percent": 75,
 }
 
 
@@ -38,20 +46,21 @@ def get_setting(db: Session, key: str) -> Any:
     return _DEFAULTS.get(key)
 
 
-@router.get("")
-def list_settings(db: Session = Depends(get_db)) -> dict[str, Any]:
+@router.get("", response_model=PlatformSettingsResponse)
+def list_settings(db: Session = Depends(get_db)) -> PlatformSettingsResponse:
     result = _get_all(db)
     result["praxis_edition"] = get_settings().praxis_edition
     logger.info("list_settings %s", fmt_kv(count=len(result)))
-    return result
+    return PlatformSettingsResponse.model_validate(result)
 
 
-@router.patch("")
+@router.patch("", response_model=PlatformSettingsResponse)
 def patch_settings(
-    payload: dict[str, Any],
+    payload: PlatformSettingsUpdateRequest,
     db: Session = Depends(get_db),
-) -> dict[str, Any]:
-    for key, value in payload.items():
+) -> PlatformSettingsResponse:
+    update_data = payload.model_dump(exclude_none=True)
+    for key, value in update_data.items():
         row = db.query(PlatformSetting).filter(PlatformSetting.key == key).first()
         if row is not None:
             row.value = value
@@ -60,22 +69,23 @@ def patch_settings(
             db.add(PlatformSetting(key=key, value=value))
     db.commit()
     result = _get_all(db)
-    logger.info("patch_settings %s", fmt_kv(keys=list(payload.keys())))
-    return result
+    result["praxis_edition"] = get_settings().praxis_edition
+    logger.info("patch_settings %s", fmt_kv(keys=list(update_data.keys())))
+    return PlatformSettingsResponse.model_validate(result)
 
 
-@router.post("/test-engine")
+@router.post("/test-engine", response_model=SettingsEngineTestResponse)
 def test_engine(
-    payload: dict[str, Any],
+    payload: SettingsEngineTestRequest,
     db: Session = Depends(get_db),
-) -> dict[str, Any]:
+) -> SettingsEngineTestResponse:
     """Probe the configured external CLI command via EngineProbeAgent."""
-    command = str(payload.get("command") or "").strip()
+    command = payload.command.strip()
     if not command:
         stored = get_setting(db, "external_cli_command")
         command = str(stored or "").strip()
     if not command:
-        return {"ok": False, "message": "No CLI command configured"}
+        return SettingsEngineTestResponse(ok=False, message="No CLI command configured")
 
     from app.services.engine_probe_agent import get_engine_probe_agent
 
@@ -86,10 +96,10 @@ def test_engine(
         fmt_kv(command=command, ok=result.ok, flags=result.flags_added),
     )
 
-    return {
-        "ok": result.ok,
-        "message": result.message,
-        "suggested_command": result.suggested_command,
-        "flags_added": result.flags_added,
-        "env_issues": result.env_issues,
-    }
+    return SettingsEngineTestResponse(
+        ok=result.ok,
+        message=result.message,
+        suggested_command=result.suggested_command,
+        flags_added=result.flags_added,
+        env_issues=result.env_issues,
+    )

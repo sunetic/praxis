@@ -10,37 +10,18 @@ from __future__ import annotations
 from typing import Any
 
 from app.core.logging import get_logger
+from app.services.agent.context_budget import (
+    estimate_messages_tokens,
+    estimate_text_tokens,
+)
 from app.services.platform.prompt_loader import PromptLoader
 
 logger = get_logger("agent.context_compressor")
 
 
 def estimate_tokens(text: str) -> int:
-    """Rough token estimate: 1 token per ~4 characters."""
-    return max(1, len(text) // 4)
-
-
-def estimate_messages_tokens(messages: list[dict[str, Any]]) -> int:
-    """Estimate total tokens across a message list."""
-    total = 0
-    for msg in messages:
-        content = msg.get("content") or ""
-        if isinstance(content, str):
-            total += estimate_tokens(content)
-        elif isinstance(content, list):
-            for block in content:
-                if isinstance(block, dict):
-                    total += estimate_tokens(str(block.get("text") or block.get("content") or ""))
-                elif isinstance(block, str):
-                    total += estimate_tokens(block)
-        # tool_calls contribute tokens too
-        tool_calls = msg.get("tool_calls")
-        if isinstance(tool_calls, list):
-            for tc in tool_calls:
-                fn = tc.get("function") or {}
-                total += estimate_tokens(str(fn.get("name") or ""))
-                total += estimate_tokens(str(fn.get("arguments") or ""))
-    return total
+    """Compatibility wrapper around the shared conservative estimator."""
+    return max(1, estimate_text_tokens(text))
 
 
 class ContextCompressor:
@@ -96,6 +77,10 @@ class ContextCompressor:
                 break
             tail_tokens += msg_tokens
             tail_start_idx = i
+        if rest and tail_start_idx == len(rest):
+            # A single large recent message may exceed the tail budget. Keep it
+            # intact instead of compacting away the user's latest turn.
+            tail_start_idx = len(rest) - 1
 
         middle = rest[:tail_start_idx]
         tail = rest[tail_start_idx:]

@@ -194,7 +194,8 @@ export function normalizeRuntimeStreamEvent(raw: unknown): RuntimeNormalizedEven
     type === "verification" ||
     type === "task_state" ||
     type === "checkpoint" ||
-    type === "context_compressed"
+    type === "context_compressed" ||
+    type === "context_status"
   ) {
     const eventPayload = Object.keys(data).length > 0 ? data : payload
     return {

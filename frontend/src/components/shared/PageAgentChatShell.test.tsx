@@ -13,6 +13,7 @@ const { toastError, conversationsApi, chatApi, messagesApi, consumeRuntimeSse } 
   },
   chatApi: {
     stream: vi.fn(),
+    getContextStatus: vi.fn(),
     listPendingActions: vi.fn(),
     listEvents: vi.fn(),
     confirmPendingAction: vi.fn(),
@@ -49,6 +50,7 @@ describe("PageAgentChatShell", () => {
     chatApi.stream.mockResolvedValue({ ok: true, body: {} as ReadableStream<Uint8Array> })
     chatApi.listPendingActions.mockResolvedValue([])
     chatApi.listEvents.mockResolvedValue([])
+    chatApi.getContextStatus.mockResolvedValue(null)
     chatApi.confirmPendingAction.mockResolvedValue({ success: true, token: "token-1", status: "confirmed", result: {} })
     chatApi.cancelPendingAction.mockResolvedValue({ success: true, token: "token-1", status: "cancelled" })
     messagesApi.create.mockImplementation(async (params: { conversation_id: number; role: string; content: string }) => ({

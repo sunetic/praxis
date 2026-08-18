@@ -135,12 +135,16 @@ class ChatService:
         scope_context: dict[str, Any] | None = None,
         use_state_machine: bool | None = None,
         agent_name: str = "",
+        context_window_tokens: int | None = None,
+        compression_threshold_tokens: int | None = None,
         is_cancelled: Callable[[], bool] | None = None,
         task_state: dict[str, Any] | None = None,
     ) -> AsyncGenerator[dict[str, Any], None]:
         del use_state_machine
         chat_messages = list(messages)
-        if system_prompt and not any(m.get("role") == "system" for m in chat_messages):
+        if system_prompt and not any(
+            m.get("role") == "system" and m.get("content") == system_prompt for m in chat_messages
+        ):
             chat_messages.insert(0, {"role": "system", "content": system_prompt})
         self._active_scope_context = scope_context or {}
         self._active_conversation_id = conversation_id
@@ -192,6 +196,12 @@ class ChatService:
                 transient_backoff_base_seconds=self.transient_backoff_base_seconds,
                 transient_backoff_max_seconds=self.transient_backoff_max_seconds,
                 max_elapsed_seconds=self.max_elapsed_seconds,
+                context_window_tokens=(context_window_tokens or 128_000),
+                compression_threshold_tokens=(compression_threshold_tokens or 96_000),
+                compression_tail_budget_tokens=max(
+                    4_000,
+                    int((compression_threshold_tokens or 96_000) * 0.20),
+                ),
             ),
             llm=self.llm,
             tool_executor=_ChatToolExecutor(

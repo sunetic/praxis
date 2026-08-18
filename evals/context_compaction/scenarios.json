@@ -1,0 +1,86 @@
+{
+  "version": 1,
+  "scenarios": [
+    {
+      "id": "constraints_vs_digressions",
+      "title": "关键约束与明显跑题内容",
+      "turns": [
+        ["目标是诊断 orders 查询延迟，必须保持只读。", "收到，我会只做只读诊断并保留证据。"],
+        ["生产 schema 是 sales_prod，核心表是 orders_v3。", "已记录 sales_prod.orders_v3。"],
+        ["硬性限制：禁止 UPDATE、DELETE、ALTER；延迟目标必须低于 500ms。", "后续方案不会包含写操作，验收阈值为 500ms。"],
+        ["午饭我想吃牛肉面，周末天气似乎也不错。", "这与数据库诊断无关，不应影响当前任务。"],
+        ["重复状态：还在调查，暂时没有新证据。", "重复状态：还在调查，暂时没有新证据。"],
+        ["重复状态：还在调查，暂时没有新证据。", "重复状态：还在调查，暂时没有新证据。"],
+        ["EXPLAIN 显示 orders_v3 使用 idx_orders_tenant_created。", "确认访问类型为 range，未发生全表扫描。"],
+        ["租户标识是 tenant_2048，SQL ID 是 sql_a91f。", "已关联 tenant_2048 与 sql_a91f。"],
+        ["先验证统计信息新鲜度，再考虑索引建议。", "下一步保持只读并检查统计信息。"],
+        ["无关插曲：紫色自行车比绿色自行车好看。", "该偏好与诊断无关。"],
+        ["最近一次统计信息更新时间是 2026-08-12 09:30。", "该时间将作为统计信息证据。"],
+        ["继续分析执行计划。", "我会基于已保存的约束继续。"],
+        ["请给出下一步只读检查。", "将检查索引选择性与统计信息。"],
+        ["保持结论可审计。", "所有结论都会关联证据。"]
+      ],
+      "required_memory_terms": ["sales_prod", "orders_v3", "500ms", "tenant_2048", "sql_a91f"],
+      "forbidden_memory_terms": ["牛肉面", "周末天气", "紫色自行车"],
+      "questions": [
+        {"prompt": "生产 schema 和核心表分别是什么？", "expected_groups": [["sales_prod"], ["orders_v3"]], "forbidden": ["牛肉面"]},
+        {"prompt": "本次诊断的写操作边界和延迟验收阈值是什么？", "expected_groups": [["禁止", "只读", "不得"], ["500ms", "500 ms"]], "forbidden": ["自行车"]},
+        {"prompt": "租户标识与 SQL ID 是什么？", "expected_groups": [["tenant_2048"], ["sql_a91f"]], "forbidden": ["天气"]}
+      ]
+    },
+    {
+      "id": "latest_correction_wins",
+      "title": "用户纠正覆盖过期事实",
+      "turns": [
+        ["目标是定位报表查询的连接错误。", "我会核对环境、端口和错误证据。"],
+        ["最初记录的环境是 production，主机 db-old.internal，端口 3306。", "先按这个连接信息调查。"],
+        ["纠正：目标不是 production，而是 staging。", "已将目标环境更新为 staging。"],
+        ["再次纠正：主机应为 db-stage.internal，端口是 3307；旧主机不要再使用。", "当前有效连接为 db-stage.internal:3307。"],
+        ["错误码是 AUTH_1045，用户是 report_reader。", "已记录 AUTH_1045 与 report_reader。"],
+        ["昨晚球赛进入了加时赛，比分是 3:2。", "球赛内容与连接诊断无关。"],
+        ["安全限制：不要输出密码，也不要重置凭据。", "只验证配置，不展示或修改凭据。"],
+        ["已验证 DNS 将 db-stage.internal 解析到 10.20.30.40。", "DNS 证据已记录。"],
+        ["旧的 db-old.internal 已经下线。", "后续不会再建议旧主机。"],
+        ["当前问题仍是认证失败。", "下一步检查用户名授权范围。"],
+        ["请保留最后一次纠正。", "会以最新明确纠正为准。"],
+        ["下一步是什么？", "核对 staging 上 report_reader 的 host grant。"],
+        ["不要进行变更。", "继续保持只读验证。"],
+        ["给出简洁结论。", "会区分已验证事实与下一步。"]
+      ],
+      "required_memory_terms": ["staging", "db-stage.internal", "3307", "AUTH_1045", "report_reader"],
+      "forbidden_memory_terms": ["球赛", "比分是 3:2"],
+      "questions": [
+        {"prompt": "当前有效的目标环境、主机和端口是什么？", "expected_groups": [["staging"], ["db-stage.internal"], ["3307"]], "forbidden": ["db-old.internal", "production"]},
+        {"prompt": "认证错误码和用户名是什么？", "expected_groups": [["AUTH_1045"], ["report_reader"]], "forbidden": ["3:2"]},
+        {"prompt": "有哪些凭据安全限制？", "expected_groups": [["不要输出密码", "不展示密码", "不能输出密码"], ["不要重置", "不重置", "不能重置"]], "forbidden": ["球赛"]}
+      ]
+    },
+    {
+      "id": "failed_attempts_and_artifacts",
+      "title": "失败尝试、工具证据与精确对象",
+      "turns": [
+        ["目标是修复库存核对 SQL，但不得修改线上数据。", "我会保留失败尝试并寻找只读替代。"],
+        ["第一次查询 SELECT sku_id FROM inventory_snapshot 失败。", "需要记录具体失败原因。"],
+        ["工具返回 ERROR 1146: table warehouse.inventory_snapshot doesn't exist。", "失败表名和错误码已记录。"],
+        ["发现实际表是 warehouse.inventory_snapshots，注意末尾有 s。", "后续使用 warehouse.inventory_snapshots。"],
+        ["第二次查询成功，返回 1842 行，校验批次 batch_20260817。", "已验证 1842 行与 batch_20260817。"],
+        ["咖啡豆产地是埃塞俄比亚，烘焙度是浅烘。", "咖啡信息与 SQL 修复无关。"],
+        ["结果文件写入 artifacts/inventory-audit.json。", "产物路径已记录。"],
+        ["文件 SHA256 前缀是 9f3a7c21。", "哈希证据已关联到产物。"],
+        ["不要忘记失败原因，否则后续会重复踩坑。", "会保留错误 1146 和错误表名。"],
+        ["下一步只需要比较缺失 SKU。", "将从成功结果中做只读差集。"],
+        ["不要执行 INSERT。", "不会进行写操作。"],
+        ["继续。", "准备给出核对结论。"],
+        ["产物必须可追溯。", "会同时提供路径和哈希。"],
+        ["总结当前证据。", "将区分失败查询、纠正和成功结果。"]
+      ],
+      "required_memory_terms": ["ERROR 1146", "inventory_snapshots", "1842", "batch_20260817", "artifacts/inventory-audit.json", "9f3a7c21"],
+      "forbidden_memory_terms": ["埃塞俄比亚", "浅烘"],
+      "questions": [
+        {"prompt": "第一次查询为什么失败，纠正后的表名是什么？", "expected_groups": [["1146"], ["inventory_snapshot"], ["inventory_snapshots"]], "forbidden": ["咖啡"]},
+        {"prompt": "成功查询返回多少行，属于哪个校验批次？", "expected_groups": [["1842"], ["batch_20260817"]], "forbidden": ["浅烘"]},
+        {"prompt": "审计产物路径和 SHA256 前缀是什么？", "expected_groups": [["artifacts/inventory-audit.json"], ["9f3a7c21"]], "forbidden": ["埃塞俄比亚"]}
+      ]
+    }
+  ]
+}

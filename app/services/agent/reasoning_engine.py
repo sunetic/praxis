@@ -81,6 +81,7 @@ class EngineConfig:
     reasoning_config: dict[str, Any] | None = None
     compression_threshold_tokens: int = 60_000
     compression_tail_budget_tokens: int = 20_000
+    context_window_tokens: int = 128_000
     failure_episode_enabled: bool = True
     task_contract_enabled: bool = True
     completion_verifier_enabled: bool = True
@@ -187,7 +188,12 @@ class ReasoningEngine:
             llm_client=self.llm,
         )
         self._tool_plan_extractor = tool_plan_extractor
-        self._run_usage: dict[str, int] = {"llm_calls": 0, "input_tokens": 0, "output_tokens": 0}
+        self._run_usage: dict[str, int] = {
+            "llm_calls": 0,
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "max_input_tokens": 0,
+        }
 
     async def run(
         self,
@@ -199,7 +205,9 @@ class ReasoningEngine:
         task_state: dict[str, Any] | None = None,
     ) -> AsyncGenerator[dict[str, Any], None]:
         chat_messages = list(messages)
-        if system_prompt and not any(m.get("role") == "system" for m in chat_messages):
+        if system_prompt and not any(
+            m.get("role") == "system" and m.get("content") == system_prompt for m in chat_messages
+        ):
             chat_messages.insert(0, {"role": "system", "content": system_prompt})
         verification_policies = _extract_completion_verification_policies(system_prompt)
 
@@ -280,7 +288,12 @@ class ReasoningEngine:
         final_status = "running"
         started_at = time.monotonic()
         previous_elapsed_ms = journal.metrics.elapsed_ms
-        self._run_usage = {"llm_calls": 0, "input_tokens": 0, "output_tokens": 0}
+        self._run_usage = {
+            "llm_calls": 0,
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "max_input_tokens": 0,
+        }
 
         logger.info(
             "reasoning_engine_start %s",
@@ -343,15 +356,85 @@ class ReasoningEngine:
             journal.record_iteration(iteration)
 
             if self.compressor.should_compress(chat_messages):
+                before_compression_tokens = estimate_messages_tokens(chat_messages)
+                yield _event(
+                    type_="context_status",
+                    phase=phase,
+                    data={
+                        "context_window_tokens": cfg.context_window_tokens,
+                        "estimated_tokens": before_compression_tokens,
+                        "used_percent": round(
+                            min(
+                                100.0,
+                                before_compression_tokens / cfg.context_window_tokens * 100,
+                            ),
+                            1,
+                        ),
+                        "compression_progress_percent": 100.0,
+                        "compression_threshold_tokens": cfg.compression_threshold_tokens,
+                        "compression_threshold_percent": round(
+                            cfg.compression_threshold_tokens / cfg.context_window_tokens * 100
+                        ),
+                        "remaining_tokens": max(
+                            0,
+                            cfg.context_window_tokens - before_compression_tokens,
+                        ),
+                        "token_source": "estimate",
+                        "state": "compressing",
+                    },
+                    meta={
+                        "iteration": iteration,
+                        "run_id": run_id,
+                        "task_run_id": journal.task_run_id,
+                    },
+                )
                 chat_messages = await self.compressor.compress(chat_messages)
                 chat_messages.append({"role": "system", "content": journal.context_block()})
+                after_compression_tokens = estimate_messages_tokens(chat_messages)
                 yield _event(
                     type_="context_compressed",
                     phase=phase,
                     data={
                         "message_count": len(chat_messages),
-                        "estimated_tokens": estimate_messages_tokens(chat_messages),
+                        "estimated_tokens": after_compression_tokens,
                         "task_state_preserved": True,
+                    },
+                    meta={
+                        "iteration": iteration,
+                        "run_id": run_id,
+                        "task_run_id": journal.task_run_id,
+                    },
+                )
+                yield _event(
+                    type_="context_status",
+                    phase=phase,
+                    data={
+                        "context_window_tokens": cfg.context_window_tokens,
+                        "estimated_tokens": after_compression_tokens,
+                        "used_percent": round(
+                            min(
+                                100.0,
+                                after_compression_tokens / cfg.context_window_tokens * 100,
+                            ),
+                            1,
+                        ),
+                        "compression_progress_percent": round(
+                            min(
+                                100.0,
+                                after_compression_tokens / cfg.compression_threshold_tokens * 100,
+                            ),
+                            1,
+                        ),
+                        "compression_threshold_tokens": cfg.compression_threshold_tokens,
+                        "compression_threshold_percent": round(
+                            cfg.compression_threshold_tokens / cfg.context_window_tokens * 100
+                        ),
+                        "remaining_tokens": max(
+                            0,
+                            cfg.context_window_tokens - after_compression_tokens,
+                        ),
+                        "token_source": "estimate",
+                        "state": "ready",
                     },
                     meta={
                         "iteration": iteration,
@@ -1138,6 +1221,41 @@ class ReasoningEngine:
         journal.metrics.output_tokens += self._run_usage["output_tokens"]
         journal.metrics.elapsed_ms = previous_elapsed_ms + (time.monotonic() - started_at) * 1000
 
+        max_input_tokens = self._run_usage["max_input_tokens"]
+        if max_input_tokens > 0:
+            used_percent = round(
+                min(100.0, max_input_tokens / cfg.context_window_tokens * 100),
+                1,
+            )
+            yield _event(
+                type_="context_status",
+                phase=phase,
+                data={
+                    "context_window_tokens": cfg.context_window_tokens,
+                    "estimated_tokens": max_input_tokens,
+                    "used_percent": used_percent,
+                    "compression_progress_percent": round(
+                        min(
+                            100.0,
+                            max_input_tokens / cfg.compression_threshold_tokens * 100,
+                        ),
+                        1,
+                    ),
+                    "compression_threshold_tokens": cfg.compression_threshold_tokens,
+                    "compression_threshold_percent": round(
+                        cfg.compression_threshold_tokens / cfg.context_window_tokens * 100
+                    ),
+                    "remaining_tokens": max(0, cfg.context_window_tokens - max_input_tokens),
+                    "token_source": "provider",
+                    "state": "ready",
+                },
+                meta={
+                    "iteration": iteration,
+                    "run_id": run_id,
+                    "task_run_id": journal.task_run_id,
+                },
+            )
+
         if cfg.persistent_journal_enabled:
             yield _task_state_event(journal, phase, iteration, run_id)
 
@@ -1343,9 +1461,9 @@ class ReasoningEngine:
 
     def _record_chunk_usage(self, chunk: dict[str, Any]) -> None:
         usage = chunk.get("usage") if isinstance(chunk.get("usage"), dict) else {}
-        self._run_usage["input_tokens"] += int(
-            usage.get("prompt_tokens") or usage.get("input_tokens") or 0
-        )
+        input_tokens = int(usage.get("prompt_tokens") or usage.get("input_tokens") or 0)
+        self._run_usage["input_tokens"] += input_tokens
+        self._run_usage["max_input_tokens"] = max(self._run_usage["max_input_tokens"], input_tokens)
         self._run_usage["output_tokens"] += int(
             usage.get("completion_tokens") or usage.get("output_tokens") or 0
         )

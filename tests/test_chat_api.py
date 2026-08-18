@@ -1,3 +1,4 @@
+import asyncio
 import json
 import os
 from datetime import datetime
@@ -624,6 +625,72 @@ def test_get_messages_returns_empty_for_existing_conversation_without_messages(
         engine.dispose()
 
 
+def test_get_chat_context_status_uses_configured_budget(tmp_path: Path) -> None:
+    factory, engine = _build_session_factory(tmp_path)
+    db = factory()
+    try:
+        conversation = models.Conversation(title="context-status")
+        db.add_all(
+            [
+                conversation,
+                models.PlatformSetting(key="context_window_tokens", value=64_000),
+                models.PlatformSetting(
+                    key="context_compression_threshold_percent",
+                    value=80,
+                ),
+            ]
+        )
+        db.commit()
+        db.refresh(conversation)
+        db.add(
+            models.Message(
+                conversation_id=conversation.id,
+                role="user",
+                content="解释这条 SQL 的执行计划",
+            )
+        )
+        db.add(
+            models.ChatEvent(
+                conversation_id=conversation.id,
+                event_type="context_status",
+                payload={
+                    "conversation_id": conversation.id,
+                    "context_window_tokens": 64_000,
+                    "compression_threshold_percent": 50,
+                    "compression_threshold_tokens": 32_000,
+                    "estimated_tokens": 1,
+                    "used_percent": 0,
+                    "remaining_tokens": 63_999,
+                },
+            )
+        )
+        db.commit()
+
+        status = chat_api.get_chat_context_status(conversation.id, db)
+
+        assert status.conversation_id == conversation.id
+        assert status.context_window_tokens == 64_000
+        assert status.compression_threshold_percent == 80
+        assert status.compression_threshold_tokens == 51_200
+        assert status.estimated_tokens > 0
+        assert status.token_source == "estimate"
+    finally:
+        db.close()
+        engine.dispose()
+
+
+def test_get_chat_context_status_returns_404_for_missing_conversation(tmp_path: Path) -> None:
+    factory, engine = _build_session_factory(tmp_path)
+    db = factory()
+    try:
+        with pytest.raises(HTTPException) as excinfo:
+            chat_api.get_chat_context_status(999, db)
+        assert excinfo.value.status_code == 404
+    finally:
+        db.close()
+        engine.dispose()
+
+
 def _create_conversation_with_scope(db: Session) -> tuple[models.Conversation, models.BuildSession]:
     now = datetime(2026, 3, 14, 12, 0, 0)
     conversation = models.Conversation(title="builder-conv")
@@ -694,6 +761,143 @@ async def _collect_stream_payloads(response: Any) -> list[dict]:
         if line.startswith("g:"):
             continue
     return payloads
+
+
+@pytest.mark.anyio
+async def test_chat_stream_emits_compressing_status_before_waiting_for_compaction(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    async def _fake_select_dynamic_skills(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        del args, kwargs
+        return {
+            "active_skills": [],
+            "added": [],
+            "removed": [],
+            "reason": "test",
+            "selector_ok": True,
+        }
+
+    async def _noop_save(items: list[Any]) -> None:
+        del items
+
+    prepare_started = asyncio.Event()
+    allow_prepare = asyncio.Event()
+    compressing_status = {
+        "conversation_id": 1,
+        "context_window_tokens": 32_768,
+        "estimated_tokens": 24_576,
+        "used_percent": 75.0,
+        "compression_progress_percent": 100.0,
+        "compression_threshold_percent": 75,
+        "compression_threshold_tokens": 24_576,
+        "remaining_tokens": 8_192,
+        "summary_tokens": 0,
+        "recent_message_count": 20,
+        "compacted_through_message_id": None,
+        "last_compacted_at": None,
+        "token_source": "estimate",
+        "state": "compressing",
+    }
+    ready_status = {
+        **compressing_status,
+        "estimated_tokens": 8_000,
+        "used_percent": 24.4,
+        "compression_progress_percent": 32.6,
+        "remaining_tokens": 24_768,
+        "summary_tokens": 1_000,
+        "compacted_through_message_id": 14,
+        "state": "ready",
+    }
+
+    class _ControlledContextManager:
+        def preview(self, *args: Any, **kwargs: Any) -> tuple[dict[str, Any], bool]:
+            del args, kwargs
+            return compressing_status, True
+
+        async def prepare(self, *args: Any, **kwargs: Any) -> Any:
+            del args, kwargs
+            prepare_started.set()
+            await allow_prepare.wait()
+            return SimpleNamespace(
+                messages=[{"role": "user", "content": "long request"}],
+                status=ready_status,
+                compression={
+                    "mode": "persistent",
+                    "revision": 1,
+                    "summarized_message_count": 14,
+                    "summarized_turn_count": 7,
+                    "duplicate_messages_omitted": 1,
+                    "through_message_id": 14,
+                    "before_tokens": 24_576,
+                    "before_percent": 100.0,
+                    "after_tokens": 8_000,
+                    "after_percent": 32.6,
+                    "summary_tokens": 1_000,
+                },
+            )
+
+    fake_service = _FakeStreamingChatService(
+        events=[{"type": "done", "phase": "done", "data": {"text_emitted": False}}]
+    )
+    monkeypatch.setattr(chat_api, "ConversationContextManager", _ControlledContextManager)
+    monkeypatch.setattr(chat_api, "_select_dynamic_skills", _fake_select_dynamic_skills)
+    monkeypatch.setattr(chat_api, "_save_messages_to_db", _noop_save)
+    monkeypatch.setattr(chat_api, "_save_chat_events_to_db", _noop_save)
+    monkeypatch.setattr(chat_api, "get_chat_service", lambda: fake_service)
+
+    factory, engine = _build_session_factory(tmp_path)
+    db = factory()
+    try:
+        conversation = models.Conversation(title="stream-compaction-progress")
+        db.add(conversation)
+        db.commit()
+        db.refresh(conversation)
+        compressing_status["conversation_id"] = conversation.id
+        ready_status["conversation_id"] = conversation.id
+
+        response = await chat_api.chat_stream(
+            conversation_id=conversation.id,
+            message=schemas.ChatStreamRequest(content="long request"),
+            db=db,
+        )
+        iterator = response.body_iterator.__aiter__()
+        first_chunk = await anext(iterator)
+        first_line = first_chunk.decode() if isinstance(first_chunk, bytes) else str(first_chunk)
+        first_payload = json.loads(first_line.removeprefix("2:"))[0]
+        assert first_payload["type"] == "context_status"
+        first_data = first_payload.get("data", first_payload)
+        assert first_data["state"] == "compressing"
+        assert first_data["compression_progress_percent"] == 100
+
+        next_chunk = asyncio.create_task(anext(iterator))
+        await prepare_started.wait()
+        assert next_chunk.done() is False
+        allow_prepare.set()
+        compressed_line = await next_chunk
+        compressed_text = (
+            compressed_line.decode() if isinstance(compressed_line, bytes) else str(compressed_line)
+        )
+        compressed_payload = json.loads(compressed_text.removeprefix("2:"))[0]
+        assert compressed_payload["type"] == "context_compressed"
+
+        remaining_chunks = [chunk async for chunk in iterator]
+        remaining_text = "".join(
+            chunk.decode() if isinstance(chunk, bytes) else str(chunk) for chunk in remaining_chunks
+        )
+        remaining_payloads = [
+            item
+            for line in remaining_text.splitlines()
+            if line.startswith("2:")
+            for item in json.loads(line.removeprefix("2:"))
+        ]
+        assert any(
+            item.get("type") == "context_status" and item.get("state") == "ready"
+            for item in remaining_payloads
+        )
+    finally:
+        db.close()
+        engine.dispose()
 
 
 def test_list_chat_events_orders_by_turn_and_part_sequence(tmp_path: Path) -> None:
@@ -1673,6 +1877,7 @@ async def test_chat_stream_persists_assistant_segments_around_tool_events(
         assert any("由于当前数据源缺少 OCP 集群关联信息" in t for t in text_contents)
         assert any("不过我可以尝试通过数据库查询来获取 CPU 负载信息" in t for t in text_contents)
         assert persisted_event_types == [
+            "context_status",
             "assistant_progress",
             "assistant",
             "step_start",
@@ -1813,6 +2018,7 @@ async def test_chat_stream_persists_tool_result_and_terminal_checkpoint_on_disco
 
         event_types = [event["type"] for event in persisted_events]
         assert event_types == [
+            "context_status",
             "thinking",
             "task_state",
             "step_start",
