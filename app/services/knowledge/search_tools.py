@@ -261,8 +261,10 @@ def _resolve_git_snapshot(
             f"Version '{requested_version}' is not available for knowledge pack "
             f"'{meta.get('pack_id') or repo.name}'"
         )
-    if requested_version and not _version_entries(meta) and not _meta_supports_version(
-        meta, requested_version
+    if (
+        requested_version
+        and not _version_entries(meta)
+        and not _meta_supports_version(meta, requested_version)
     ):
         raise ValueError(
             f"Knowledge pack '{meta.get('pack_id') or repo.name}' does not advertise "
@@ -271,9 +273,7 @@ def _resolve_git_snapshot(
 
     ref_type = str((version_entry or {}).get("ref_type") or "branch").strip().casefold()
     selector = str(
-        (version_entry or {}).get("ref")
-        or (version_entry or {}).get("branch")
-        or resolved_version
+        (version_entry or {}).get("ref") or (version_entry or {}).get("branch") or resolved_version
     ).strip()
     if selector.startswith("refs/"):
         source_ref = selector
@@ -370,9 +370,7 @@ async def resolve_search_targets(
         resolved_kb_id = find_kb_by_db_type(db_type, version)
         if resolved_kb_id is None:
             suffix = f" and version='{version}'" if version else ""
-            raise FileNotFoundError(
-                f"No knowledge base found for db_type='{db_type}'{suffix}"
-            )
+            raise FileNotFoundError(f"No knowledge base found for db_type='{db_type}'{suffix}")
         resolved_ids = [resolved_kb_id]
     if not resolved_ids and version:
         resolved_ids = [
@@ -381,19 +379,14 @@ async def resolve_search_targets(
             if (path / ".git").is_dir() and _meta_supports_version(meta, version)
         ]
         if not resolved_ids:
-            raise FileNotFoundError(
-                f"No installed git knowledge pack supports version='{version}'"
-            )
+            raise FileNotFoundError(f"No installed git knowledge pack supports version='{version}'")
     if not resolved_ids:
         resolved_ids = [kb_id for kb_id, _path, _meta in _kb_entries()]
     if not resolved_ids:
         return []
 
     targets = await asyncio.gather(
-        *(
-            asyncio.to_thread(_resolve_search_target_sync, kb_id, version)
-            for kb_id in resolved_ids
-        )
+        *(asyncio.to_thread(_resolve_search_target_sync, kb_id, version) for kb_id in resolved_ids)
     )
     return list(targets)
 
@@ -547,7 +540,9 @@ def discover(
     *,
     target: SearchTarget | None = None,
 ) -> list[dict[str, Any]]:
-    target = target or SearchTarget(kb_id=kb_id, source_type="filesystem", root=_resolve_kb_root(kb_id))
+    target = target or SearchTarget(
+        kb_id=kb_id, source_type="filesystem", root=_resolve_kb_root(kb_id)
+    )
     terms = [
         value.casefold()
         for value in [*re.split(r"[\s,|]+", query), *(keywords or [])]
@@ -650,7 +645,9 @@ def search(
     *,
     target: SearchTarget | None = None,
 ) -> list[dict[str, Any]]:
-    target = target or SearchTarget(kb_id=kb_id, source_type="filesystem", root=_resolve_kb_root(kb_id))
+    target = target or SearchTarget(
+        kb_id=kb_id, source_type="filesystem", root=_resolve_kb_root(kb_id)
+    )
     normalized_patterns = _normalize_patterns(query, patterns)
     context_lines = max(0, min(context_lines, 10))
 
@@ -799,7 +796,9 @@ def read(
     *,
     target: SearchTarget | None = None,
 ) -> dict[str, Any]:
-    target = target or SearchTarget(kb_id=kb_id, source_type="filesystem", root=_resolve_kb_root(kb_id))
+    target = target or SearchTarget(
+        kb_id=kb_id, source_type="filesystem", root=_resolve_kb_root(kb_id)
+    )
     if target.source_type == "git":
         content = _git_read_text(target, path)
     else:
@@ -830,7 +829,9 @@ def outline(
     *,
     target: SearchTarget | None = None,
 ) -> list[dict[str, Any]]:
-    target = target or SearchTarget(kb_id=kb_id, source_type="filesystem", root=_resolve_kb_root(kb_id))
+    target = target or SearchTarget(
+        kb_id=kb_id, source_type="filesystem", root=_resolve_kb_root(kb_id)
+    )
     if target.source_type == "git":
         content = _git_read_text(target, path)
     else:
@@ -864,11 +865,7 @@ def outline(
 def target_document_count(target: SearchTarget) -> int:
     if target.source_type == "git":
         return len(_git_list_markdown(target))
-    return sum(
-        1
-        for path in target.root.rglob("*.md")
-        if path.name.casefold() != "readme.md"
-    )
+    return sum(1 for path in target.root.rglob("*.md") if path.name.casefold() != "readme.md")
 
 
 TOOL_SCHEMAS: list[dict[str, Any]] = [
@@ -973,9 +970,7 @@ class KnowledgeToolExecutor:
     def __init__(self, targets: list[SearchTarget], query_plan: QueryPlan) -> None:
         self._targets = {target.kb_id: target for target in targets}
         self._query_plan = query_plan
-        self._searched_patterns: dict[int, set[str]] = {
-            target.kb_id: set() for target in targets
-        }
+        self._searched_patterns: dict[int, set[str]] = {target.kb_id: set() for target in targets}
         self._expanded_targets: set[int] = set()
 
     async def execute(self, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
@@ -1047,9 +1042,7 @@ class KnowledgeToolExecutor:
             target_uncovered: dict[str, list[str]] = {}
             for name, patterns in self._query_plan.groups.items():
                 missing = [
-                    pattern
-                    for pattern in patterns
-                    if pattern.casefold() not in searched_patterns
+                    pattern for pattern in patterns if pattern.casefold() not in searched_patterns
                 ]
                 if missing:
                     target_uncovered[name] = missing

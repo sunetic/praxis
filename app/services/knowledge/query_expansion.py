@@ -19,7 +19,18 @@ _TOKEN_RE = re.compile(r"[A-Za-z][A-Za-z0-9_.:/-]{1,80}|[\u4e00-\u9fff]{2,24}")
 
 _CONCEPT_GROUPS: tuple[tuple[tuple[str, ...], tuple[str, ...]], ...] = (
     (
-        ("错误", "报错", "失败", "异常", "error", "failed", "failure", "fatal", "critical", "exception"),
+        (
+            "错误",
+            "报错",
+            "失败",
+            "异常",
+            "error",
+            "failed",
+            "failure",
+            "fatal",
+            "critical",
+            "exception",
+        ),
         ("错误", "报错", "error", "errors", "failed", "failure", "fatal", "critical", "exception"),
     ),
     (
@@ -125,9 +136,7 @@ def build_query_plan(query: str) -> QueryPlan:
 
     discovery_values: list[str] = []
     discovery_values.extend(
-        value
-        for value in _TOKEN_RE.findall(text)
-        if 1 < len(value) <= 40 and not value.isdigit()
+        value for value in _TOKEN_RE.findall(text) if 1 < len(value) <= 40 and not value.isdigit()
     )
     for pattern in groups["semantic_variants"]:
         if re.fullmatch(r"[\w\u4e00-\u9fff -]{2,40}", pattern):

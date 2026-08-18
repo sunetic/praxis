@@ -294,9 +294,7 @@ class TestVersionPinnedGitSearch:
         repo = Path(versioned_git_kb["repo"])
         head_before = _run_git(repo, "rev-parse", "HEAD")
 
-        target = (
-            await resolve_search_targets(kb_ids=[2], db_type=None, version="8.0")
-        )[0]
+        target = (await resolve_search_targets(kb_ids=[2], db_type=None, version="8.0"))[0]
         results = search(2, "VERSION_80_ONLY|VERSION_84_ONLY", target=target)
 
         assert target.resolved_version == "8.0"
@@ -315,9 +313,7 @@ class TestVersionPinnedGitSearch:
         head_before = _run_git(repo, "rev-parse", "HEAD")
 
         async def run_version(version: str) -> tuple[str, list[dict]]:
-            target = (
-                await resolve_search_targets(kb_ids=[2], db_type=None, version=version)
-            )[0]
+            target = (await resolve_search_targets(kb_ids=[2], db_type=None, version=version))[0]
             await asyncio.sleep(0)
             results = await asyncio.to_thread(
                 search,
@@ -369,9 +365,7 @@ class TestQueryCoverage:
             "A critical operation failed with an exception.\n",
             encoding="utf-8",
         )
-        target = (
-            await resolve_search_targets(kb_ids=[1], db_type=None, version=None)
-        )[0]
+        target = (await resolve_search_targets(kb_ids=[1], db_type=None, version=None))[0]
         plan = build_query_plan("查询错误信息")
         executor = KnowledgeToolExecutor([target], plan)
 
