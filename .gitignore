@@ -112,6 +112,7 @@ test_tmp.db
 frontend/app.db
 
 # data/ runtime outputs
+data/knowledge_packs.json
 data/knowledge/[0-9]*/
 data/state_store.db/
 data/stream_store/
