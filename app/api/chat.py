@@ -1,3 +1,4 @@
+import asyncio
 import json
 import re
 import uuid
@@ -14,8 +15,13 @@ from app.api.chat_handoff import (
     _get_handoff_event,
     _handoff_status,
     _mark_handoff_consumed,
+    consume_chat_handoff,
+    create_chat_handoff,
+    get_chat_handoff,
+    list_chat_events,
 )
 from app.api.chat_history import ensure_stream_user_message, load_chat_messages
+from app.api.chat_pending import confirm_pending_action
 from app.core.config import get_settings
 from app.core.logging import fmt_kv, get_logger
 from app.db.database import get_db
@@ -77,6 +83,15 @@ from app.services.chat.tool_binding import (
 from app.services.chat.turn_context import TurnContextExtras, build_agent_turn_context
 from app.services.chat.vds import event_to_vds as _event_to_vds
 from app.skills.store import skill_store
+
+__all__ = [
+    "confirm_pending_action",
+    "consume_chat_handoff",
+    "create_chat_handoff",
+    "get_chat_handoff",
+    "list_chat_events",
+    "router",
+]
 
 _XML_TOOL_CALL_STRIP_RE = re.compile(
     r"<function=\w+>\s*.*?\s*</function>\s*(?:</tool_call>)?",
@@ -1204,6 +1219,47 @@ async def chat_stream(
                     terminal_event_persisted = True
                     break
 
+        except asyncio.CancelledError:
+            _cancelled = True
+            logger.info(
+                "stream_generation_cancelled %s",
+                fmt_kv(conversation_id=conversation_id, trace_id=trace_id),
+            )
+            resumable_state = dict(latest_task_state or {})
+            if resumable_state:
+                resumable_state["status"] = "checkpointed"
+            try:
+                await asyncio.shield(_persist_turn_snapshot())
+                await asyncio.shield(
+                    _persist_runtime_event(
+                        "checkpoint",
+                        "reflecting",
+                        {
+                            "status": "checkpointed",
+                            "reason_code": "stream_cancelled",
+                            "reason": "流式执行已取消；当前执行进度已保存。",
+                            "task_state": resumable_state or None,
+                        },
+                    )
+                )
+                await asyncio.shield(
+                    _persist_runtime_event(
+                        "done",
+                        "done",
+                        {
+                            "status": "cancelled",
+                            "completed": False,
+                            "reason_code": "stream_cancelled",
+                        },
+                    )
+                )
+                terminal_event_persisted = True
+            except Exception:
+                logger.exception(
+                    "stream_cancel_finalize_failed %s",
+                    fmt_kv(conversation_id=conversation_id, trace_id=trace_id),
+                )
+            raise
         except Exception as e:
             logger.exception(
                 "stream_generation_error %s error=%s",
@@ -1248,16 +1304,24 @@ async def chat_stream(
             )
             terminal_event_persisted = True
         finally:
-            await _persist_turn_snapshot()
-            if not terminal_event_persisted:
-                await _persist_runtime_event(
-                    "done",
-                    "done",
-                    {
-                        "status": "incomplete",
-                        "completed": False,
-                        "reason_code": "stream_ended_without_terminal_event",
-                    },
+            try:
+                await asyncio.shield(_persist_turn_snapshot())
+                if not terminal_event_persisted:
+                    await asyncio.shield(
+                        _persist_runtime_event(
+                            "done",
+                            "done",
+                            {
+                                "status": "incomplete",
+                                "completed": False,
+                                "reason_code": "stream_ended_without_terminal_event",
+                            },
+                        )
+                    )
+            except Exception:
+                logger.exception(
+                    "stream_terminal_finalize_failed %s",
+                    fmt_kv(conversation_id=conversation_id, trace_id=trace_id),
                 )
 
     return StreamingResponse(generate(), media_type="text/plain; charset=utf-8")

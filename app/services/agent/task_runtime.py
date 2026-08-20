@@ -17,7 +17,15 @@ from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Any
 
-TASK_STATE_VERSION = 1
+from app.services.agent.task_contract import TaskContract, latest_user_text
+
+TASK_STATE_VERSION = 2
+
+_EVIDENCE_EXCERPT_MAX_CHARS = 10_000
+_VERIFIER_EVIDENCE_BUDGET_CHARS = 90_000
+_SENSITIVE_ARGUMENT_KEY_RE = re.compile(
+    r"(?:authorization|cookie|credential|password|passwd|secret|token|api[_-]?key)", re.I
+)
 
 
 class ProgressDecision(StrEnum):
@@ -28,117 +36,6 @@ class ProgressDecision(StrEnum):
     BLOCKED = "blocked"
     STALLED = "stalled"
     CANDIDATE_COMPLETE = "candidate_complete"
-
-
-@dataclass
-class AcceptanceCriterion:
-    id: str
-    description: str
-    required: bool = True
-    requires_tool_evidence: bool = False
-    required_tool_outcome: str = "any"
-    component_hints: list[str] = field(default_factory=list)
-
-
-@dataclass
-class TaskContract:
-    objective: str
-    constraints: list[str] = field(default_factory=list)
-    acceptance_criteria: list[AcceptanceCriterion] = field(default_factory=list)
-    output_requirements: list[str] = field(default_factory=list)
-    authorization_scope: str = "Use only the tools and scope granted by the current session."
-    complex: bool = False
-    high_value: bool = False
-
-    @classmethod
-    def from_messages(cls, messages: list[dict[str, Any]]) -> TaskContract:
-        objective = _latest_user_text(messages).strip()
-        lines = [line.strip() for line in objective.splitlines() if line.strip()]
-        requested_items: list[str] = []
-        constraints: list[str] = []
-        outputs: list[str] = []
-
-        for line in lines:
-            cleaned = re.sub(r"^(?:[-*+]\s+|\d+[.)、]\s*)", "", line).strip()
-            if cleaned != line or re.match(
-                r"^(?:阶段|phase)\s*[a-z0-9一二三四五六七八九十]+", line, re.I
-            ):
-                if len(cleaned) >= 4:
-                    requested_items.append(cleaned)
-            if re.search(
-                r"(?:不得|禁止|只读|只能|不要|必须|without\s+writing|read[- ]only)", line, re.I
-            ):
-                constraints.append(cleaned)
-            if re.search(r"(?:输出|报告|表格|清单|结论|总结|report|output|summary)", line, re.I):
-                outputs.append(cleaned)
-
-        complex_task = _is_complex_request(objective, requested_items)
-        if complex_task:
-            constraint_keys = {item.rstrip("。.!！") for item in constraints}
-            requested_items.extend(
-                item
-                for item in _extract_explicit_requirement_clauses(objective)
-                if item.rstrip("。.!！") not in constraint_keys
-            )
-            if not requested_items:
-                requested_items = ["完成请求中所有明确的子任务，并为结论提供可追溯证据"]
-
-        criteria = [
-            AcceptanceCriterion(
-                id=f"ac-{index}",
-                description=item,
-                requires_tool_evidence=_requires_tool_evidence(item),
-                required_tool_outcome=_required_tool_outcome(item),
-                component_hints=_criterion_component_hints(item),
-            )
-            for index, item in enumerate(_dedupe(requested_items), start=1)
-        ]
-        high_value = bool(
-            complex_task
-            and re.search(
-                r"(?:审计|生产|迁移|发布|安全|财务|权限|高风险|audit|production|security|migration)",
-                objective,
-                re.I,
-            )
-        )
-        return cls(
-            objective=objective,
-            constraints=_dedupe(constraints),
-            acceptance_criteria=criteria,
-            output_requirements=_dedupe(outputs),
-            complex=complex_task,
-            high_value=high_value,
-        )
-
-    def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
-
-    @classmethod
-    def from_dict(cls, payload: dict[str, Any]) -> TaskContract:
-        criteria = [
-            AcceptanceCriterion(
-                id=str(item.get("id") or f"ac-{index}"),
-                description=str(item.get("description") or ""),
-                required=bool(item.get("required", True)),
-                requires_tool_evidence=bool(item.get("requires_tool_evidence", False)),
-                required_tool_outcome=str(item.get("required_tool_outcome") or "any"),
-                component_hints=[str(value) for value in item.get("component_hints") or []],
-            )
-            for index, item in enumerate(payload.get("acceptance_criteria") or [], start=1)
-            if isinstance(item, dict)
-        ]
-        return cls(
-            objective=str(payload.get("objective") or ""),
-            constraints=[str(item) for item in payload.get("constraints") or []],
-            acceptance_criteria=criteria,
-            output_requirements=[str(item) for item in payload.get("output_requirements") or []],
-            authorization_scope=str(
-                payload.get("authorization_scope")
-                or "Use only the tools and scope granted by the current session."
-            ),
-            complex=bool(payload.get("complex")),
-            high_value=bool(payload.get("high_value")),
-        )
 
 
 @dataclass
@@ -160,6 +57,9 @@ class Observation:
     planning_goal: str = ""
     planning_success_criteria: str = ""
     request_summary: str = ""
+    evidence_excerpt: str = ""
+    evidence_chars: int = 0
+    evidence_truncated: bool = False
 
     @classmethod
     def from_execution(cls, item: dict[str, Any]) -> Observation:
@@ -201,7 +101,9 @@ class Observation:
         strategy_signature = hashlib.sha256(
             f"{tool_name.lower()}|{canonical_args}".encode()
         ).hexdigest()[:20]
-        data = result.get("data") if isinstance(result.get("data"), dict) else {}
+        raw_data = result.get("data")
+        data = raw_data if isinstance(raw_data, dict) else {}
+        evidence_excerpt, evidence_chars, evidence_truncated = _build_evidence_excerpt(raw_data)
         planning = item.get("planning_meta") if isinstance(item.get("planning_meta"), dict) else {}
         return cls(
             evidence_ref=str(item.get("tool_call_id") or f"evidence-{uuid.uuid4().hex[:12]}"),
@@ -221,6 +123,9 @@ class Observation:
             planning_goal=str(planning.get("goal") or "").strip(),
             planning_success_criteria=str(planning.get("success_criteria") or "").strip(),
             request_summary=_summarize_tool_request(tool_name, arguments),
+            evidence_excerpt=evidence_excerpt,
+            evidence_chars=evidence_chars,
+            evidence_truncated=evidence_truncated,
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -237,6 +142,9 @@ class EvidenceRecord:
     signature: str
     iteration: int
     request_summary: str = ""
+    evidence_excerpt: str = ""
+    evidence_chars: int = 0
+    evidence_truncated: bool = False
 
 
 @dataclass
@@ -264,6 +172,7 @@ class FailureEpisode:
     evidence_refs: list[str] = field(default_factory=list)
     status: str = "open"
     resolution_evidence_ref: str | None = None
+    semantic_assessment: str | None = None
 
     def record_failure(self, observation: Observation) -> None:
         self.attempts += 1
@@ -300,6 +209,8 @@ class VerificationResult:
     missing: list[str] = field(default_factory=list)
     contradictions: list[str] = field(default_factory=list)
     criterion_results: list[dict[str, Any]] = field(default_factory=list)
+    repair_type: str = "none"
+    failure_assessments: list[dict[str, Any]] = field(default_factory=list)
     evaluator: str = "deterministic"
     malformed: bool = False
 
@@ -326,8 +237,8 @@ class TaskJournal:
     expected_action_evidence_refs: dict[str, str] = field(default_factory=dict)
 
     @classmethod
-    def create(cls, messages: list[dict[str, Any]]) -> TaskJournal:
-        return cls(task_run_id=str(uuid.uuid4()), contract=TaskContract.from_messages(messages))
+    def create(cls, contract: TaskContract) -> TaskJournal:
+        return cls(task_run_id=str(uuid.uuid4()), contract=contract)
 
     @classmethod
     def from_dict(cls, payload: dict[str, Any]) -> TaskJournal:
@@ -378,6 +289,9 @@ class TaskJournal:
                 signature=str(item.get("signature") or ""),
                 iteration=int(item.get("iteration") or 0),
                 request_summary=str(item.get("request_summary") or ""),
+                evidence_excerpt=str(item.get("evidence_excerpt") or ""),
+                evidence_chars=int(item.get("evidence_chars") or 0),
+                evidence_truncated=bool(item.get("evidence_truncated")),
             )
             for item in payload.get("evidence") or []
             if isinstance(item, dict)
@@ -399,6 +313,11 @@ class TaskJournal:
                 resolution_evidence_ref=(
                     str(item.get("resolution_evidence_ref"))
                     if item.get("resolution_evidence_ref")
+                    else None
+                ),
+                semantic_assessment=(
+                    str(item.get("semantic_assessment"))
+                    if item.get("semantic_assessment")
                     else None
                 ),
             )
@@ -442,6 +361,12 @@ class TaskJournal:
                     for item in verification.get("criterion_results") or []
                     if isinstance(item, dict)
                 ],
+                repair_type=str(verification.get("repair_type") or "none"),
+                failure_assessments=[
+                    dict(item)
+                    for item in verification.get("failure_assessments") or []
+                    if isinstance(item, dict)
+                ],
                 evaluator=str(verification.get("evaluator") or "deterministic"),
                 malformed=bool(verification.get("malformed")),
             )
@@ -463,10 +388,11 @@ class TaskJournal:
             "updated_at": self.updated_at,
             "seen_success_signatures": list(self.seen_success_signatures),
             "user_corrections": list(self.user_corrections),
+            "expected_action_evidence_refs": dict(self.expected_action_evidence_refs),
         }
 
     def context_block(self) -> str:
-        unresolved = [episode for episode in self.failure_episodes if episode.status != "resolved"]
+        unresolved = self.unresolved_failure_episodes()
         state = {
             "task_run_id": self.task_run_id,
             "objective": self.contract.objective,
@@ -504,7 +430,7 @@ class TaskJournal:
         self.updated_at = _utc_now()
 
     def apply_user_correction(self, messages: list[dict[str, Any]]) -> None:
-        correction = _latest_user_text(messages).strip()
+        correction = latest_user_text(messages).strip()
         if not correction or re.fullmatch(
             r"(?:请)?(?:继续执行|继续|接着|续跑|恢复|continue|resume)[，,。.！!\s]*",
             correction,
@@ -731,6 +657,28 @@ class TaskJournal:
         self.updated_at = _utc_now()
         return self.metrics.verification_no_progress_rounds
 
+    def apply_failure_assessments(self, verification: VerificationResult) -> None:
+        """Apply LLM semantic judgments without encoding domain recovery rules."""
+        by_id = {
+            str(item.get("id") or ""): item
+            for item in verification.failure_assessments
+            if isinstance(item, dict)
+        }
+        for episode in self.unresolved_failure_episodes():
+            assessment = by_id.get(episode.id)
+            if assessment is None:
+                continue
+            episode.semantic_assessment = str(assessment.get("reason") or "").strip() or None
+            if bool(assessment.get("blocking", True)):
+                continue
+            episode.status = "superseded"
+            refs = [str(item) for item in assessment.get("evidence_refs") or [] if str(item)]
+            episode.resolution_evidence_ref = refs[0] if refs else None
+            self.metrics.recovered_failures += 1
+        if not self.unresolved_failure_episodes():
+            self.active_failure_episode_id = None
+        self.updated_at = _utc_now()
+
     def _record_failure(self, observation: Observation) -> FailureEpisode:
         episode = next(
             (
@@ -858,6 +806,9 @@ class TaskJournal:
                 signature=observation.normalized_signature,
                 iteration=iteration,
                 request_summary=observation.request_summary,
+                evidence_excerpt=observation.evidence_excerpt,
+                evidence_chars=observation.evidence_chars,
+                evidence_truncated=observation.evidence_truncated,
             )
         )
 
@@ -919,29 +870,13 @@ class TaskJournal:
 
 
 def deterministic_completion_precheck(journal: TaskJournal) -> VerificationResult:
-    unresolved = journal.unresolved_failure_episodes()
-    if unresolved:
-        return VerificationResult(
-            satisfied=False,
-            reason="存在尚未解决的故障链。",
-            missing=[
-                f"Resolve {item.id}: {item.category} {item.target_object}" for item in unresolved
-            ],
-            evaluator="deterministic",
-        )
+    """Enforce protocol facts only; semantic completeness belongs to the LLM verifier."""
     if journal.status in {"blocked", "stalled", "awaiting_authority", "awaiting_confirmation"}:
         return VerificationResult(
             satisfied=False,
             reason=f"任务当前状态为 {journal.status}，不能声明完成。",
             missing=["Resolve the current task status before completion."],
-            evaluator="deterministic",
-        )
-    unresolved_steps = journal.unresolved_steps()
-    if unresolved_steps:
-        return VerificationResult(
-            satisfied=False,
-            reason="存在尚未完成或仍在恢复的任务步骤。",
-            missing=[f"Complete {item.id}: {item.goal}" for item in unresolved_steps],
+            repair_type="blocked",
             evaluator="deterministic",
         )
     for criterion in journal.contract.acceptance_criteria:
@@ -988,6 +923,7 @@ def deterministic_completion_precheck(journal: TaskJournal) -> VerificationResul
                     "reason": "No dispatched tool result satisfies the required action outcome.",
                 }
             ],
+            repair_type="new_evidence",
             evaluator="deterministic_action_evidence",
         )
     return VerificationResult(satisfied=True, reason="确定性前置检查通过。")
@@ -1011,7 +947,7 @@ def migrate_task_state(payload: dict[str, Any]) -> dict[str, Any]:
         migrated.setdefault("evidence", [])
         migrated.setdefault("steps", [])
         migrated.setdefault("metrics", {})
-        migrated["version"] = TASK_STATE_VERSION
+    migrated["version"] = TASK_STATE_VERSION
     return migrated
 
 
@@ -1040,16 +976,75 @@ def parse_verification_result(text: str, *, evaluator: str = "llm") -> Verificat
             evaluator=evaluator,
             malformed=True,
         )
+    satisfied = bool(payload.get("satisfied"))
+    reason = str(payload.get("reason") or "")
+    missing = [str(item) for item in payload.get("missing") or []]
+    repair_type = str(payload.get("repair_type") or ("none" if satisfied else "rewrite"))
+    if repair_type not in {"none", "rewrite", "new_evidence", "blocked"}:
+        repair_type = "rewrite"
+    if satisfied:
+        repair_type = "none"
+    elif not missing:
+        missing = [reason or "Return an actionable repair instruction for the rejected candidate."]
     return VerificationResult(
-        satisfied=bool(payload.get("satisfied")),
-        reason=str(payload.get("reason") or ""),
-        missing=[str(item) for item in payload.get("missing") or []],
+        satisfied=satisfied,
+        reason=reason,
+        missing=missing,
         contradictions=[str(item) for item in payload.get("contradictions") or []],
         criterion_results=[
             dict(item) for item in payload.get("criterion_results") or [] if isinstance(item, dict)
         ],
+        repair_type=repair_type,
+        failure_assessments=[
+            dict(item)
+            for item in payload.get("failure_assessments") or []
+            if isinstance(item, dict)
+        ],
         evaluator=evaluator,
     )
+
+
+def enforce_failure_episode_audit(
+    journal: TaskJournal,
+    result: VerificationResult,
+) -> VerificationResult:
+    """Require the LLM verifier to judge every unresolved failure semantically."""
+    unresolved = journal.unresolved_failure_episodes()
+    if not unresolved:
+        return result
+    by_id = {
+        str(item.get("id") or ""): item
+        for item in result.failure_assessments
+        if isinstance(item, dict)
+    }
+    missing_ids = [item.id for item in unresolved if item.id not in by_id]
+    if missing_ids:
+        return VerificationResult(
+            satisfied=False,
+            reason="The verifier did not assess every unresolved tool failure.",
+            missing=[
+                "Assess whether each unresolved failure blocks a user-stated acceptance criterion: "
+                + ", ".join(missing_ids)
+            ],
+            criterion_results=result.criterion_results,
+            repair_type="rewrite",
+            failure_assessments=result.failure_assessments,
+            evaluator="failure_episode_audit",
+        )
+    blocking = [item for item in unresolved if bool(by_id[item.id].get("blocking", True))]
+    if blocking and result.satisfied:
+        return VerificationResult(
+            satisfied=False,
+            reason="The verifier identified unresolved failures that still block required outcomes.",
+            missing=[
+                str(by_id[item.id].get("reason") or f"Resolve {item.id}") for item in blocking
+            ],
+            criterion_results=result.criterion_results,
+            repair_type="new_evidence",
+            failure_assessments=result.failure_assessments,
+            evaluator="failure_episode_audit",
+        )
+    return result
 
 
 def enforce_compound_criterion_audit(
@@ -1175,38 +1170,6 @@ def build_component_evidence_prompt(
     )
 
 
-def _is_compound_criterion(description: str) -> bool:
-    normalized = re.sub(
-        r"并(?:提供|附上|给出)(?:可追溯|查询|执行)?证据",
-        "",
-        description,
-    )
-    return bool(
-        re.search(
-            r"(?:和|与|及|以及|并|、|/|\band\b|\bor\b)",
-            normalized,
-            re.I,
-        )
-    )
-
-
-def _criterion_component_hints(description: str) -> list[str]:
-    if not _is_compound_criterion(description):
-        return []
-    normalized = re.sub(
-        r"并(?:提供|附上|给出)(?:可追溯|查询|执行)?证据",
-        "",
-        description,
-    )
-    parts = re.split(
-        r"(?:和|与|以及|及|并|、|/|\band\b|\bor\b)",
-        normalized,
-        flags=re.I,
-    )
-    hints = [" ".join(item.strip(" ：:,，").split())[:160] for item in parts]
-    return [item for item in hints if len(item) >= 2]
-
-
 def build_verifier_prompt(
     journal: TaskJournal,
     candidate_text: str,
@@ -1235,7 +1198,7 @@ def build_verifier_prompt(
         )
     else:
         mode = "Act as an independent completion verifier."
-    evidence = [asdict(item) for item in journal.evidence[-30:]]
+    evidence = _verification_evidence_payload(journal.evidence)
     active_policies = [item.strip() for item in verification_policies or [] if item.strip()]
     policy_block = (
         "\nACTIVE SKILL VERIFICATION POLICIES:\n"
@@ -1251,10 +1214,16 @@ def build_verifier_prompt(
         "Reject delta-only text that refers to an original/previous report, says all other findings remain, or "
         "only lists corrections without restating every required acceptance criterion.\n"
         "Return JSON only with: satisfied (boolean), reason (string), missing (string[]), "
-        "contradictions (string[]), criterion_results "
+        "contradictions (string[]), repair_type ('none'|'rewrite'|'new_evidence'|'blocked'), "
+        "failure_assessments ([{id, blocking, reason, evidence_refs}]), criterion_results "
         "([{id, satisfied, evidence_refs, reason, component_results: "
         "[{component, satisfied, evidence_refs, reason}]}]).\n"
         "Every required acceptance criterion needs concrete evidence. Natural-language confidence is not evidence. "
+        "A failed tool attempt is historical evidence, not automatically an unfinished user requirement. For every "
+        "failure episode whose status is open, diagnosing, or stalled, include one failure_assessments entry. Set "
+        "blocking=true only when that failure still prevents a user-stated acceptance criterion from being met. "
+        "When alternative successful evidence establishes the requested outcome, mark the failed attempt non-blocking "
+        "and cite those evidence refs. Never invent a tool, lookup, or output requirement merely because it was tried. "
         "Treat a compound acceptance criterion as a checklist: every component joined by conjunctions, slashes, "
         "commas, semicolons, or enumerations must be satisfied independently. Evidence for one named component "
         "must not be used to mark its siblings satisfied; criterion_results must cite evidence for each factual "
@@ -1280,6 +1249,10 @@ def build_verifier_prompt(
         "item merely because its title or output label matches the claim; its method must actually establish the "
         "claim. One unsupported material claim makes satisfied=false. Treat every absence statement as a material "
         "claim: not inspected means unknown, not absent.\n"
+        "If satisfied=false, missing must contain actionable repairs. Set repair_type=new_evidence only when the "
+        "journal truly lacks source facts; use rewrite when the available evidence is sufficient but the candidate "
+        "misstates, omits, or overclaims it; use blocked only when progress needs new authority or an unavailable "
+        "external condition. Set repair_type=none only when satisfied=true.\n"
         f"{policy_block}\n"
         f"TASK CONTRACT:\n{json.dumps(journal.contract.to_dict(), ensure_ascii=False, indent=2)}\n\n"
         f"USER CORRECTIONS (newest instructions override conflicting earlier details):\n"
@@ -1289,106 +1262,6 @@ def build_verifier_prompt(
         f"EVIDENCE:\n{json.dumps(evidence, ensure_ascii=False, indent=2)}\n\n"
         f"CANDIDATE ANSWER:\n{candidate_text}"
     )
-
-
-def _latest_user_text(messages: list[dict[str, Any]]) -> str:
-    for message in reversed(messages):
-        if message.get("role") != "user":
-            continue
-        content = message.get("content") or ""
-        if isinstance(content, str):
-            return content
-        if isinstance(content, list):
-            return "\n".join(
-                str(item.get("text") or item.get("content") or "")
-                if isinstance(item, dict)
-                else str(item)
-                for item in content
-            )
-        return str(content)
-    return ""
-
-
-def _is_complex_request(text: str, requested_items: list[str]) -> bool:
-    if len(text) >= 220:
-        return True
-    if len(requested_items) >= 2:
-        return True
-    return bool(
-        re.search(
-            r"(?:分阶段|依次|逐项|全部.*(?:验证|检查|完成)|多个.*(?:case|用例|检查)|"
-            r"完整.*(?:审计|分析|流程)|end[- ]to[- ]end|multi[- ]stage)",
-            text,
-            re.I,
-        )
-    )
-
-
-def _extract_explicit_requirement_clauses(text: str) -> list[str]:
-    """Recover explicit prose requirements that are not formatted as a list.
-
-    Long task prompts often put mandatory actions and output requirements in
-    paragraphs separated by sentence punctuation or semicolons.  Treat these
-    clauses as acceptance criteria without interpreting domain nouns or tool
-    syntax.  Fenced payloads are excluded so their contents cannot become an
-    accidental criterion.
-    """
-    prose = re.sub(r"```.*?```", " ", text, flags=re.S)
-    sentences = re.split(r"[\n。！？!?]+", prose)
-    requirement_marker = re.compile(
-        r"(?:请|必须|需要|应当|应|不得|不能|不要|全程|完成.+后|"
-        r"must|should|required|please|do\s+not|never|only|after.+complete)",
-        re.I,
-    )
-    list_introducer = re.compile(
-        r"(?:覆盖|包括|包含|如下|下列|以下|cover|include|following)",
-        re.I,
-    )
-    items: list[str] = []
-    for sentence in sentences:
-        clauses = re.split(r"[；;]+", sentence)
-        first = clauses[0] if clauses else ""
-        inherit_requirement = bool(
-            requirement_marker.search(first) and list_introducer.search(first)
-        )
-        for clause in clauses:
-            cleaned = re.sub(r"^(?:[-*+]\s+|\d+[.)、]\s*)", "", clause).strip(" ：:,，")
-            cleaned = " ".join(cleaned.split())
-            minimum_length = 2 if inherit_requirement else 8
-            if len(cleaned) < minimum_length or not (
-                requirement_marker.search(cleaned) or inherit_requirement
-            ):
-                continue
-            if re.fullmatch(r"(?:请)?(?:完成|执行|处理|检查)(?:以下|下列).{1,40}", cleaned):
-                continue
-            items.append(cleaned[:320])
-    return _dedupe(items)
-
-
-def _requires_tool_evidence(description: str) -> bool:
-    """Flag explicit action requirements without interpreting their domain payload."""
-    return bool(
-        re.search(
-            r"(?:实际|亲自|先)(?:执行|运行|调用|测试|试跑|应用|部署)|"
-            r"(?:执行|运行|调用|测试|试跑|应用|部署)(?:下面|以下|上述|给定|该)(?:的)?|"
-            r"actually\s+(?:execute|run|invoke|call|test|apply|deploy)\b|"
-            r"(?:execute|run|invoke|call|test|apply|deploy)\s+(?:the\s+)?(?:following|given|above)\b",
-            description,
-            re.I,
-        )
-    )
-
-
-def _required_tool_outcome(description: str) -> str:
-    if re.search(
-        r"(?:保留|记录|观察|预期|应当).{0,12}(?:失败|错误)|"
-        r"(?:失败|错误).{0,12}(?:保留|记录|进入)|"
-        r"(?:expect|record|retain|observe).{0,20}(?:fail|error)",
-        description,
-        re.I,
-    ):
-        return "failure"
-    return "any"
 
 
 def _fenced_action_payloads(text: str) -> list[str]:
@@ -1495,32 +1368,70 @@ def _normalize_error(text: str) -> str:
 
 
 def _summarize_success_data(value: Any) -> str:
-    if value is None:
-        return "tool completed successfully"
-    if isinstance(value, dict):
-        rows = value.get("rows")
-        summary: dict[str, Any] = {"keys": sorted(str(key) for key in value)[:30]}
-        if isinstance(rows, list):
-            summary["row_count"] = len(rows)
-            summary["sample_rows"] = rows[:12]
-        for key in ("count", "total", "affected_rows", "status", "result"):
-            if key in value and key != "rows":
-                summary[key] = value[key]
-        rendered = json.dumps(summary, ensure_ascii=False, default=str)
-    else:
-        rendered = str(value)
-    rendered = " ".join(rendered.split())
-    return rendered[:2000] or "tool completed successfully"
+    excerpt, _, _ = _build_evidence_excerpt(value, max_chars=2000)
+    return " ".join(excerpt.split()) or "tool completed successfully"
 
 
 def _summarize_tool_request(tool_name: str, arguments: dict[str, Any]) -> str:
-    """Keep the evidence-producing query without persisting sensitive tool inputs."""
-    if tool_name.lower() == "execute_sql":
-        sql = " ".join(str(arguments.get("sql") or "").split())
-        datasource_id = arguments.get("datasource_id")
-        suffix = f" [datasource_id={datasource_id}]" if datasource_id not in {None, ""} else ""
-        return f"SQL: {sql[:1900]}{suffix}" if sql else ""
-    return ""
+    """Preserve a generic, redacted tool request for semantic verification."""
+    safe_arguments = _redact_sensitive_arguments(arguments)
+    excerpt, _, _ = _build_evidence_excerpt(safe_arguments, max_chars=2000)
+    return f"{tool_name}: {excerpt}" if excerpt else tool_name
+
+
+def _redact_sensitive_arguments(value: Any, *, key: str = "") -> Any:
+    if key and _SENSITIVE_ARGUMENT_KEY_RE.search(key):
+        return "[REDACTED]"
+    if isinstance(value, dict):
+        return {
+            str(item_key): _redact_sensitive_arguments(item_value, key=str(item_key))
+            for item_key, item_value in value.items()
+            if str(item_key) != "_runtime"
+        }
+    if isinstance(value, list):
+        return [_redact_sensitive_arguments(item) for item in value]
+    return value
+
+
+def _build_evidence_excerpt(
+    value: Any,
+    *,
+    max_chars: int = _EVIDENCE_EXCERPT_MAX_CHARS,
+) -> tuple[str, int, bool]:
+    """Bound arbitrary structured evidence without selecting domain-specific fields."""
+    if value is None:
+        return "", 0, False
+    rendered = json.dumps(value, ensure_ascii=False, sort_keys=True, default=str)
+    original_chars = len(rendered)
+    if original_chars <= max_chars:
+        return rendered, original_chars, False
+    marker = f"...<truncated {original_chars - max_chars} chars>..."
+    head_chars = max(1, int(max_chars * 0.72))
+    tail_chars = max(1, max_chars - head_chars - len(marker))
+    excerpt = rendered[:head_chars] + marker + rendered[-tail_chars:]
+    return excerpt, original_chars, True
+
+
+def _verification_evidence_payload(evidence: list[EvidenceRecord]) -> list[dict[str, Any]]:
+    """Expose every evidence record while sharing one bounded verifier context budget."""
+    if not evidence:
+        return []
+    per_record_budget = max(
+        800,
+        min(_EVIDENCE_EXCERPT_MAX_CHARS, _VERIFIER_EVIDENCE_BUDGET_CHARS // len(evidence)),
+    )
+    payload: list[dict[str, Any]] = []
+    for item in evidence:
+        record = asdict(item)
+        excerpt = item.evidence_excerpt
+        if len(excerpt) > per_record_budget:
+            marker = f"...<verifier excerpt shortened from {len(excerpt)} chars>..."
+            head_chars = max(1, int(per_record_budget * 0.72))
+            tail_chars = max(1, per_record_budget - head_chars - len(marker))
+            record["evidence_excerpt"] = excerpt[:head_chars] + marker + excerpt[-tail_chars:]
+            record["evidence_truncated"] = True
+        payload.append(record)
+    return payload
 
 
 def _is_discovery_call(tool_name: str, arguments: dict[str, Any]) -> bool:
@@ -1533,10 +1444,6 @@ def _is_discovery_call(tool_name: str, arguments: dict[str, Any]) -> bool:
             re.match(r"^(?:show\b|describe\b|desc\b|explain\b)", sql) or "information_schema" in sql
         )
     return False
-
-
-def _dedupe(values: list[str]) -> list[str]:
-    return list(dict.fromkeys(value for value in values if value.strip()))
 
 
 def _utc_now() -> str:

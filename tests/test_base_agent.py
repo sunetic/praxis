@@ -28,6 +28,8 @@ from app.services.agent.reasoning_engine import (
     _tool_signature,
     _verification_requires_new_evidence,
 )
+from app.services.agent.task_contract import AcceptanceCriterion, TaskContract, latest_user_text
+from app.services.agent.task_contract_agent import TaskContractBuild
 from app.services.agent.task_runtime import Observation, TaskJournal, VerificationResult
 
 
@@ -53,18 +55,16 @@ def _failed_sql_observation(
 
 def test_complex_initial_progress_names_the_user_task_without_copying_sql() -> None:
     journal = TaskJournal.create(
-        [
-            {
-                "role": "user",
-                "content": (
-                    "请验证商品经营周报草稿，形成可复核报告。\n"
-                    "```sql\nSELECT missing_column FROM sample_table\n```\n"
-                    "最终报告覆盖字段可用性、时间变化和引用异常。"
-                ),
-            }
-        ]
+        TaskContract(
+            objective=(
+                "请验证商品经营周报草稿，形成可复核报告。\n"
+                "```sql\nSELECT missing_column FROM sample_table\n```\n"
+                "最终报告覆盖字段可用性、时间变化和引用异常。"
+            ),
+            acceptance_criteria=[AcceptanceCriterion(id="ac-1", description="验证商品经营周报")],
+            complex=True,
+        )
     )
-    journal.contract.complex = True
 
     note = _build_initial_progress_note(journal)
 
@@ -74,9 +74,7 @@ def test_complex_initial_progress_names_the_user_task_without_copying_sql() -> N
 
 
 def test_verification_progress_explains_unsupported_calculation_naturally() -> None:
-    journal = TaskJournal.create(
-        [{"role": "user", "content": "请完成一份复杂数据审计并提供可复核证据。"}]
-    )
+    journal = TaskJournal.create(TaskContract(objective="完成数据检查并提供证据"))
     journal.verification = VerificationResult(
         satisfied=False,
         reason="Numeric claims cannot be recomputed from the current evidence.",
@@ -101,9 +99,7 @@ def test_progress_notes_explain_known_execution_errors(
     message: str,
     expected: str,
 ) -> None:
-    journal = TaskJournal.create(
-        [{"role": "user", "content": "请完成数据审计：\n1. 检查规模\n2. 检查异常"}]
-    )
+    journal = TaskJournal.create(TaskContract(objective="检查规模和异常"))
     result_shape = "cardinality" in message
     observation = _failed_sql_observation(
         message,
@@ -167,8 +163,40 @@ class FakeLLM:
             yield chunk
 
 
+class StaticTaskContractBuilder:
+    def __init__(
+        self,
+        *,
+        complex: bool = False,
+        high_value: bool = False,
+        criteria: list[AcceptanceCriterion] | None = None,
+    ) -> None:
+        self.complex = complex
+        self.high_value = high_value
+        self.criteria = criteria or []
+        self.calls = 0
+
+    async def build(self, messages: list[dict[str, Any]]) -> TaskContractBuild:
+        self.calls += 1
+        return TaskContractBuild(
+            contract=TaskContract(
+                objective=latest_user_text(messages),
+                acceptance_criteria=deepcopy(self.criteria),
+                complex=self.complex,
+                high_value=self.high_value,
+            )
+        )
+
+
 def _text_chunk(text: str, finish_reason: str = "stop") -> dict[str, Any]:
     return {"choices": [{"delta": {"content": text}, "finish_reason": finish_reason}]}
+
+
+def _message_chunk(text: str) -> dict[str, Any]:
+    return {
+        "choices": [{"message": {"content": text}, "finish_reason": "stop"}],
+        "usage": {"prompt_tokens": 19, "completion_tokens": 11},
+    }
 
 
 def _tool_call_chunk(
@@ -220,12 +248,14 @@ def _make_engine(
     config: EngineConfig | None = None,
     executor: Callable[[str, dict[str, Any]], Awaitable[dict[str, Any]]] | None = None,
     compressor: Any | None = None,
+    task_contract_builder: Any | None = None,
 ) -> ReasoningEngine:
     return ReasoningEngine(
         config=config or EngineConfig(),
         llm=llm,
         tool_executor=SimpleToolExecutor(executor) if executor is not None else None,
         compressor=compressor,
+        task_contract_builder=task_contract_builder or StaticTaskContractBuilder(),
     )
 
 
@@ -668,6 +698,13 @@ async def test_complex_task_withholds_incomplete_candidate_until_verifier_passes
         llm=llm,
         config=EngineConfig(max_iterations=8, max_verification_retries=2),
         executor=executor,
+        task_contract_builder=StaticTaskContractBuilder(
+            complex=True,
+            criteria=[
+                AcceptanceCriterion(id="ac-1", description="检查客户表并提供证据"),
+                AcceptanceCriterion(id="ac-2", description="检查订单表并提供证据"),
+            ],
+        ),
     )
 
     events = await _collect(
@@ -735,6 +772,13 @@ async def test_verifier_semantic_rejection_rewrites_without_forced_tool_busywork
         llm=llm,
         config=EngineConfig(max_iterations=6, max_verification_retries=2),
         executor=executor,
+        task_contract_builder=StaticTaskContractBuilder(
+            complex=True,
+            criteria=[
+                AcceptanceCriterion(id="ac-1", description="检查当前可用性"),
+                AcceptanceCriterion(id="ac-2", description="说明运行风险"),
+            ],
+        ),
     )
 
     events = await _collect(
@@ -842,6 +886,13 @@ async def test_complex_task_never_reports_success_when_verification_stays_incomp
     engine = _make_engine(
         llm=llm,
         config=EngineConfig(max_iterations=5, max_verification_retries=2),
+        task_contract_builder=StaticTaskContractBuilder(
+            complex=True,
+            criteria=[
+                AcceptanceCriterion(id="ac-1", description="完成阶段一并验证"),
+                AcceptanceCriterion(id="ac-2", description="完成阶段二并验证"),
+            ],
+        ),
     )
 
     events = await _collect(
@@ -885,14 +936,22 @@ async def test_verification_can_exceed_global_attempt_limit_while_evidence_grows
                 call_id="tc-orders",
             ),
             [_text_chunk("初稿。")],
-            [_text_chunk('{"satisfied":false,"reason":"缺少金额证据","missing":["金额"]}')],
+            [
+                _text_chunk(
+                    '{"satisfied":false,"reason":"缺少金额证据","missing":["金额"],"repair_type":"new_evidence"}'
+                )
+            ],
             _tool_call_chunk(
                 "execute_sql",
                 '{"sql":"SELECT SUM(total_amount) FROM eval_orders","intent":"核对汇总值"}',
                 call_id="tc-amount",
             ),
             [_text_chunk("第二稿。")],
-            [_text_chunk('{"satisfied":false,"reason":"缺少状态证据","missing":["状态"]}')],
+            [
+                _text_chunk(
+                    '{"satisfied":false,"reason":"缺少状态证据","missing":["状态"],"repair_type":"new_evidence"}'
+                )
+            ],
             _tool_call_chunk(
                 "execute_sql",
                 '{"sql":"SELECT status, COUNT(*) FROM eval_orders GROUP BY status",'
@@ -907,6 +966,13 @@ async def test_verification_can_exceed_global_attempt_limit_while_evidence_grows
         llm=llm,
         config=EngineConfig(max_iterations=8, max_verification_retries=1),
         executor=executor,
+        task_contract_builder=StaticTaskContractBuilder(
+            complex=True,
+            criteria=[
+                AcceptanceCriterion(id="ac-1", description="核对订单数量"),
+                AcceptanceCriterion(id="ac-2", description="核对订单金额"),
+            ],
+        ),
     )
 
     events = await _collect(
@@ -944,7 +1010,7 @@ async def test_verification_can_exceed_global_attempt_limit_while_evidence_grows
 
 
 @pytest.mark.anyio
-async def test_simple_answer_does_not_pay_completion_verifier_latency() -> None:
+async def test_simple_contract_skips_completion_verifier() -> None:
     llm = FakeLLM(responses=[[_text_chunk("2")]])
     engine = _make_engine(llm=llm)
 
@@ -957,6 +1023,73 @@ async def test_simple_answer_does_not_pay_completion_verifier_latency() -> None:
     assert llm.call_count == 1
     assert not [event for event in events if event["type"] == "task_contract"]
     assert not [event for event in events if event["type"] == "verification"]
+    assert events[-1]["data"]["completed"] is True
+
+
+@pytest.mark.anyio
+async def test_engine_builds_task_contract_before_planning_and_counts_usage() -> None:
+    contract_response = {
+        "constraints": [],
+        "acceptance_criteria": [
+            {
+                "description": "Answer the request",
+                "required": True,
+                "requires_tool_evidence": False,
+                "required_tool_outcome": "any",
+                "component_hints": [],
+                "source_excerpt": "Handle the request.",
+            }
+        ],
+        "output_requirements": [],
+        "complex": False,
+        "high_value": False,
+    }
+    llm = FakeLLM(
+        responses=[
+            [_message_chunk(json.dumps(contract_response))],
+            [_text_chunk("done")],
+        ]
+    )
+    engine = ReasoningEngine(llm=llm)
+
+    events = await _collect(
+        engine,
+        messages=[{"role": "user", "content": "Handle the request."}],
+        tools=[],
+    )
+
+    state = next(event["data"] for event in events if event["type"] == "task_state")
+    assert llm.call_count == 2
+    assert state["contract"]["acceptance_criteria"][0]["description"] == "Answer the request"
+    assert state["metrics"]["llm_calls"] == 2
+    assert state["metrics"]["input_tokens"] == 19
+    assert state["metrics"]["output_tokens"] == 11
+    assert events[-1]["data"]["completed"] is True
+
+
+@pytest.mark.anyio
+async def test_resumed_task_reuses_persisted_contract_without_reclassification() -> None:
+    builder = StaticTaskContractBuilder(complex=True)
+    saved = TaskJournal.create(
+        TaskContract(
+            objective="Persisted objective",
+            acceptance_criteria=[AcceptanceCriterion(id="ac-1", description="Persisted outcome")],
+        )
+    ).to_dict()
+    llm = FakeLLM(responses=[[_text_chunk("resumed")]])
+    engine = _make_engine(llm=llm, task_contract_builder=builder)
+
+    events = await _collect(
+        engine,
+        messages=[{"role": "user", "content": "continue"}],
+        tools=[],
+        task_state=saved,
+    )
+
+    state = next(event["data"] for event in events if event["type"] == "task_state")
+    assert builder.calls == 0
+    assert state["contract"]["objective"] == "Persisted objective"
+    assert state["contract"]["acceptance_criteria"][0]["description"] == "Persisted outcome"
     assert events[-1]["data"]["completed"] is True
 
 
@@ -1003,10 +1136,10 @@ async def test_simple_task_cannot_claim_completion_with_unresolved_failure() -> 
     assert "查询已经成功完成" not in visible
     assert "现在可以宣布成功" not in visible
     assert "第三次仍然没有修复查询" not in visible
-    assert "还有几处证据不够扎实" in visible
-    assert [item["evaluator"] for item in verifications] == [
-        "deterministic",
-    ]
+    assert "本次执行尚未完成" in visible
+    assert "已保留 1 条工具证据" in visible
+    assert verifications
+    assert all(item["evaluator"] == "failure_episode_audit" for item in verifications)
     assert events[-1]["data"]["completed"] is False
 
 
@@ -1028,6 +1161,7 @@ async def test_high_value_task_can_require_adversarial_verification() -> None:
     engine = _make_engine(
         llm=llm,
         config=EngineConfig(adversarial_verification_enabled=True),
+        task_contract_builder=StaticTaskContractBuilder(complex=True, high_value=True),
     )
 
     events = await _collect(
@@ -1053,12 +1187,10 @@ async def test_complex_final_candidate_cannot_reference_hidden_failed_draft() ->
     llm = FakeLLM(responses=[])
     engine = _make_engine(llm=llm)
     journal = TaskJournal.create(
-        [
-            {
-                "role": "user",
-                "content": "请完成审计：\n1. 检查规模\n2. 检查异常\n3. 输出完整报告",
-            }
-        ]
+        TaskContract(
+            objective="完成检查并输出完整报告",
+            complex=True,
+        )
     )
     journal.metrics.verification_attempts = 1
 
@@ -1074,8 +1206,7 @@ async def test_complex_final_candidate_cannot_reference_hidden_failed_draft() ->
 
 
 def test_revision_reply_to_internal_feedback_is_not_a_final_answer() -> None:
-    journal = TaskJournal.create([{"role": "user", "content": "请完成复杂审计并输出完整报告。"}])
-    journal.contract.complex = True
+    journal = TaskJournal.create(TaskContract(objective="完成检查并输出完整报告", complex=True))
     journal.metrics.verification_attempts = 2
 
     result = _candidate_self_containment_precheck(
@@ -1208,6 +1339,13 @@ async def test_global_elapsed_time_limit_checkpoint_is_resumable() -> None:
     engine = _make_engine(
         llm=llm,
         config=EngineConfig(max_elapsed_seconds=0.000000001),
+        task_contract_builder=StaticTaskContractBuilder(
+            complex=True,
+            criteria=[
+                AcceptanceCriterion(id="ac-1", description="检查客户数据"),
+                AcceptanceCriterion(id="ac-2", description="检查订单数据"),
+            ],
+        ),
     )
 
     events = await _collect(

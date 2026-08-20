@@ -1,4 +1,6 @@
-from sqlalchemy import create_engine, inspect, text
+from typing import Any
+
+from sqlalchemy import create_engine, event, inspect, text
 from sqlalchemy.engine import Inspector
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
@@ -11,7 +13,7 @@ logger = get_logger("app.db")
 _is_sqlite = "sqlite" in settings.database_url
 engine = create_engine(
     settings.database_url,
-    connect_args={"check_same_thread": False} if _is_sqlite else {},
+    connect_args={"check_same_thread": False, "timeout": 15} if _is_sqlite else {},
     echo=settings.sqlalchemy_echo,
     # Verify connections before handing them out — avoids stale-connection errors.
     pool_pre_ping=True,
@@ -20,6 +22,24 @@ engine = create_engine(
     pool_size=3 if _is_sqlite else 5,
     max_overflow=2 if _is_sqlite else 10,
 )
+
+
+if _is_sqlite:
+
+    @event.listens_for(engine, "connect")
+    def _configure_sqlite_connection(
+        dbapi_connection: Any,
+        _connection_record: Any,
+    ) -> None:
+        """Use SQLite's supported concurrent-reader mode for local multi-stream runs."""
+        cursor = dbapi_connection.cursor()
+        try:
+            cursor.execute("PRAGMA journal_mode=WAL")
+            cursor.execute("PRAGMA synchronous=NORMAL")
+            cursor.execute("PRAGMA busy_timeout=15000")
+        finally:
+            cursor.close()
+
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 

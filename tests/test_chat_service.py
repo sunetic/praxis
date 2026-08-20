@@ -51,6 +51,7 @@ class FakeRateLimitedLLM:
 
 
 async def _collect_events(service: ChatService) -> list[dict]:
+    service.task_contract_enabled = False
     events: list[dict] = []
     async for event in service.chat_with_tools(
         messages=[{"role": "user", "content": "test"}],
@@ -138,7 +139,8 @@ async def test_chat_service_stream_interruption_still_emits_done():
 
     events = await _collect_events(service)
     assert events[-1]["type"] == "done"
-    assert events[-1]["data"]["text_emitted"] is False
+    assert events[-1]["data"]["text_emitted"] is True
+    assert any(event["type"] == "assistant" for event in events)
 
 
 @pytest.mark.anyio

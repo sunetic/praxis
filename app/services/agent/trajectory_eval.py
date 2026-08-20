@@ -10,7 +10,7 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
-from app.services.agent.task_runtime import TaskContract
+from app.services.agent.task_contract import TaskContract
 
 
 @dataclass(frozen=True)

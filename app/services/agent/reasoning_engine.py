@@ -17,6 +17,8 @@ from typing import Any, Protocol
 
 from app.core.logging import fmt_kv, get_logger
 from app.services.agent.context_compressor import ContextCompressor, estimate_messages_tokens
+from app.services.agent.task_contract import TaskContract
+from app.services.agent.task_contract_agent import TaskContractAgent, TaskContractBuilder
 from app.services.agent.task_runtime import (
     Observation,
     ProgressDecision,
@@ -26,6 +28,7 @@ from app.services.agent.task_runtime import (
     build_verifier_prompt,
     deterministic_completion_precheck,
     enforce_compound_criterion_audit,
+    enforce_failure_episode_audit,
     parse_verification_result,
 )
 from app.services.llm import RateLimitError, get_llm_client
@@ -176,12 +179,14 @@ class ReasoningEngine:
         llm: Any | None = None,
         tool_executor: ToolExecutor | None = None,
         compressor: ContextCompressor | None = None,
+        task_contract_builder: TaskContractBuilder | None = None,
         tool_plan_extractor: Callable[[dict[int, dict[str, Any]]], list[dict[str, Any]]]
         | None = None,
     ) -> None:
         self.config = config or EngineConfig()
         self.llm = llm or get_llm_client()
         self.tool_executor = tool_executor
+        self.task_contract_builder = task_contract_builder or TaskContractAgent(self.llm)
         self.compressor = compressor or ContextCompressor(
             threshold_tokens=self.config.compression_threshold_tokens,
             tail_budget_tokens=self.config.compression_tail_budget_tokens,
@@ -204,6 +209,13 @@ class ReasoningEngine:
         is_cancelled: Callable[[], bool] | None = None,
         task_state: dict[str, Any] | None = None,
     ) -> AsyncGenerator[dict[str, Any], None]:
+        started_at = time.monotonic()
+        self._run_usage = {
+            "llm_calls": 0,
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "max_input_tokens": 0,
+        }
         chat_messages = list(messages)
         if system_prompt and not any(
             m.get("role") == "system" and m.get("content") == system_prompt for m in chat_messages
@@ -212,12 +224,27 @@ class ReasoningEngine:
         verification_policies = _extract_completion_verification_policies(system_prompt)
 
         cfg = self.config
-        journal = (
-            TaskJournal.from_dict(task_state)
-            if cfg.persistent_journal_enabled and isinstance(task_state, dict)
-            else TaskJournal.create(messages)
-        )
-        if task_state:
+        resumed = cfg.persistent_journal_enabled and isinstance(task_state, dict)
+        contract_source = "restored" if resumed else "disabled"
+        contract_error_code: str | None = None
+        if resumed:
+            journal = TaskJournal.from_dict(task_state)
+        else:
+            if cfg.task_contract_enabled:
+                contract_build = await self.task_contract_builder.build(messages)
+                contract = contract_build.contract
+                contract_source = contract_build.source
+                contract_error_code = contract_build.error_code
+                self._run_usage["llm_calls"] += contract_build.llm_calls
+                self._run_usage["input_tokens"] += contract_build.input_tokens
+                self._run_usage["output_tokens"] += contract_build.output_tokens
+                self._run_usage["max_input_tokens"] = max(
+                    self._run_usage["max_input_tokens"], contract_build.input_tokens
+                )
+            else:
+                contract = TaskContract.unclassified(messages)
+            journal = TaskJournal.create(contract)
+        if resumed:
             journal.apply_user_correction(messages)
             if journal.status in {"checkpointed", "stalled", "incomplete"}:
                 journal.status = "running"
@@ -280,20 +307,14 @@ class ReasoningEngine:
         initial_progress_emitted = False
         force_evidence_collection = bool(
             tools
-            and task_state
+            and resumed
             and journal.verification is not None
             and not journal.verification.satisfied
+            and journal.verification.repair_type == "new_evidence"
         )
         run_id = str(uuid.uuid4())
         final_status = "running"
-        started_at = time.monotonic()
         previous_elapsed_ms = journal.metrics.elapsed_ms
-        self._run_usage = {
-            "llm_calls": 0,
-            "input_tokens": 0,
-            "output_tokens": 0,
-            "max_input_tokens": 0,
-        }
 
         logger.info(
             "reasoning_engine_start %s",
@@ -302,7 +323,9 @@ class ReasoningEngine:
                 task_run_id=journal.task_run_id,
                 message_count=len(chat_messages),
                 has_tools=bool(tools),
-                resumed=bool(task_state),
+                resumed=resumed,
+                contract_source=contract_source,
+                contract_error_code=contract_error_code or "",
             ),
         )
         yield _event(
@@ -318,7 +341,9 @@ class ReasoningEngine:
                 data={
                     "task_run_id": journal.task_run_id,
                     "contract": journal.contract.to_dict(),
-                    "resumed": bool(task_state),
+                    "resumed": resumed,
+                    "source": contract_source,
+                    "degraded": contract_source == "fallback",
                 },
                 meta={"iteration": 0, "run_id": run_id, "task_run_id": journal.task_run_id},
             )
@@ -925,6 +950,7 @@ class ReasoningEngine:
                         cfg.completion_verifier_enabled
                         and (
                             (cfg.task_contract_enabled and journal.contract.complex)
+                            or bool(verification_policies)
                             or journal.unresolved_failure_episodes()
                             or journal.unresolved_steps()
                             or journal.user_corrections
@@ -1216,6 +1242,28 @@ class ReasoningEngine:
                     journal.status = "error"
                     final_status = "error"
 
+        if not emitted_text.strip():
+            if final_status == "completed":
+                journal.status = "checkpointed"
+                final_status = "incomplete"
+            terminal_summary = _build_terminal_summary(journal, final_status)
+            emitted_text += terminal_summary
+            yield _event(
+                type_="assistant",
+                phase=ReasoningPhase.RESPONDING,
+                data={
+                    "text": terminal_summary,
+                    "incomplete": final_status != "completed",
+                    "status": final_status,
+                },
+                meta={
+                    "iteration": iteration,
+                    "run_id": run_id,
+                    "task_run_id": journal.task_run_id,
+                    "terminal_fallback": True,
+                },
+            )
+
         journal.metrics.llm_calls += self._run_usage["llm_calls"]
         journal.metrics.input_tokens += self._run_usage["input_tokens"]
         journal.metrics.output_tokens += self._run_usage["output_tokens"]
@@ -1358,6 +1406,8 @@ class ReasoningEngine:
             ),
             evaluator="llm",
         )
+        journal.apply_failure_assessments(primary)
+        primary = enforce_failure_episode_audit(journal, primary)
         if not primary.satisfied:
             return primary
         compound_audit = enforce_compound_criterion_audit(journal, primary)
@@ -1454,6 +1504,7 @@ class ReasoningEngine:
                 satisfied=False,
                 reason=f"完成验证器调用失败：{exc}",
                 missing=["Retry completion verification."],
+                repair_type="blocked",
                 evaluator=evaluator,
                 malformed=True,
             )
@@ -2162,6 +2213,35 @@ def _build_checkpoint_summary(journal: TaskJournal, decision: dict[str, Any]) ->
     )
 
 
+def _build_terminal_summary(journal: TaskJournal, status: str) -> str:
+    """Guarantee a readable terminal artifact for every non-text stream outcome."""
+    chinese = _prefers_chinese(journal)
+    remaining = _remaining_work(journal)
+    if chinese:
+        heading = {
+            "cancelled": "本次执行已取消，当前进度已经保存。",
+            "stalled": "本次执行因连续没有取得新进展而停止，当前进度已经保存。",
+            "error": "本次执行遇到运行错误，未能形成可靠的最终结论。",
+        }.get(status, "本次执行尚未完成，当前进度已经保存。")
+        suffix = (
+            "\n\n仍需处理：\n" + "\n".join(f"- {item}" for item in remaining[:8])
+            if remaining
+            else ""
+        )
+        return f"{heading}\n\n已保留 {len(journal.evidence)} 条工具证据，可从当前状态继续。{suffix}"
+    heading = {
+        "cancelled": "This run was cancelled and its progress was saved.",
+        "stalled": "This run stopped after making no further progress, and its progress was saved.",
+        "error": "This run encountered a runtime error and did not produce a reliable final conclusion.",
+    }.get(status, "This run is incomplete and its progress was saved.")
+    suffix = (
+        "\n\nStill to resolve:\n" + "\n".join(f"- {item}" for item in remaining[:8])
+        if remaining
+        else ""
+    )
+    return f"{heading}\n\n{len(journal.evidence)} tool evidence records were retained.{suffix}"
+
+
 def _build_verification_feedback(verification: VerificationResult) -> str:
     gaps = verification.missing or [
         verification.reason or "Acceptance criteria are not yet covered."
@@ -2178,6 +2258,9 @@ def _build_verification_feedback(verification: VerificationResult) -> str:
     )
     return (
         "Completion verification failed. Resolve the specific defect before submitting another candidate.\n"
+        f"Repair type: {verification.repair_type}. Follow it exactly: rewrite means use existing evidence; "
+        "new_evidence means collect only the missing source facts; blocked means stop and report the external "
+        "condition.\n"
         f"{action_instruction}"
         "First distinguish a missing fact from a wording, calculation, or inclusion-rule defect. If a missing "
         "item requires facts not already present in the evidence journal, call tools and collect evidence that "
@@ -2247,6 +2330,7 @@ def _candidate_self_containment_precheck(
         missing=[
             "Restate a complete self-contained final answer and cover every acceptance criterion."
         ],
+        repair_type="rewrite",
         evaluator="deterministic_candidate",
     )
 
@@ -2279,35 +2363,8 @@ def _extract_completion_verification_policies(system_prompt: str | None) -> list
 
 
 def _verification_requires_new_evidence(verification: VerificationResult) -> bool:
-    # A verifier rejection can mean either "a fact is missing" or "the draft
-    # misused facts we already have".  Only the former should force another
-    # tool call.  The planner may still choose to gather evidence for a
-    # contradiction, but it must not fabricate busywork just to satisfy the
-    # runtime loop.
-    if verification.evaluator == "deterministic_candidate" or not verification.missing:
-        return False
-    defect_text = " ".join(
-        [verification.reason, *verification.missing, *verification.contradictions]
-    ).lower()
-    rewrite_only_markers = (
-        "self-contained",
-        "not self contained",
-        "unseen prior",
-        "previous report",
-        "prior report",
-        "restate",
-        "rewrite",
-        "delta-only",
-        "only comments",
-        "only lists corrections",
-        "完整答案",
-        "完整报告",
-        "未展示的",
-        "上一版",
-        "前一版",
-        "只列出修正",
-    )
-    return not any(marker in defect_text for marker in rewrite_only_markers)
+    """Follow the verifier's structured semantic repair decision."""
+    return verification.repair_type == "new_evidence"
 
 
 def _build_private_revision_context(candidate_text: str, feedback: str) -> str:

@@ -104,6 +104,7 @@ def _tool_result(success: bool = True, data: dict | None = None, error: str | No
 
 
 async def _collect_events(service: ChatService, messages: list[dict], **kwargs: Any) -> list[dict]:
+    service.task_contract_enabled = False
     events: list[dict] = []
     async for event in service.chat_with_tools(messages, **kwargs):
         events.append(event)

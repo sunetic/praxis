@@ -58,16 +58,47 @@ def _install_tracer(monkeypatch: pytest.MonkeyPatch) -> InMemorySpanExporter:
     return exporter
 
 
-def _install_completion(monkeypatch: pytest.MonkeyPatch, completion: Any) -> None:
+def _install_completion(monkeypatch: pytest.MonkeyPatch, completion: Any) -> SimpleNamespace:
+    unsupported_params_error = type("UnsupportedParamsError", (Exception,), {})
+    module = SimpleNamespace(
+        acompletion=completion,
+        RateLimitError=type("RateLimitError", (Exception,), {}),
+        BadRequestError=type("BadRequestError", (Exception,), {}),
+        UnsupportedParamsError=unsupported_params_error,
+    )
     monkeypatch.setitem(
         sys.modules,
         "litellm",
-        SimpleNamespace(
-            acompletion=completion,
-            RateLimitError=type("RateLimitError", (Exception,), {}),
-            BadRequestError=type("BadRequestError", (Exception,), {}),
-        ),
+        module,
     )
+    return module
+
+
+@pytest.mark.asyncio
+async def test_structured_output_retries_without_unsupported_response_format(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[dict[str, Any]] = []
+    provider: SimpleNamespace
+
+    async def fake_completion(**kwargs: Any) -> _ModelPayload:
+        calls.append(kwargs)
+        if len(calls) == 1:
+            raise provider.UnsupportedParamsError("unsupported response format")
+        return _ModelPayload({"choices": [{"message": {"content": '{"ok":true}'}}]})
+
+    provider = _install_completion(monkeypatch, fake_completion)
+    generator = _client().chat(
+        messages=[{"role": "user", "content": "return json"}],
+        stream=False,
+        response_format={"type": "json_object"},
+    )
+
+    payload = await anext(generator)
+
+    assert payload["choices"][0]["message"]["content"] == '{"ok":true}'
+    assert calls[0]["response_format"] == {"type": "json_object"}
+    assert "response_format" not in calls[1]
 
 
 @pytest.mark.asyncio

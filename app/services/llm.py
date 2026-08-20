@@ -208,6 +208,20 @@ class LLMClient:
         if reasoning_config is not None:
             kwargs["thinking"] = reasoning_config
 
+        async def call_completion() -> Any:
+            try:
+                return await litellm.acompletion(**kwargs)
+            except litellm.UnsupportedParamsError:
+                if "response_format" not in kwargs:
+                    raise
+                fallback_kwargs = dict(kwargs)
+                fallback_kwargs.pop("response_format", None)
+                logger.warning(
+                    "llm_response_format_unsupported_retry %s",
+                    fmt_kv(model=model, stream=stream),
+                )
+                return await litellm.acompletion(**fallback_kwargs)
+
         logger.info(
             "llm_call_start %s",
             fmt_kv(base_url=self.base_url, model=model, stream=stream),
@@ -236,7 +250,7 @@ class LLMClient:
         try:
             if stream:
                 with _activate_span(_span):
-                    response = await litellm.acompletion(**kwargs)
+                    response = await call_completion()
                 iterator = response.__aiter__()
                 while True:
                     try:
@@ -248,7 +262,7 @@ class LLMClient:
                     yield payload
             else:
                 with _activate_span(_span):
-                    response = await litellm.acompletion(**kwargs)
+                    response = await call_completion()
                     payload = response.model_dump()
                 _span.set_status(trace.StatusCode.OK)
                 _span.end()

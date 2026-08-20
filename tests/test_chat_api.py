@@ -317,9 +317,9 @@ def test_inject_service_tools_keeps_call_service_without_domain_metadata(
         fn = patched[1]["function"]
         assert "service_id" not in fn["parameters"]["required"]
         description = fn["parameters"]["properties"]["service_id"]["description"]
-        assert "已自动绑定 service_id" in description
+        assert "auto-bound to service_id" in description
         assert "ocp_cluster_id" in description
-        assert "不要把 ob_cluster_id / ob_tenant_id 用作 OCP targetId" in description
+        assert "do not use ob_cluster_id / ob_tenant_id as OCP targetId" in description
     finally:
         db.close()
         engine.dispose()
@@ -1589,7 +1589,7 @@ async def test_chat_stream_injects_and_consumes_handoff(
         assert "Handoff Context (first turn only):" in system_prompt
         assert "sql-2" in system_prompt
         assert "Handoff First-Turn Reply Contract:" in system_prompt
-        assert "分析思路 / 关键证据 / 下一步建议" in system_prompt
+        assert "Analysis Approach / Key Evidence / Next Steps" in system_prompt
         assert "2-4 of the most relevant" in system_prompt
         assert "Do not call tools in this turn." in system_prompt
         assert fake_service.calls[0]["tools"] in (None, [])
@@ -2037,6 +2037,93 @@ async def test_chat_stream_persists_tool_result_and_terminal_checkpoint_on_disco
         assert final_snapshot["tool_calls"][0]["id"] == "tc-durable"
         assert final_snapshot["tool_calls"][0]["result"]["success"] is True
         assert final_snapshot["content"] == ""
+    finally:
+        db.close()
+        engine.dispose()
+
+
+@pytest.mark.anyio
+async def test_chat_stream_persists_cancelled_terminal_state(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    async def _fake_select_dynamic_skills(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        del args, kwargs
+        return {
+            "active_skills": [],
+            "added": [],
+            "removed": [],
+            "reason": "test",
+            "selector_ok": True,
+        }
+
+    persisted_events: list[dict[str, Any]] = []
+    generation_started = asyncio.Event()
+
+    async def _capture_events(events: list[models.ChatEvent]) -> None:
+        for event in events:
+            persisted_events.append(
+                {
+                    "type": event.event_type,
+                    "payload": json.loads(json.dumps(event.payload)),
+                }
+            )
+
+    class _BlockingChatService:
+        async def chat_with_tools(self, *args: Any, **kwargs: Any):
+            del args, kwargs
+            yield {
+                "type": "task_state",
+                "phase": "planning",
+                "data": {
+                    "version": 2,
+                    "task_run_id": "task-cancelled-1",
+                    "status": "running",
+                    "contract": {"objective": "inspect service", "acceptance_criteria": []},
+                    "steps": [],
+                    "evidence": [],
+                    "failure_episodes": [],
+                    "metrics": {},
+                },
+                "meta": {},
+            }
+            generation_started.set()
+            await asyncio.Event().wait()
+
+    monkeypatch.setattr(chat_api, "_select_dynamic_skills", _fake_select_dynamic_skills)
+    monkeypatch.setattr(chat_api, "_save_chat_events_to_db", _capture_events)
+    monkeypatch.setattr(chat_api, "get_chat_service", _BlockingChatService)
+    monkeypatch.setattr(chat_api, "_filter_tools_by_agent", lambda agent: [])
+    monkeypatch.setattr(chat_turn_context, "_filter_tools_by_agent", lambda agent: [])
+
+    factory, engine = _build_session_factory(tmp_path)
+    db = factory()
+    try:
+        conversation = models.Conversation(title="durable-cancellation")
+        db.add(conversation)
+        db.commit()
+        db.refresh(conversation)
+
+        response = await chat_api.chat_stream(
+            conversation_id=conversation.id,
+            message=schemas.ChatStreamRequest(content="run cancellable task"),
+            request=None,
+            db=db,
+        )
+
+        consume_task = asyncio.create_task(_collect_stream_payloads(response))
+        await generation_started.wait()
+        consume_task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await consume_task
+
+        checkpoint = next(event for event in persisted_events if event["type"] == "checkpoint")
+        assert checkpoint["payload"]["reason_code"] == "stream_cancelled"
+        assert checkpoint["payload"]["task_state"]["status"] == "checkpointed"
+        done = next(event for event in persisted_events if event["type"] == "done")
+        assert done["payload"]["status"] == "cancelled"
+        assert done["payload"]["completed"] is False
+        assert done["payload"]["reason_code"] == "stream_cancelled"
     finally:
         db.close()
         engine.dispose()
@@ -2576,12 +2663,13 @@ async def test_confirm_execute_sql_marks_failed_event_without_requiring_confirma
         monkeypatch.setattr("app.db.connection.get_db_pool", lambda: _FakePool())
         monkeypatch.setattr(chat_pending_api, "get_llm_client", lambda: _FakeFailureResumeLLM())
 
-        with pytest.raises(HTTPException) as excinfo:
-            await chat_api.confirm_pending_action(
-                conversation_id=conversation.id, token=token, db=db
-            )
+        confirmation = await chat_api.confirm_pending_action(
+            conversation_id=conversation.id, token=token, db=db
+        )
 
-        assert excinfo.value.status_code == 400
+        assert confirmation["success"] is False
+        assert confirmation["status"] == "failed"
+        assert confirmation["should_resume"] is True
         refreshed = (
             db.query(models.PendingAction)
             .filter(
@@ -2612,7 +2700,7 @@ async def test_confirm_execute_sql_marks_failed_event_without_requiring_confirma
         error = result_wrapper.get("error") if isinstance(result_wrapper.get("error"), dict) else {}
         assert error.get("code") == "sql_execution_error"
         assert error.get("message") == "SQL execution error: table not found"
-        assert payload.get("message") == "SQL 执行失败：table not found"
+        assert payload.get("message") == "SQL execution failed: table not found"
 
         assistant_messages = (
             db.query(models.Message)

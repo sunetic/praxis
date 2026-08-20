@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from app.services.agent.task_runtime import TaskContract
+from app.services.agent.task_contract import TaskContract
 from app.services.agent.trajectory_eval import (
     BALANCED_PROFILE,
     FAST_PROFILE,

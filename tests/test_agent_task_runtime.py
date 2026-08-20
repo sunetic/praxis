@@ -5,15 +5,16 @@ from typing import Any
 
 import pytest
 
+from app.services.agent.task_contract import AcceptanceCriterion, TaskContract
 from app.services.agent.task_runtime import (
     Observation,
     ProgressDecision,
-    TaskContract,
     TaskJournal,
     build_component_evidence_prompt,
     build_verifier_prompt,
     deterministic_completion_precheck,
     enforce_compound_criterion_audit,
+    enforce_failure_episode_audit,
     migrate_task_state,
     parse_verification_result,
 )
@@ -56,7 +57,7 @@ def _execution(
 
 
 def _journal() -> TaskJournal:
-    return TaskJournal.create([{"role": "user", "content": "Run the database audit."}])
+    return TaskJournal.create(TaskContract(objective="Run the database audit."))
 
 
 def _evaluate(journal: TaskJournal, item: dict[str, Any], iteration: int) -> dict[str, Any]:
@@ -67,29 +68,6 @@ def _evaluate(journal: TaskJournal, item: dict[str, Any], iteration: int) -> dic
         transient_retry_budget=3,
         max_no_progress_rounds=2,
     )
-
-
-def test_complex_task_contract_extracts_acceptance_criteria_and_constraints() -> None:
-    contract = TaskContract.from_messages(
-        [
-            {
-                "role": "user",
-                "content": (
-                    "请完成以下审计：\n"
-                    "1. 检查客户表字段并给出证据\n"
-                    "2. 检查订单孤儿记录\n"
-                    "3. 输出结论表格\n"
-                    "必须只读，不得修改数据。"
-                ),
-            }
-        ]
-    )
-
-    assert contract.complex is True
-    assert contract.high_value is True
-    assert [item.id for item in contract.acceptance_criteria] == ["ac-1", "ac-2", "ac-3"]
-    assert any("只读" in item for item in contract.constraints)
-    assert any("输出" in item for item in contract.output_requirements)
 
 
 def test_small_result_summary_keeps_all_rows_for_completion_verification() -> None:
@@ -110,6 +88,34 @@ def test_small_result_summary_keeps_all_rows_for_completion_verification() -> No
     assert '"status": "status-8"' in observation.message
 
 
+def test_generic_evidence_envelope_preserves_nested_content_and_redacts_secrets() -> None:
+    observation = Observation.from_execution(
+        {
+            "tool_call_id": "knowledge-evidence",
+            "name": "reference_lookup",
+            "arguments": {"query": "incident policy", "api_token": "do-not-store"},
+            "result": {
+                "success": True,
+                "data": {
+                    "snippets": [
+                        {
+                            "source": "policy.md",
+                            "section": "Severity",
+                            "content": "A customer-facing wait above the stated threshold is critical.",
+                        }
+                    ]
+                },
+            },
+        }
+    )
+
+    assert "incident policy" in observation.request_summary
+    assert "do-not-store" not in observation.request_summary
+    assert "[REDACTED]" in observation.request_summary
+    assert "customer-facing wait" in observation.evidence_excerpt
+    assert observation.evidence_truncated is False
+
+
 def test_evidence_keeps_sql_methodology_and_verifier_rejects_mixed_units() -> None:
     journal = _journal()
     _evaluate(
@@ -124,7 +130,7 @@ def test_evidence_keeps_sql_methodology_and_verifier_rejects_mixed_units() -> No
     )
 
     assert journal.evidence[0].request_summary == (
-        "SQL: SELECT SUM(total_amount) AS revenue FROM eval_orders"
+        'execute_sql: {"sql": "SELECT SUM(total_amount) AS revenue FROM eval_orders"}'
     )
     prompt = build_verifier_prompt(
         journal,
@@ -151,54 +157,19 @@ def test_evidence_keeps_sql_methodology_and_verifier_rejects_mixed_units() -> No
     assert "reject any headline that does not equal its stated components" in arithmetic_prompt
 
 
-def test_simple_question_skips_full_contract() -> None:
-    contract = TaskContract.from_messages([{"role": "user", "content": "1+1 等于多少？"}])
-
-    assert contract.complex is False
-    assert contract.acceptance_criteria == []
-
-
-def test_complex_prose_contract_preserves_mandatory_actions_as_separate_criteria() -> None:
-    contract = TaskContract.from_messages(
-        [
-            {
-                "role": "user",
-                "content": (
-                    "请实际执行给定草稿并保留失败记录，失败后自主调整。\n"
-                    "最终报告必须覆盖：真实结构；异常样例；事实和假设。\n"
-                    "全程只读，全部验收项完成后再回答。\n" + "背景信息。" * 80
-                ),
-            }
-        ]
-    )
-
-    descriptions = [item.description for item in contract.acceptance_criteria]
-    assert contract.complex is True
-    assert any("实际执行给定草稿" in item and "保留失败记录" in item for item in descriptions)
-    assert "异常样例" in descriptions
-    assert "事实和假设" in descriptions
-    assert any("全程只读" in item for item in contract.constraints)
-    execution_criterion = next(
-        item for item in contract.acceptance_criteria if "实际执行给定草稿" in item.description
-    )
-    assert execution_criterion.requires_tool_evidence is True
-    assert execution_criterion.required_tool_outcome == "failure"
-    assert all(
-        not item.requires_tool_evidence
-        for item in contract.acceptance_criteria
-        if item is not execution_criterion
-    )
-
-
 def test_verifier_requires_dispatched_tool_result_for_explicit_action() -> None:
+    criterion = AcceptanceCriterion(
+        id="ac-1",
+        description="运行给定检查并保留失败记录",
+        requires_tool_evidence=True,
+        required_tool_outcome="failure",
+    )
     journal = TaskJournal.create(
-        [
-            {
-                "role": "user",
-                "content": "请实际运行给定检查并保留失败记录。\n```text\nprobe --bad\n```\n"
-                + "背景。" * 100,
-            }
-        ]
+        TaskContract(
+            objective="运行给定检查。\n```text\nprobe --bad\n```",
+            acceptance_criteria=[criterion],
+            complex=True,
+        )
     )
 
     prompt = build_verifier_prompt(journal, "检查已经完成。")
@@ -210,16 +181,19 @@ def test_verifier_requires_dispatched_tool_result_for_explicit_action() -> None:
 
 def test_compound_criterion_requires_component_level_verifier_results() -> None:
     journal = TaskJournal.create(
-        [
-            {
-                "role": "user",
-                "content": "最终报告必须覆盖队列和事件异常。" + "背景。" * 100,
-            }
-        ]
+        TaskContract(
+            objective="生成检查报告",
+            acceptance_criteria=[
+                AcceptanceCriterion(
+                    id="ac-1",
+                    description="报告覆盖队列和事件异常",
+                    component_hints=["最终报告必须覆盖队列", "事件异常"],
+                )
+            ],
+            complex=True,
+        )
     )
-    criterion = next(
-        item for item in journal.contract.acceptance_criteria if "队列和事件" in item.description
-    )
+    criterion = journal.contract.acceptance_criteria[0]
     shallow = parse_verification_result(
         '{"satisfied":true,"criterion_results":['
         f'{{"id":"{criterion.id}","satisfied":true,"evidence_refs":["queue"]}}]}}'
@@ -269,15 +243,18 @@ def test_compound_criterion_requires_component_level_verifier_results() -> None:
 
 def test_explicit_action_criterion_uses_action_gate_not_component_audit() -> None:
     journal = TaskJournal.create(
-        [
-            {
-                "role": "user",
-                "content": (
-                    "请实际执行下面检查，保留失败并自主修复。\n"
-                    "```text\nprobe --bad\n```\n" + "背景。" * 100
-                ),
-            }
-        ]
+        TaskContract(
+            objective="执行检查。\n```text\nprobe --bad\n```",
+            acceptance_criteria=[
+                AcceptanceCriterion(
+                    id="ac-1",
+                    description="执行检查并观察结果",
+                    requires_tool_evidence=True,
+                    required_tool_outcome="failure",
+                )
+            ],
+            complex=True,
+        )
     )
     criterion = next(
         item for item in journal.contract.acceptance_criteria if item.requires_tool_evidence
@@ -296,17 +273,20 @@ def test_explicit_action_criterion_uses_action_gate_not_component_audit() -> Non
 
 def test_completion_precheck_requires_real_failure_for_requested_failing_action() -> None:
     journal = TaskJournal.create(
-        [
-            {
-                "role": "user",
-                "content": (
-                    "请实际执行给定检查并保留失败记录。\n"
-                    "```sql\nSELECT unsupported_function(created_at) FROM records\n```\n"
-                    + "背景。"
-                    * 100
-                ),
-            }
-        ]
+        TaskContract(
+            objective=(
+                "执行给定检查。\n```sql\nSELECT unsupported_function(created_at) FROM records\n```"
+            ),
+            acceptance_criteria=[
+                AcceptanceCriterion(
+                    id="ac-1",
+                    description="执行给定检查并保留失败记录",
+                    requires_tool_evidence=True,
+                    required_tool_outcome="failure",
+                )
+            ],
+            complex=True,
+        )
     )
 
     missing = deterministic_completion_precheck(journal)
@@ -443,7 +423,7 @@ def test_schema_discovery_preserves_failure_until_corrected_query_succeeds() -> 
     _evaluate(journal, failure, 1)
     _evaluate(journal, discovery, 2)
     assert journal.failure_episodes[0].status == "diagnosing"
-    assert deterministic_completion_precheck(journal).satisfied is False
+    assert deterministic_completion_precheck(journal).satisfied is True
 
     _evaluate(journal, corrected, 3)
     assert journal.failure_episodes[0].status == "resolved"
@@ -576,7 +556,75 @@ def test_unrelated_success_does_not_resolve_active_failure_episode() -> None:
 
     assert journal.failure_episodes[0].status == "open"
     assert journal.unresolved_steps()
-    assert deterministic_completion_precheck(journal).satisfied is False
+    assert deterministic_completion_precheck(journal).satisfied is True
+
+
+def test_llm_failure_assessment_can_supersede_non_blocking_attempt() -> None:
+    journal = _journal()
+    _evaluate(
+        journal,
+        _execution(
+            call_id="optional-attempt",
+            sql="SELECT missing_column FROM eval_customers",
+            success=False,
+            category="unknown_column",
+            message="Unknown column 'missing_column' in 'field list'",
+            errno=1054,
+        ),
+        1,
+    )
+    episode = journal.failure_episodes[0]
+    result = parse_verification_result(
+        json.dumps(
+            {
+                "satisfied": True,
+                "reason": "The failed attempt is not required by the user's requested outcome.",
+                "missing": [],
+                "repair_type": "none",
+                "failure_assessments": [
+                    {
+                        "id": episode.id,
+                        "blocking": False,
+                        "reason": "Alternative evidence already establishes the requested outcome.",
+                        "evidence_refs": [],
+                    }
+                ],
+            }
+        )
+    )
+
+    journal.apply_failure_assessments(result)
+
+    assert enforce_failure_episode_audit(journal, result).satisfied is True
+    assert episode.status == "superseded"
+    assert journal.unresolved_failure_episodes() == []
+
+
+def test_failure_audit_rejects_unassessed_open_episode_without_domain_rules() -> None:
+    journal = _journal()
+    _evaluate(
+        journal,
+        _execution(
+            call_id="failed-attempt",
+            sql="SELECT missing_column FROM eval_customers",
+            success=False,
+            category="unknown_column",
+            message="Unknown column 'missing_column' in 'field list'",
+            errno=1054,
+        ),
+        1,
+    )
+
+    result = enforce_failure_episode_audit(
+        journal,
+        parse_verification_result(
+            '{"satisfied":true,"reason":"done","missing":[],"repair_type":"none"}'
+        ),
+    )
+
+    assert result.satisfied is False
+    assert result.repair_type == "rewrite"
+    assert journal.failure_episodes[0].id in result.missing[0]
 
 
 def test_successful_retry_resolves_global_tool_argument_failure() -> None:
@@ -728,7 +776,7 @@ def test_task_state_v0_migrates_and_resume_correction_is_preserved() -> None:
         [{"role": "user", "content": "继续执行，但不要检查 payments 表"}]
     )
 
-    assert migrated["version"] == 1
+    assert migrated["version"] == 2
     assert restored.contract.objective == "audit all tables"
     assert restored.user_corrections == ["继续执行，但不要检查 payments 表"]
     assert "payments" in restored.context_block()

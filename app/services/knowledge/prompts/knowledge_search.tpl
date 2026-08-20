@@ -40,6 +40,14 @@ Evidence quality:
   useful evidence.
 </rules>
 
+<completion_verification_policy>
+Every factual statement in the candidate summary must be directly supported by retrieved tool
+evidence from the pinned knowledge targets. Reject outside knowledge, plausible additions, and
+policy details that do not appear in the retrieved content. Require source file and line references
+for material claims. If retrieved evidence is insufficient, the answer must say so instead of
+completing the claim from model knowledge.
+</completion_verification_policy>
+
 <output_format>
 Found: [complete|partial|none]
 Summary: [concise evidence-based answer]
