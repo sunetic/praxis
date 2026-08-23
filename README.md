@@ -19,6 +19,10 @@
   <a href="README.md">English</a> | <a href="README_CN.md">中文</a>
 </p>
 
+<p align="center">
+  <a href="https://sunetic.github.io/praxis/">Documentation</a>
+</p>
+
 ---
 
 ## What Is Praxis
@@ -114,12 +118,30 @@ npm run dev        # Vite dev server at :5173
 make docker-build  # builds praxis:latest
 ```
 
+### Documentation
+
+```bash
+make handbook-serve  # preview at http://127.0.0.1:8001/praxis/
+make handbook-build  # build site_handbook/
+```
+
 ### Running Tests
 
 ```bash
 make test          # run pytest
 make lint          # run ruff + semantic guard
 ```
+
+### Local Live-Model Evals
+
+PR checks remain deterministic tests; live-model quality evals run manually with local credentials. With Docker running and a model configured in Praxis Settings:
+
+```bash
+make eval                 # isolated 10-case PostgreSQL DBA eval
+make eval EVAL_CASE=C03   # run one case while developing
+```
+
+The command starts the real backend and PostgreSQL fixture, scores reliability, grounded intelligence, safety, and provider availability, then writes Markdown/JSON evidence under `.artifacts/evals/`. API keys stay local and are never written to reports. See the [Eval documentation](https://sunetic.github.io/praxis/reliability/evaluation/) for the full workflow and case catalog.
 
 ## Roadmap
 

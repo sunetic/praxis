@@ -5,6 +5,7 @@ from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Any
 
+from app.core.config import get_settings
 from app.core.logging import fmt_kv, get_logger
 from app.db.database import SessionLocal
 from app.services.datasource.router import DataSourceRoutingError, resolve_datasource_by_role
@@ -1085,7 +1086,7 @@ class ExecCommandTool(BaseTool):
         return None
 
     def _validate_path_args(self, command: str, args: list[str]) -> dict[str, Any] | None:
-        data_dir = Path("data").resolve()
+        data_dir = Path(get_settings().data_dir).resolve()
         path_args = self._extract_path_args(command, args)
         if command in {"grep", "rg", "sed"} and not path_args:
             return {
@@ -1101,7 +1102,9 @@ class ExecCommandTool(BaseTool):
                 resolved = Path(arg).resolve()
             except (ValueError, OSError):
                 continue
-            if not str(resolved).startswith(str(data_dir)):
+            try:
+                resolved.relative_to(data_dir)
+            except ValueError:
                 return {
                     "code": "path_violation",
                     "message": f"Path must be under data/: {arg}",

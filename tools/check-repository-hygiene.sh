@@ -2,8 +2,8 @@
 set -eu
 
 forbidden_paths="$({
-  git ls-tree -r --name-only HEAD |
-    grep -E '(^|/)(CLAUDE|AGENTS|GEMINI)\.md$|(^|/)\.(claude|cursor|codex|agents|opencode|captain|continue|windsurf|codegraph)(/|$)|(^|/)openspec(/|$)|(^|/)\.aider|(^|/)\.env($|\.)|(^|/)(id_rsa|id_ed25519)|\.(pem|key|p12|pfx|jks|keystore)$|(^|/)(credentials|service-account[^/]*)\.json$|^data/knowledge_packs\.json$' |
+  git ls-files |
+    grep -E '(^|/)(CLAUDE|AGENTS|GEMINI)\.md$|(^|/)\.(claude|cursor|codex|agents|opencode|captain|continue|windsurf|codegraph)(/|$)|(^|/)(spec|openspec)(/|$)|(^|/)\.aider|(^|/)\.env($|\.)|(^|/)(id_rsa|id_ed25519)|\.(pem|key|p12|pfx|jks|keystore)$|(^|/)(credentials|service-account[^/]*)\.json$|^data/knowledge_packs\.json$' |
     grep -Ev '(^|/)\.env\.(example|sample|template)$' || true
 })"
 

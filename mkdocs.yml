@@ -1,0 +1,137 @@
+site_name: Praxis Documentation
+site_description: Product and usage documentation for the AI-native database agent platform
+site_url: https://sunetic.github.io/praxis/
+repo_url: https://github.com/sunetic/praxis
+repo_name: sunetic/praxis
+edit_uri: edit/main/docs/
+
+docs_dir: docs
+site_dir: site_handbook
+strict: true
+use_directory_urls: true
+
+theme:
+  name: material
+  custom_dir: docs/overrides
+  language: en
+  features:
+    - navigation.sections
+    - navigation.top
+    - search.highlight
+    - search.suggest
+    - content.code.copy
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+
+plugins:
+  - search
+  - i18n:
+      docs_structure: suffix
+      fallback_to_default: false
+      reconfigure_material: true
+      reconfigure_search: true
+      languages:
+        - locale: en
+          default: true
+          name: English
+          build: true
+          site_name: Praxis Documentation
+        - locale: zh
+          name: 中文
+          build: true
+          site_name: Praxis 文档
+          site_description: AI 原生数据库 Agent 平台的产品与使用文档
+          theme:
+            palette:
+              - media: "(prefers-color-scheme: light)"
+                scheme: default
+                primary: indigo
+                accent: indigo
+                toggle:
+                  icon: material/brightness-7
+                  name: 切换到深色模式
+              - media: "(prefers-color-scheme: dark)"
+                scheme: slate
+                primary: indigo
+                accent: indigo
+                toggle:
+                  icon: material/brightness-4
+                  name: 切换到浅色模式
+          nav_translations:
+            Home: 首页
+            Getting Started: 开始使用
+            Positioning and Design Philosophy: 项目定位与设计理念
+            Core Concepts: 核心概念
+            Configuration and Security: 配置与安全
+            AI Workspace: AI 工作区
+            Connections and Knowledge: 连接与知识
+            Datasources: 数据源
+            Services: 服务
+            Knowledge Bases: 知识库
+            Channels: 渠道
+            Build and Runtime: 构建与运行
+            System: 系统
+            Capabilities and Safety: 能力与安全
+            Settings: 设置
+            Reliability: 可靠性增强
+            Long-task Reliability: 长任务可靠性
+            Evaluation: Eval 评估
+            Overview: 概览
+            PostgreSQL DBA Cases: PostgreSQL DBA Cases
+            Observability: 可观测性
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.details
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
+
+nav:
+  - Home: index.md
+  - Getting Started:
+      - Positioning and Design Philosophy: concepts/philosophy.md
+      - Core Concepts: concepts/mental-model.md
+      - Quickstart: getting-started/quickstart.md
+      - Configuration and Security: getting-started/configuration.md
+  - AI Workspace:
+      - Chat: features/chat.md
+      - Agent: features/agents.md
+      - Skills: features/skills.md
+  - Connections and Knowledge:
+      - Datasources: features/datasources.md
+      - Services: features/services.md
+      - Knowledge Bases: features/knowledge.md
+      - Channels: features/channels.md
+  - Build and Runtime:
+      - Function: features/functions.md
+      - Scheduler: features/schedulers.md
+  - System:
+      - Capabilities and Safety: features/capabilities.md
+      - Settings: features/settings.md
+  - Reliability:
+      - Long-task Reliability: reliability/long-tasks.md
+      - Evaluation:
+          - Overview: reliability/evaluation.md
+          - PostgreSQL DBA Cases: reliability/pg-dba-eval.md
+      - Observability: reliability/observability.md

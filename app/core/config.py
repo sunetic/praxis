@@ -77,6 +77,9 @@ class Settings(BaseSettings):
         tracing_db_path = data.get("tracing_db_path")
         if tracing_db_path is not None:
             data["tracing_db_path"] = str(_resolve_project_path(str(tracing_db_path)))
+        data_dir = data.get("data_dir")
+        if data_dir is not None:
+            data["data_dir"] = str(_resolve_project_path(str(data_dir)))
         return data
 
     app_name: str = "Praxis"
@@ -85,6 +88,7 @@ class Settings(BaseSettings):
     secret_key: str = "dev-secret-key"
 
     database_url: str = f"sqlite:///{DEFAULT_SQLITE_DB_PATH}"
+    data_dir: str = str(DEFAULT_DATA_DIR)
     sqlalchemy_echo: bool = False
 
     ai_base_url: str = "https://api.openai.com/v1"

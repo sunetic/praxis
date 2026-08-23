@@ -14,7 +14,7 @@ router = APIRouter(prefix="/knowledge-bases", tags=["KnowledgeBases"])
 logger = get_logger("api.knowledge")
 
 settings = get_settings()
-KNOWLEDGE_ROOT = Path(settings.data_dir if hasattr(settings, "data_dir") else "data") / "knowledge"
+KNOWLEDGE_ROOT = Path(settings.data_dir) / "knowledge"
 
 
 def _kb_dir(kb_id: int) -> Path:

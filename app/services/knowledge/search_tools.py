@@ -12,13 +12,13 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Any
 
-from app.core.config import DEFAULT_DATA_DIR
+from app.core.config import get_settings
 from app.core.logging import fmt_kv, get_logger
 from app.services.knowledge.query_expansion import QueryPlan
 
 logger = get_logger("knowledge.search_tools")
 
-_DATA_ROOT = DEFAULT_DATA_DIR / "knowledge"
+_DATA_ROOT = Path(get_settings().data_dir) / "knowledge"
 _SEARCH_TIMEOUT = 15
 _FETCH_TIMEOUT = 300
 _MAX_OUTPUT_BYTES = 300_000

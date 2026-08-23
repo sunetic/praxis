@@ -3,14 +3,13 @@
 # Generate per-feature demo GIFs from raw recordings.
 # Trims only long idle waits; keeps all meaningful content at normal speed.
 #
-# Usage: bash tools/make-demo-gif.sh
-#   Env overrides: WIDTH=1280 FPS=12
-#   Source dir: /Users/weixiao/Documents/Praxis/recordings/v2
+# Usage: SRC=/path/to/recordings bash tools/make-demo-gif.sh
+#   Env overrides: SRC=assets/recordings/v2 OUT=assets WIDTH=1280 FPS=12
 #
 set -euo pipefail
 
-SRC="/Users/weixiao/Documents/Praxis/recordings/v2"
-OUT="assets"
+SRC=${SRC:-assets/recordings/v2}
+OUT=${OUT:-assets}
 WIDTH=${WIDTH:-1280}
 FPS=${FPS:-12}
 

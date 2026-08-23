@@ -1,4 +1,9 @@
-.PHONY: install dev test lint guard-semantic migrate rollback migrate-create clean seed eval-context testbed-init testbed-once testbed-start testbed-stop testbed-status testbed-case rules-health handbook-build handbook-serve docker-build docker-up docker-down
+.PHONY: install dev test lint guard-semantic migrate rollback migrate-create clean seed eval eval-context eval-list testbed-init testbed-once testbed-start testbed-stop testbed-status testbed-case rules-health handbook-build handbook-serve docker-build docker-up docker-down
+
+EVAL_CASE ?= all
+EVAL_REPEAT ?= 1
+EVAL_BASELINE ?=
+EVAL_OUTPUT ?=
 
 TESTBED_DATASOURCE_ID ?=
 TESTBED_PREFIX ?= tb_
@@ -28,9 +33,13 @@ TESTBED_LOG_FILE ?= tmp/testbed.log
 UNAME_S := $(shell uname -s)
 ifeq ($(UNAME_S),Linux)
 UV_ENV := UV_PROJECT_ENVIRONMENT=.venv-linux
+VENV_DIR := .venv-linux
 else
 UV_ENV :=
+VENV_DIR := .venv
 endif
+
+MKDOCS := $(VENV_DIR)/bin/mkdocs
 
 install:
 	$(UV_ENV) uv sync
@@ -41,6 +50,16 @@ dev:
 
 test:
 	uv run pytest
+
+eval:
+	uv run python -m evals.pg_dba.run \
+		--case "$(EVAL_CASE)" \
+		--repeat "$(EVAL_REPEAT)" \
+		$(if $(EVAL_BASELINE),--baseline "$(EVAL_BASELINE)",) \
+		$(if $(EVAL_OUTPUT),--output "$(EVAL_OUTPUT)",)
+
+eval-list:
+	uv run python -m evals.pg_dba.run --list-cases
 
 eval-context:
 	uv run python -m evals.context_compaction.run
@@ -184,7 +203,9 @@ docker-down:
 
 # MkDocs Material → site_handbook/ ; FastAPI mounts at http://localhost:8000/handbook/
 handbook-build:
-	uv run mkdocs build -f mkdocs.yml
+	@test -x "$(MKDOCS)" || (echo "MkDocs is not installed; run 'make install' first." && exit 1)
+	$(MKDOCS) build -f mkdocs.yml
 
 handbook-serve:
-	uv run mkdocs serve -f mkdocs.yml -a 127.0.0.1:8001 --livereload --no-strict
+	@test -x "$(MKDOCS)" || (echo "MkDocs is not installed; run 'make install' first." && exit 1)
+	$(MKDOCS) serve -f mkdocs.yml -a 127.0.0.1:8001 --livereload --no-strict

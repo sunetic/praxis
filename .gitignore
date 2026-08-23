@@ -67,8 +67,8 @@ spec/
 # Local sqlite database
 praxis.db
 tracing.db
-tracing.db-shm
-tracing.db-wal
+*.db-shm
+*.db-wal
 .aider*
 
 # Runtime logs directory
@@ -86,6 +86,7 @@ logs/
 openspec
 CLAUDE.md
 AGENTS.md
+!docs/features/agents.md
 GEMINI.md
 .codegraph
 frontend/.captain

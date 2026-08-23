@@ -4,10 +4,12 @@ import json
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from pathlib import Path
 from typing import Any
 
 from sqlalchemy.orm import Session, sessionmaker
 
+from app.core.config import get_settings
 from app.core.logging import fmt_kv, get_logger
 from app.db.database import SessionLocal
 from app.models import models
@@ -42,6 +44,10 @@ from app.services.scheduler.worker import SchedulerWorker
 logger = get_logger("object.tools")
 
 SCHEDULER_HISTORY_STATUS_ENUM = {"queued", "running", "retrying", "success", "failed"}
+
+
+def _knowledge_doc_root(kb_id: int) -> str:
+    return f"{Path(get_settings().data_dir).resolve() / 'knowledge' / str(kb_id)}/"
 
 
 @dataclass
@@ -527,7 +533,7 @@ class ObjectToolService:
                             "description": kb.description,
                             "tags": kb.tags or [],
                             "document_count": doc_count,
-                            "doc_root": f"data/knowledge/{kb.id}/",
+                            "doc_root": _knowledge_doc_root(kb.id),
                         }
                     )
                 return {
@@ -561,7 +567,7 @@ class ObjectToolService:
                     "description": kb.description,
                     "tags": kb.tags or [],
                     "document_count": doc_count,
-                    "doc_root": f"data/knowledge/{kb.id}/",
+                    "doc_root": _knowledge_doc_root(kb.id),
                 }
 
         if object_type == "knowledge_document":

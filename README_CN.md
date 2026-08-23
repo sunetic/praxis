@@ -19,6 +19,10 @@
   <a href="README.md">English</a> | <a href="README_CN.md">中文</a>
 </p>
 
+<p align="center">
+  <a href="https://sunetic.github.io/praxis/zh/">完整文档</a>
+</p>
+
 ---
 
 ## Praxis 是什么
@@ -114,12 +118,30 @@ npm run dev        # Vite 开发服务 :5173
 make docker-build  # 构建 praxis:latest
 ```
 
+### 文档
+
+```bash
+make handbook-serve  # 中文预览：http://127.0.0.1:8001/praxis/zh/
+make handbook-build  # 构建到 site_handbook/
+```
+
 ### 运行测试
 
 ```bash
 make test          # 运行 pytest
 make lint          # 运行 ruff + semantic guard
 ```
+
+### 本地真实模型 Eval
+
+PR 检查仍然只运行确定性的常规测试；模型质量 Eval 使用本地凭据手动运行。启动 Docker 并在 Praxis 设置中配置好模型后：
+
+```bash
+make eval                 # 隔离运行 10 个 PostgreSQL DBA case
+make eval EVAL_CASE=C03   # 开发时只运行一个 case
+```
+
+命令会启动真实 Praxis 后端和 PostgreSQL 测试环境，分别评估可靠性、有事实依据的智能性、安全性及供应商可用性，并把 Markdown/JSON 报告和原始证据输出到 `.artifacts/evals/`。API Key 始终留在本地，不会写入报告。详细说明见 [Eval 文档](https://sunetic.github.io/praxis/zh/reliability/evaluation/)。
 
 ## 路线图
 
