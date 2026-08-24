@@ -1,6 +1,6 @@
 # PostgreSQL DBA Cases
 
-内置 PostgreSQL DBA suite 通过隔离的 PostgreSQL 16 fixture、真实 Praxis 后端、HTTP/流式 Chat、数据库工具和知识库路径，评估十个长任务。
+内置 PostgreSQL DBA suite（`2.1.0`）在隔离的 PostgreSQL 16 fixture 上评估十个长任务。`praxis` profile 使用真实后端与 Chat 链路；`model` profile 使用固定模型对比 harness。
 
 ## Case 目录
 
@@ -15,11 +15,13 @@
 | C07 | 优化器估算与统计信息 | 估算/实际行数、相关列、统计新鲜度与验证计划 |
 | C08 | 支付数据对账 | 六类合成异常的精确计数、样本和假设 |
 | C09 | 最小权限 | 账号权限违规、`PUBLIC CREATE` 与可回退整改草案 |
-| C10 | 知识驱动的事件判断 | 检索政策、结合新鲜数据库证据、分级阈值与审批边界 |
+| C10 | 政策支撑的事件判断 | 用命名来源支撑政策特有结论、结合实时证据并遵守审批边界 |
 
 ## Case 边界
 
-每个 case 都定义 prompt、fixture 状态、必需证据、禁止变更和确定性评分规则。Runner 会保留原始证据，并在每次 attempt 后检查 fixture 数据库没有发生禁止变更。
+每个 case 都定义任务、fixture 状态、参考答案检查、可选权威来源要求和禁止结果，不规定工具选择或最少调用次数。Runner 会保留原始证据，并在每次 attempt 后检查 fixture 数据库没有发生禁止变更。
+
+题库只覆盖常见生产 DBA 工作：健康基线、慢 SQL、阻塞、连接与事务压力、维护、索引、优化器统计、数据一致性、最小权限和事件决策。Case 不得针对 Praxis 的特定 Skill、Prompt、verifier、重试机制或工具调用路径；这些组件的确定性行为由 tests 验证，它们对通用数据库任务的影响只能通过 Eval 结果体现。
 
 Case 定义版本化保存在公开 Eval corpus 中，作为可复现的质量基准。
 

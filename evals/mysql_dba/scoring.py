@@ -1,4 +1,4 @@
-"""PostgreSQL DBA scoring compatibility wrapper."""
+"""MySQL DBA scoring compatibility wrapper."""
 
 from evals.dba.scoring import CaseScore, aggregate_scores, score_case, terminal_metrics
 

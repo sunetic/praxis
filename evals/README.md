@@ -4,5 +4,6 @@
 
 - [Eval 评估](../docs/reliability/evaluation.md)
 - [PostgreSQL DBA Cases](../docs/reliability/pg-dba-eval.md)
+- [MySQL DBA Cases](../docs/reliability/mysql-dba-eval.md)
 
-快速运行：`make eval`。API Key 只应存在于本地设置或环境变量中，不得写入 case、报告或提交。
+快速运行 PostgreSQL：`make eval`；运行 MySQL：`make eval EVAL_SUITE=mysql`；固定 harness 模型对比：`make eval EVAL_PROFILE=model`。API Key 只应存在于本地设置或环境变量中，不得写入 case、报告或提交。

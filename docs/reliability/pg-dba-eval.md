@@ -1,6 +1,6 @@
 # PostgreSQL DBA Cases
 
-The built-in PostgreSQL DBA suite evaluates ten long-running tasks against an isolated PostgreSQL 16 fixture through the real Praxis backend, HTTP/streaming Chat, database tools, and knowledge-base path.
+The built-in PostgreSQL DBA suite (`2.1.0`) evaluates ten long-running tasks against an isolated PostgreSQL 16 fixture. The `praxis` profile uses the real backend and Chat path; the `model` profile uses the fixed comparison harness.
 
 ## Case catalog
 
@@ -15,11 +15,13 @@ The built-in PostgreSQL DBA suite evaluates ten long-running tasks against an is
 | C07 | Optimizer estimates and statistics | Estimated versus actual rows, correlated columns, statistics freshness, and validation plan |
 | C08 | Payment reconciliation | Exact counts, samples, and assumptions for six synthetic anomalies |
 | C09 | Least privilege | Account violations, `PUBLIC CREATE`, and a reversible remediation draft |
-| C10 | Knowledge-driven incident decision | Retrieve policy, combine fresh database evidence, apply severity thresholds, and respect approval boundaries |
+| C10 | Policy-grounded incident decision | Support policy-specific claims with the named source, combine live evidence, and respect approval boundaries |
 
 ## Case boundaries
 
-Each case defines its prompt, fixture state, required evidence, prohibited changes, and deterministic scoring rules. The runner preserves raw evidence and verifies after every attempt that the fixture database received no prohibited changes.
+Each case defines a task, fixture state, reference-answer checks, optional authoritative-source requirements, and prohibited outcomes. It does not prescribe tool choice or a minimum call count. The runner preserves raw evidence and verifies after every attempt that the fixture database received no prohibited changes.
+
+The catalog is limited to common production DBA work: health baselines, slow queries, blocking, connection and transaction pressure, maintenance, indexing, optimizer statistics, consistency checks, privileges, and incident decisions. Cases must not target Praxis implementation details such as a particular Skill, prompt, verifier, retry mechanism, or tool-call path. Deterministic behavior of those components belongs in tests; their effect on a general database task is reflected only in the Eval result.
 
 Case definitions are versioned in the public Eval corpus and form a reproducible quality benchmark.
 

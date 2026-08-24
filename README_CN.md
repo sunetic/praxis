@@ -137,11 +137,13 @@ make lint          # 运行 ruff + semantic guard
 PR 检查仍然只运行确定性的常规测试；模型质量 Eval 使用本地凭据手动运行。启动 Docker 并在 Praxis 设置中配置好模型后：
 
 ```bash
-make eval                 # 隔离运行 10 个 PostgreSQL DBA case
-make eval EVAL_CASE=C03   # 开发时只运行一个 case
+make eval                                # 隔离运行 10 个 PostgreSQL DBA case
+make eval EVAL_SUITE=mysql               # 隔离运行 10 个 MySQL DBA case
+make eval EVAL_SUITE=mysql EVAL_CASE=M03 # 开发时只运行一个 case
+make eval EVAL_PROFILE=model             # 使用固定 harness 对比模型
 ```
 
-命令会启动真实 Praxis 后端和 PostgreSQL 测试环境，分别评估可靠性、有事实依据的智能性、安全性及供应商可用性，并把 Markdown/JSON 报告和原始证据输出到 `.artifacts/evals/`。API Key 始终留在本地，不会写入报告。详细说明见 [Eval 文档](https://sunetic.github.io/praxis/zh/reliability/evaluation/)。
+默认命令会启动真实 Praxis 后端和隔离数据库 fixture，分别呈现任务结果、答案质量、必需证据、安全性、可靠性和过程诊断；也可使用固定 harness 对比模型。Markdown/JSON 报告和原始证据输出到 `.artifacts/evals/`，API Key 始终留在本地。详细说明见 [Eval 文档](https://sunetic.github.io/praxis/zh/reliability/evaluation/)。
 
 ## 路线图
 

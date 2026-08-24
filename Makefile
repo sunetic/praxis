@@ -4,6 +4,19 @@ EVAL_CASE ?= all
 EVAL_REPEAT ?= 1
 EVAL_BASELINE ?=
 EVAL_OUTPUT ?=
+EVAL_SUITE ?= postgresql
+EVAL_EXPECTED_MODEL ?=
+EVAL_PROFILE ?= praxis
+
+ifeq ($(EVAL_SUITE),mysql)
+EVAL_MODULE := evals.mysql_dba.run
+else ifeq ($(EVAL_SUITE),postgresql)
+EVAL_MODULE := evals.pg_dba.run
+else ifeq ($(EVAL_SUITE),pg)
+EVAL_MODULE := evals.pg_dba.run
+else
+$(error EVAL_SUITE must be postgresql, pg, or mysql)
+endif
 
 TESTBED_DATASOURCE_ID ?=
 TESTBED_PREFIX ?= tb_
@@ -52,14 +65,16 @@ test:
 	uv run pytest
 
 eval:
-	uv run python -m evals.pg_dba.run \
+	uv run python -m $(EVAL_MODULE) \
 		--case "$(EVAL_CASE)" \
 		--repeat "$(EVAL_REPEAT)" \
+		--profile "$(EVAL_PROFILE)" \
+		$(if $(EVAL_EXPECTED_MODEL),--expected-model "$(EVAL_EXPECTED_MODEL)",) \
 		$(if $(EVAL_BASELINE),--baseline "$(EVAL_BASELINE)",) \
 		$(if $(EVAL_OUTPUT),--output "$(EVAL_OUTPUT)",)
 
 eval-list:
-	uv run python -m evals.pg_dba.run --list-cases
+	uv run python -m $(EVAL_MODULE) --list-cases
 
 eval-context:
 	uv run python -m evals.context_compaction.run

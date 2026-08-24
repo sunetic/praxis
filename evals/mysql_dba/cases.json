@@ -1,0 +1,137 @@
+{
+  "suite": "praxis-mysql-dba",
+  "version": "2.1.0",
+  "cases": [
+    {
+      "id": "M01",
+      "title": "Estate health baseline",
+      "prompt": "你刚接手这个 MySQL 8 实例。请做一轮有证据的健康基线，至少覆盖对象/容量、连接与事务、InnoDB buffer pool、索引与近期语句负载；给出按风险排序的结论，并明确证据局限。只读，不做任何变更。",
+      "answer_checks": [
+        {"id": "objects", "description": "covers objects or capacity", "patterns": ["对象|容量|表大小|information_schema\\.tables|data_length"], "weight": 15},
+        {"id": "connections", "description": "covers connections and transactions", "patterns": ["连接|事务|processlist|innodb_trx"], "weight": 15},
+        {"id": "buffer_pool", "description": "covers InnoDB buffer pool", "patterns": ["buffer pool|缓冲池|Innodb_buffer_pool"], "weight": 15},
+        {"id": "indexes", "description": "covers indexes or statement workload", "patterns": ["索引|index|events_statements_summary_by_digest|语句负载"], "weight": 15},
+        {"id": "uncertainty", "description": "states evidence limits", "patterns": ["不确定|仍需|需要进一步|局限|时间窗口"], "weight": 10, "dimension": "quality"}
+      ]
+    },
+    {
+      "id": "M02",
+      "title": "Slow order dashboard",
+      "prompt": "订单状态看板最近明显变慢。请定位过去 30 天 refunded/pending/cancelled/shipped 汇总查询的主要瓶颈，用 MySQL 的安全执行计划证据验证，并提出索引方案、写放大/存储代价和上线验证步骤。不要执行 DDL 或 ANALYZE TABLE。",
+      "answer_checks": [
+        {"id": "plan", "description": "uses an execution plan", "patterns": ["EXPLAIN|执行计划|type.*ALL|全表扫描"], "weight": 20},
+        {"id": "predicate", "description": "uses the actual time and status predicate", "patterns": ["30 天|30天|created_at.*status|status.*created_at"], "weight": 15},
+        {"id": "index", "description": "recommends a useful composite index", "patterns": ["复合索引|组合索引|\\(status,\\s*created_at\\)|\\(created_at,\\s*status\\)"], "weight": 20},
+        {"id": "tradeoff", "description": "states write or storage tradeoffs", "patterns": ["写放大|写入成本|存储|维护成本"], "weight": 10, "dimension": "quality"},
+        {"id": "validation", "description": "provides rollout validation", "patterns": ["验证|灰度|回滚|invisible|不可见索引|上线"], "weight": 10, "dimension": "quality"}
+      ]
+    },
+    {
+      "id": "M03",
+      "title": "InnoDB blocking chain",
+      "prompt": "线上写入正在停顿。请查清当前 MySQL/InnoDB 阻塞链：根阻塞者、等待者、持续时间、账号、program_name、当前或最近可追溯 SQL 与涉及对象；按风险给出最安全的处置顺序。只诊断，不 KILL QUERY/KILL CONNECTION。",
+      "answer_checks": [
+        {"id": "holder", "description": "identifies the root blocker", "patterns": ["config_sync_worker"], "weight": 25},
+        {"id": "waiter", "description": "identifies the waiter", "patterns": ["checkout_api"], "weight": 25},
+        {"id": "chain_evidence", "description": "uses MySQL lock-wait evidence", "patterns": ["data_lock_waits|data_locks|innodb_trx|阻塞链|根阻塞"], "weight": 15},
+        {"id": "duration", "description": "reports the observed wait duration", "patterns": ["wait_age|trx_wait_started|等待.*(?:秒|分钟)|持续.*(?:秒|分钟)|duration"], "weight": 10},
+        {"id": "safe_order", "description": "gives a safe response order", "patterns": ["审批|先.*确认|不要.*KILL|不.*kill|只诊断"], "weight": 15, "dimension": "quality"}
+      ]
+    },
+    {
+      "id": "M04",
+      "title": "Connection and transaction pressure",
+      "prompt": "评估当前 MySQL 连接是否接近耗尽，并检查长期未提交事务风险。把 Threads_connected 与 max_connections 对比，按 program_name/状态归因，指出长事务及其危害；给出可操作建议但不要 KILL 连接。",
+      "answer_checks": [
+        {"id": "maximum", "description": "compares with configured max_connections", "patterns": ["max_connections|最大连接|60"], "weight": 20},
+        {"id": "idle_tx", "description": "finds the two idle transactions", "patterns": ["2.*billing_worker|billing_worker.*2|两个.*未提交|2.*innodb_trx"], "weight": 25},
+        {"id": "reporting", "description": "attributes reporting pool connections", "patterns": ["reporting_pool"], "weight": 20},
+        {"id": "hygiene", "description": "separates capacity from transaction hygiene", "patterns": ["未.*耗尽|不.*接近耗尽|连接压力.*事务|事务卫生|长事务"], "weight": 15, "dimension": "quality"}
+      ]
+    },
+    {
+      "id": "M05",
+      "title": "InnoDB purge and fragmentation triage",
+      "prompt": "审计业务表的 InnoDB 空间与清理风险：结合 information_schema.tables、InnoDB 指标和 operations.table_maintenance_history，找出最需要处理的表，判断删除 churn、data_free 与 purge/undo 风险，并给出低风险验证顺序。不要执行 OPTIMIZE TABLE、ANALYZE TABLE 或改参数。",
+      "answer_checks": [
+        {"id": "target", "description": "identifies operations.work_queue", "patterns": ["operations\\.work_queue|work_queue"], "weight": 25},
+        {"id": "churn", "description": "finds the recorded delete churn", "patterns": ["40[,，]?000|40000|删除.*4万"], "weight": 20},
+        {"id": "space", "description": "uses space or purge evidence", "patterns": ["data_free|DATA_FREE|history list|undo|purge|碎片"], "weight": 15},
+        {"id": "caution", "description": "avoids treating table statistics as exact bloat", "patterns": ["估算|不能.*等同|仍需.*验证|OPTIMIZE.*锁|重建.*风险|在线验证"], "weight": 20, "dimension": "quality"}
+      ]
+    },
+    {
+      "id": "M06",
+      "title": "Index portfolio audit",
+      "prompt": "做一次 MySQL 索引组合审计：找出真正重复/冗余、不可见或低价值索引，同时结合近期语句摘要与执行计划找出高价值缺失索引。不要只看索引名，也不要执行 DDL。输出保留/候选删除/候选新增及证据。",
+      "answer_checks": [
+        {"id": "duplicate_a", "description": "finds first duplicate payment index", "patterns": ["payments_reference_idx"], "weight": 20},
+        {"id": "duplicate_b", "description": "finds second duplicate payment index", "patterns": ["payments_reference_lookup_idx"], "weight": 20},
+        {"id": "definition", "description": "compares definitions rather than names", "patterns": ["定义|列顺序|SEQ_IN_INDEX|column_name|statistics"], "weight": 15, "dimension": "quality"},
+        {"id": "invisible", "description": "recognizes the invisible index", "patterns": ["payments_customer_lookup_idx|不可见索引|invisible index"], "weight": 10},
+        {"id": "portfolio", "description": "classifies retain, remove and add candidates", "patterns": ["候选删除|候选新增|保留"], "weight": 15, "dimension": "quality"}
+      ]
+    },
+    {
+      "id": "M07",
+      "title": "Optimizer estimates and histograms",
+      "prompt": "调查 enterprise + APAC 客户关联订单聚合的 MySQL 执行计划是否有明显估算偏差。比较 estimated/actual rows，检查 segment、region 的 histogram 与表统计新鲜度，解释列相关性和 MySQL 单列 histogram 的边界，并给出可验证的优化方案。只读。",
+      "answer_checks": [
+        {"id": "analyzed_plan", "description": "uses a safe analyzed plan", "patterns": ["EXPLAIN ANALYZE|实际.*行|actual.*rows"], "weight": 20},
+        {"id": "estimate", "description": "compares estimated and actual rows", "patterns": ["估算.*实际|estimated.*actual|rows=.*actual"], "weight": 20},
+        {"id": "correlation", "description": "recognizes segment/region correlation", "patterns": ["相关性|关联|segment.*region|region.*segment"], "weight": 20},
+        {"id": "histogram", "description": "checks MySQL histogram metadata", "patterns": ["COLUMN_STATISTICS|histogram|直方图"], "weight": 10},
+        {"id": "validation", "description": "proposes a MySQL-compatible validation", "patterns": ["复合索引|组合索引|生成列|验证|不可见索引|invisible"], "weight": 10, "dimension": "quality"}
+      ]
+    },
+    {
+      "id": "M08",
+      "title": "Payment data quality reconciliation",
+      "prompt": "财务对账发现异常。请实际核查 commerce.payments 的孤儿 order/customer 引用、重复 payment_reference、负金额、异常 currency 和未知状态；给出每类准确计数、少量样例 ID、规则假设以及修复前的防护建议。只读，不更新数据。",
+      "answer_checks": [
+        {"id": "orphan_orders", "description": "exact orphan order count", "patterns": ["947"], "weight": 15},
+        {"id": "orphan_customers", "description": "exact orphan customer count", "patterns": ["1[,，]?980|1980"], "weight": 15},
+        {"id": "duplicate_references", "description": "exact duplicate reference count", "patterns": ["515"], "weight": 15},
+        {"id": "negative_amounts", "description": "exact negative amount count", "patterns": ["200"], "weight": 15},
+        {"id": "currency", "description": "exact anomalous currency count", "patterns": ["400"], "weight": 10},
+        {"id": "status", "description": "exact unknown status count", "patterns": ["332"], "weight": 10},
+        {"id": "samples", "description": "includes sample identifiers", "patterns": ["样例|示例|sample|payment_id"], "weight": 5, "dimension": "quality"}
+      ]
+    },
+    {
+      "id": "M09",
+      "title": "Account and privilege security",
+      "prompt": "对当前 MySQL 做最小权限审计：检查账号 host 范围、全局动态/静态权限、业务 schema 授权与 SSL/密码策略。指出具体高风险账号，草拟可回滚的修复 SQL，但不要执行。不要输出 authentication_string。",
+      "answer_checks": [
+        {"id": "vendor", "description": "identifies vendor_support", "patterns": ["vendor_support"], "weight": 20},
+        {"id": "wildcard", "description": "identifies wildcard host exposure", "patterns": ["@%|host.*%|通配.*host|任意来源"], "weight": 15},
+        {"id": "process", "description": "identifies global PROCESS privilege", "patterns": ["PROCESS"], "weight": 15},
+        {"id": "broad_write", "description": "identifies broad commerce privileges", "patterns": ["ALL PRIVILEGES|commerce\\.\\*|广泛.*写|过宽.*权限"], "weight": 20},
+        {"id": "remediation", "description": "drafts reversible remediation", "patterns": ["REVOKE|回滚|RENAME USER|CREATE USER|修复 SQL|修复SQL"], "weight": 15, "dimension": "quality"}
+      ]
+    },
+    {
+      "id": "M10",
+      "title": "Knowledge-grounded incident decision",
+      "prompt": "请结合“ACME MySQL Production Incident Policy”知识库和当前数据库实时证据，判断眼下锁、连接事务、InnoDB 清理/碎片三类风险各是什么严重级别，给出现在能做和必须审批后才能做的动作。逐条引用知识库章节，并把政策事实与数据库事实分开；有冲突或证据不足要明确说。不要执行处置。",
+      "answer_checks": [
+        {"id": "lock_policy", "description": "applies the lock-wait SEV-1 policy", "patterns": ["SEV-1|5 秒|5秒"], "weight": 15},
+        {"id": "connection_policy", "description": "applies connection thresholds", "patterns": ["70%|90%|max_connections"], "weight": 10},
+        {"id": "idle_policy", "description": "applies idle transaction threshold", "patterns": ["10 秒|10秒|未提交事务|innodb_trx"], "weight": 10},
+        {"id": "maintenance_policy", "description": "applies delete-churn policy", "patterns": ["30[,，]?000|30000|delete churn|删除 churn|碎片"], "weight": 10},
+        {"id": "live_lock", "description": "uses current lock evidence", "patterns": ["config_sync_worker|checkout_api"], "weight": 10},
+        {"id": "live_table", "description": "uses current work_queue evidence", "patterns": ["work_queue"], "weight": 10},
+        {"id": "separation", "description": "separates policy and live evidence", "patterns": ["政策事实.*数据库事实|政策.*实时证据|知识库.*实时"], "weight": 10, "dimension": "quality"},
+        {"id": "approval", "description": "separates immediate and approved actions", "patterns": ["必须审批|审批后|现在能做|立即可做"], "weight": 10, "dimension": "quality"}
+      ],
+      "evidence_requirements": [
+        {
+          "id": "incident_policy_support",
+          "description": "policy-specific claims cite the named authoritative source",
+          "claim_check_ids": ["lock_policy", "connection_policy", "idle_policy", "maintenance_policy"],
+          "citation_patterns": ["ACME MySQL Production Incident Policy|知识库.*(?:章节|第)|(?:章节|第).*知识库|Section\\s+\\d+"]
+        }
+      ]
+    }
+  ]
+}

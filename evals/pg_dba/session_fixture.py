@@ -17,10 +17,10 @@ async def main() -> None:
     dsn = os.environ.get("PG_DBA_LAB_DSN", "").strip()
     if not dsn:
         raise RuntimeError("PG_DBA_LAB_DSN is required")
-    holder = await _connect(dsn, "praxis_lock_holder")
-    waiter = await _connect(dsn, "checkout_api_waiter")
-    idle_one = await _connect(dsn, "legacy_billing_idle_tx")
-    idle_two = await _connect(dsn, "legacy_billing_idle_tx")
+    holder = await _connect(dsn, "config_sync_worker")
+    waiter = await _connect(dsn, "checkout_api")
+    idle_one = await _connect(dsn, "billing_worker")
+    idle_two = await _connect(dsn, "billing_worker")
     sleepers = [await _connect(dsn, "reporting_pool") for _ in range(8)]
 
     await holder.execute("BEGIN")
@@ -39,8 +39,7 @@ async def main() -> None:
         )
     )
     print(
-        "fixture_ready holder=praxis_lock_holder waiter=checkout_api_waiter "
-        "idle_tx=2 reporting_idle=8",
+        "fixture_ready holder=config_sync_worker waiter=checkout_api idle_tx=2 reporting_idle=8",
         flush=True,
     )
     try:

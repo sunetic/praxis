@@ -137,11 +137,13 @@ make lint          # run ruff + semantic guard
 PR checks remain deterministic tests; live-model quality evals run manually with local credentials. With Docker running and a model configured in Praxis Settings:
 
 ```bash
-make eval                 # isolated 10-case PostgreSQL DBA eval
-make eval EVAL_CASE=C03   # run one case while developing
+make eval                                # isolated 10-case PostgreSQL DBA eval
+make eval EVAL_SUITE=mysql               # isolated 10-case MySQL DBA eval
+make eval EVAL_SUITE=mysql EVAL_CASE=M03 # run one case while developing
+make eval EVAL_PROFILE=model             # compare models with the fixed harness
 ```
 
-The command starts the real backend and PostgreSQL fixture, scores reliability, grounded intelligence, safety, and provider availability, then writes Markdown/JSON evidence under `.artifacts/evals/`. API keys stay local and are never written to reports. See the [Eval documentation](https://sunetic.github.io/praxis/reliability/evaluation/) for the full workflow and case catalog.
+The default profile starts the real backend and an isolated database fixture; the model profile fixes a small harness for model comparison. Reports separate task outcome, answer quality, required evidence, safety, reliability, and trajectory diagnostics under `.artifacts/evals/`. API keys stay local. See the [Eval documentation](https://sunetic.github.io/praxis/reliability/evaluation/) for details.
 
 ## Roadmap
 

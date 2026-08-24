@@ -91,6 +91,7 @@ plugins:
             Evaluation: Eval 评估
             Overview: 概览
             PostgreSQL DBA Cases: PostgreSQL DBA Cases
+            MySQL DBA Cases: MySQL DBA Cases
             Observability: 可观测性
 
 markdown_extensions:
@@ -134,4 +135,5 @@ nav:
       - Evaluation:
           - Overview: reliability/evaluation.md
           - PostgreSQL DBA Cases: reliability/pg-dba-eval.md
+          - MySQL DBA Cases: reliability/mysql-dba-eval.md
       - Observability: reliability/observability.md

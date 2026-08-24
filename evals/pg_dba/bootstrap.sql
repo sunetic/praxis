@@ -108,7 +108,7 @@ SELECT
 FROM generate_series(1, 350000) AS g;
 
 CREATE INDEX payments_reference_idx ON commerce.payments(payment_reference);
-CREATE INDEX payments_reference_duplicate_idx ON commerce.payments(payment_reference);
+CREATE INDEX payments_reference_lookup_idx ON commerce.payments(payment_reference);
 CREATE INDEX payments_customer_idx ON commerce.payments(customer_id);
 
 CREATE TABLE operations.audit_events (

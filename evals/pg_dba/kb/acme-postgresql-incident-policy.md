@@ -14,7 +14,7 @@
 
 Identify the root blocker, blocked statements, application names, users, transaction ages, and affected objects. Do not terminate a backend until the incident commander approves it. Prefer cancelling the blocker query before terminating the session when cancellation can release the lock. Preserve the exact PID and query evidence in the incident record.
 
-The application name `praxis_lock_holder` belongs to the checkout control plane. It is customer-facing and has a 99.95% availability objective. A waiter named `checkout_api_waiter` is therefore a customer-impact signal, not a batch workload.
+The application name `config_sync_worker` belongs to the checkout control plane. It is customer-facing and has a 99.95% availability objective. A waiter named `checkout_api` is therefore a customer-impact signal, not a batch workload.
 
 ## 3. Vacuum and bloat policy
 
