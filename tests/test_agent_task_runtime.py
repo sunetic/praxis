@@ -10,6 +10,7 @@ from app.services.agent.task_runtime import (
     Observation,
     ProgressDecision,
     TaskJournal,
+    VerificationResult,
     build_component_evidence_prompt,
     build_verifier_prompt,
     deterministic_completion_precheck,
@@ -146,7 +147,7 @@ def test_evidence_keeps_sql_methodology_and_verifier_rejects_mixed_units() -> No
     assert "ACTIVE SKILL VERIFICATION POLICIES" in prompt
     assert "source provenance" in prompt
     assert "not inspected means unknown, not absent" in prompt
-    assert "compound acceptance criterion as a checklist" in prompt
+    assert "checklist supplied by component_hints" in prompt
     assert "Evidence for one named component" in prompt
     arithmetic_prompt = build_verifier_prompt(
         journal,
@@ -776,10 +777,66 @@ def test_task_state_v0_migrates_and_resume_correction_is_preserved() -> None:
         [{"role": "user", "content": "继续执行，但不要检查 payments 表"}]
     )
 
-    assert migrated["version"] == 2
+    assert migrated["version"] == 3
     assert restored.contract.objective == "audit all tables"
     assert restored.user_corrections == ["继续执行，但不要检查 payments 表"]
     assert "payments" in restored.context_block()
+
+
+def test_best_candidate_and_convergence_metrics_survive_round_trip() -> None:
+    journal = _journal()
+    rejected = VerificationResult(
+        satisfied=False,
+        reason="One requested outcome is not yet supported.",
+        missing=["Support the remaining outcome."],
+        repair_type="rewrite",
+        criterion_results=[{"id": "ac-1", "satisfied": False}],
+    )
+
+    journal.record_candidate("A retained draft.", iteration=2, verification=rejected)
+    assert journal.record_verification_outcome(
+        satisfied=False,
+        verification=rejected,
+    ) == 1
+
+    restored = TaskJournal.from_dict(journal.to_dict())
+
+    assert restored.best_candidate is not None
+    assert restored.best_candidate.text == "A retained draft."
+    assert restored.best_candidate.verification == rejected.to_dict()
+    assert restored.metrics.verification_no_progress_rounds == 1
+    assert restored.metrics.last_verification_signature
+
+
+def test_more_activity_does_not_count_as_semantic_verification_progress() -> None:
+    journal = _journal()
+    rejected = VerificationResult(
+        satisfied=False,
+        reason="The same gap remains.",
+        missing=["Provide the requested comparison."],
+        repair_type="rewrite",
+        criterion_results=[{"id": "ac-1", "satisfied": False}],
+    )
+
+    assert journal.record_verification_outcome(
+        satisfied=False,
+        verification=rejected,
+    ) == 1
+    _evaluate(
+        journal,
+        _execution(
+            call_id="unrelated-evidence",
+            sql="SELECT CURRENT_TIMESTAMP",
+            success=True,
+            error_class="none",
+        ),
+        2,
+    )
+
+    assert journal.record_verification_outcome(
+        satisfied=False,
+        verification=rejected,
+    ) == 2
 
 
 @pytest.mark.parametrize(

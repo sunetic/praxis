@@ -104,11 +104,13 @@ class Settings(BaseSettings):
     agent_adversarial_verification_enabled: bool = True
     agent_max_transient_retries: int = 3
     agent_max_no_progress_rounds: int = 3
-    agent_max_verification_retries: int = 5
+    agent_max_verification_retries: int = 3
     agent_max_parallel_tools: int = 4
     agent_transient_backoff_base_seconds: float = 0.5
     agent_transient_backoff_max_seconds: float = 4.0
     agent_max_elapsed_seconds: float = 900.0
+    agent_soft_finalize_seconds: float = 240.0
+    agent_graceful_finalize_timeout_seconds: float = 30.0
 
     vite_api_base_url: str = "http://localhost:8000/api/v1"
     builder_runtime_enabled: bool = True

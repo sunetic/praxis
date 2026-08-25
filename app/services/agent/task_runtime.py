@@ -19,7 +19,7 @@ from typing import Any
 
 from app.services.agent.task_contract import TaskContract, latest_user_text
 
-TASK_STATE_VERSION = 2
+TASK_STATE_VERSION = 3
 
 _EVIDENCE_EXCERPT_MAX_CHARS = 10_000
 _VERIFIER_EVIDENCE_BUDGET_CHARS = 90_000
@@ -194,6 +194,10 @@ class TaskMetrics:
     verification_attempts: int = 0
     verification_no_progress_rounds: int = 0
     last_verification_evidence_count: int = 0
+    best_verification_score: int = -1_000_000
+    last_verification_signature: str = ""
+    malformed_verification_rounds: int = 0
+    graceful_finalizations: int = 0
     resumptions: int = 0
     llm_calls: int = 0
     input_tokens: int = 0
@@ -219,6 +223,74 @@ class VerificationResult:
 
 
 @dataclass
+class CandidateSnapshot:
+    """Persist the strongest answer draft so loop limits never erase useful work."""
+
+    text: str
+    iteration: int
+    evidence_count: int
+    score: int
+    verification: dict[str, Any] | None = None
+
+
+def _verification_progress_score(result: VerificationResult | None) -> int:
+    """Score only stable verifier structure, never domain vocabulary or answers."""
+    if result is None:
+        return -1_000_000
+    if result.satisfied:
+        return 1_000_000
+    satisfied_criteria = sum(
+        1 for item in result.criterion_results if bool(item.get("satisfied"))
+    )
+    unsatisfied_criteria = sum(
+        1 for item in result.criterion_results if not bool(item.get("satisfied"))
+    )
+    score = satisfied_criteria * 100 - unsatisfied_criteria * 50
+    score -= len(result.missing) * 10
+    score -= len(result.contradictions) * 20
+    if result.repair_type == "blocked":
+        score -= 100
+    if result.malformed:
+        score -= 500
+    return score
+
+
+def _verification_signature(result: VerificationResult | None) -> str:
+    if result is None:
+        return ""
+    structure = {
+        "satisfied": result.satisfied,
+        "repair_type": result.repair_type,
+        "malformed": result.malformed,
+        "missing": sorted(" ".join(item.split()).casefold() for item in result.missing),
+        "contradictions": sorted(
+            " ".join(item.split()).casefold() for item in result.contradictions
+        ),
+        "criteria": sorted(
+            (
+                str(item.get("id") or ""),
+                bool(item.get("satisfied")),
+                tuple(
+                    sorted(
+                        (
+                            str(component.get("component") or ""),
+                            bool(component.get("satisfied")),
+                        )
+                        for component in item.get("component_results") or []
+                        if isinstance(component, dict)
+                    )
+                ),
+            )
+            for item in result.criterion_results
+            if isinstance(item, dict)
+        ),
+    }
+    return hashlib.sha256(
+        json.dumps(structure, ensure_ascii=False, sort_keys=True).encode("utf-8")
+    ).hexdigest()[:20]
+
+
+@dataclass
 class TaskJournal:
     task_run_id: str
     contract: TaskContract
@@ -229,6 +301,7 @@ class TaskJournal:
     failure_episodes: list[FailureEpisode] = field(default_factory=list)
     active_failure_episode_id: str | None = None
     verification: VerificationResult | None = None
+    best_candidate: CandidateSnapshot | None = None
     metrics: TaskMetrics = field(default_factory=TaskMetrics)
     created_at: str = field(default_factory=lambda: _utc_now())
     updated_at: str = field(default_factory=lambda: _utc_now())
@@ -267,6 +340,23 @@ class TaskJournal:
                 for key, value in (payload.get("expected_action_evidence_refs") or {}).items()
             },
         )
+        candidate = payload.get("best_candidate")
+        if isinstance(candidate, dict) and str(candidate.get("text") or "").strip():
+            journal.best_candidate = CandidateSnapshot(
+                text=str(candidate.get("text") or ""),
+                iteration=int(candidate.get("iteration") or 0),
+                evidence_count=int(candidate.get("evidence_count") or 0),
+                score=int(
+                    candidate.get("score")
+                    if candidate.get("score") is not None
+                    else -1_000_000
+                ),
+                verification=(
+                    dict(candidate["verification"])
+                    if isinstance(candidate.get("verification"), dict)
+                    else None
+                ),
+            )
         journal.steps = [
             TaskStep(
                 id=str(item.get("id") or f"step-{index}"),
@@ -338,6 +428,18 @@ class TaskJournal:
             last_verification_evidence_count=int(
                 metrics.get("last_verification_evidence_count") or 0
             ),
+            best_verification_score=int(
+                metrics.get("best_verification_score")
+                if metrics.get("best_verification_score") is not None
+                else -1_000_000
+            ),
+            last_verification_signature=str(
+                metrics.get("last_verification_signature") or ""
+            ),
+            malformed_verification_rounds=int(
+                metrics.get("malformed_verification_rounds") or 0
+            ),
+            graceful_finalizations=int(metrics.get("graceful_finalizations") or 0),
             resumptions=int(metrics.get("resumptions") or 0) + 1,
             llm_calls=int(metrics.get("llm_calls") or 0),
             input_tokens=int(metrics.get("input_tokens") or 0),
@@ -383,12 +485,55 @@ class TaskJournal:
             "failure_episodes": [asdict(item) for item in self.failure_episodes],
             "active_failure_episode_id": self.active_failure_episode_id,
             "verification": self.verification.to_dict() if self.verification else None,
+            "best_candidate": asdict(self.best_candidate) if self.best_candidate else None,
             "metrics": asdict(self.metrics),
             "created_at": self.created_at,
             "updated_at": self.updated_at,
             "seen_success_signatures": list(self.seen_success_signatures),
             "user_corrections": list(self.user_corrections),
             "expected_action_evidence_refs": dict(self.expected_action_evidence_refs),
+        }
+
+    def record_candidate(
+        self,
+        text: str,
+        *,
+        iteration: int,
+        verification: VerificationResult | None = None,
+    ) -> None:
+        """Retain the strongest draft using only generic verifier structure."""
+        candidate = text.strip()
+        if not candidate:
+            return
+        score = _verification_progress_score(verification) if verification else -1_000_000
+        snapshot = CandidateSnapshot(
+            text=candidate,
+            iteration=iteration,
+            evidence_count=len(self.evidence),
+            score=score,
+            verification=verification.to_dict() if verification else None,
+        )
+        current = self.best_candidate
+        if current is None or score > current.score or (
+            score == current.score
+            and (
+                snapshot.evidence_count > current.evidence_count
+                or snapshot.iteration >= current.iteration
+            )
+        ):
+            self.best_candidate = snapshot
+            self.updated_at = _utc_now()
+
+    def finalization_payload(self) -> dict[str, Any]:
+        """Return a bounded, serializable bundle for evidence-grounded finalization."""
+        return {
+            "contract": self.contract.to_dict(),
+            "user_corrections": list(self.user_corrections),
+            "steps": [asdict(item) for item in self.steps],
+            "evidence": _verification_evidence_payload(self.evidence),
+            "failure_episodes": [asdict(item) for item in self.failure_episodes],
+            "verification": self.verification.to_dict() if self.verification else None,
+            "best_candidate": asdict(self.best_candidate) if self.best_candidate else None,
         }
 
     def context_block(self) -> str:
@@ -640,19 +785,53 @@ class TaskJournal:
     def unresolved_steps(self) -> list[TaskStep]:
         return [step for step in self.steps if step.status != "completed"]
 
-    def record_verification_outcome(self, *, satisfied: bool) -> int:
-        """Track consecutive verifier retries that add no tool evidence.
+    def record_verification_outcome(
+        self,
+        *,
+        satisfied: bool,
+        verification: VerificationResult | None = None,
+    ) -> int:
+        """Track verifier progress without treating activity as semantic progress.
 
         ``verification_attempts`` remains a lifetime observability counter.  The
-        retry safety valve is intentionally separate: a long task may fail
-        verification many times while still making useful progress.  Only
-        consecutive candidate rewrites without new evidence consume the budget.
+        retry safety valve is intentionally separate. New evidence resets the
+        counter only when the verifier requested evidence and its unresolved
+        structure also changes; rewrites must improve criterion coverage or reduce
+        gaps. This prevents a verifier from extending a task merely by inventing
+        another requirement.
         """
         evidence_count = len(self.evidence)
-        if satisfied or evidence_count > self.metrics.last_verification_evidence_count:
+        if verification is None:
+            if satisfied or evidence_count > self.metrics.last_verification_evidence_count:
+                self.metrics.verification_no_progress_rounds = 0
+            else:
+                self.metrics.verification_no_progress_rounds += 1
+            self.metrics.last_verification_evidence_count = evidence_count
+            self.updated_at = _utc_now()
+            return self.metrics.verification_no_progress_rounds
+        score = _verification_progress_score(verification)
+        signature = _verification_signature(verification)
+        first_verification = not self.metrics.last_verification_signature
+        semantic_progress = bool(
+            not first_verification and score > self.metrics.best_verification_score
+        )
+        evidence_progress = bool(
+            verification is not None
+            and verification.repair_type == "new_evidence"
+            and evidence_count > self.metrics.last_verification_evidence_count
+            and signature != self.metrics.last_verification_signature
+        )
+        if satisfied or semantic_progress or evidence_progress:
             self.metrics.verification_no_progress_rounds = 0
         else:
             self.metrics.verification_no_progress_rounds += 1
+        self.metrics.best_verification_score = max(
+            self.metrics.best_verification_score,
+            score,
+        )
+        self.metrics.last_verification_signature = signature
+        if verification is not None and verification.malformed:
+            self.metrics.malformed_verification_rounds += 1
         self.metrics.last_verification_evidence_count = evidence_count
         self.updated_at = _utc_now()
         return self.metrics.verification_no_progress_rounds
@@ -1210,6 +1389,11 @@ def build_verifier_prompt(
     return (
         f"{mode}\n"
         "Tools are disabled. Judge only from the task contract, journal evidence, and candidate answer.\n"
+        "The task contract is fixed for this verification. Do not invent, expand, rename, or reinterpret its "
+        "acceptance criteria. Judge answer-text requirements such as presentation, prioritization, uncertainty, "
+        "recommendations, approval boundaries, and whether an action is proposed directly from the candidate text; "
+        "do not demand a tool call to prove those textual properties. External-state facts still require suitable "
+        "journal evidence when presented as observed facts.\n"
         "The candidate must be a self-contained final answer because failed drafts are withheld from the user. "
         "Reject delta-only text that refers to an original/previous report, says all other findings remain, or "
         "only lists corrections without restating every required acceptance criterion.\n"
@@ -1218,14 +1402,15 @@ def build_verifier_prompt(
         "failure_assessments ([{id, blocking, reason, evidence_refs}]), criterion_results "
         "([{id, satisfied, evidence_refs, reason, component_results: "
         "[{component, satisfied, evidence_refs, reason}]}]).\n"
-        "Every required acceptance criterion needs concrete evidence. Natural-language confidence is not evidence. "
+        "Every required acceptance criterion needs support appropriate to its kind: tool-backed external facts use "
+        "journal evidence, while answer structure and language requirements use the candidate text. Natural-language "
+        "confidence is not evidence for an external fact. "
         "A failed tool attempt is historical evidence, not automatically an unfinished user requirement. For every "
         "failure episode whose status is open, diagnosing, or stalled, include one failure_assessments entry. Set "
         "blocking=true only when that failure still prevents a user-stated acceptance criterion from being met. "
         "When alternative successful evidence establishes the requested outcome, mark the failed attempt non-blocking "
         "and cite those evidence refs. Never invent a tool, lookup, or output requirement merely because it was tried. "
-        "Treat a compound acceptance criterion as a checklist: every component joined by conjunctions, slashes, "
-        "commas, semicolons, or enumerations must be satisfied independently. Evidence for one named component "
+        "Treat a compound acceptance criterion as the checklist supplied by component_hints. Evidence for one named component "
         "must not be used to mark its siblings satisfied; criterion_results must cite evidence for each factual "
         "component or report the uncovered component in missing. For every compound criterion, component_results "
         "is mandatory and must contain at least two separately judged entries. The task contract supplies "
@@ -1247,7 +1432,8 @@ def build_verifier_prompt(
         "evidence is sampled or truncated, reject claims that "
         "depend on unseen items and request evidence at the complete population level. Do not accept an evidence "
         "item merely because its title or output label matches the claim; its method must actually establish the "
-        "claim. One unsupported material claim makes satisfied=false. Treat every absence statement as a material "
+        "claim. Set satisfied=false when an unsupported claim materially changes a requested outcome; otherwise require "
+        "the candidate to qualify or remove it. Treat every absence statement as a material "
         "claim: not inspected means unknown, not absent.\n"
         "If satisfied=false, missing must contain actionable repairs. Set repair_type=new_evidence only when the "
         "journal truly lacks source facts; use rewrite when the available evidence is sufficient but the candidate "

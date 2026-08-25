@@ -864,7 +864,7 @@ async def test_tool_task_emits_task_plan_then_model_transition_before_tool() -> 
 
 
 @pytest.mark.anyio
-async def test_complex_task_never_reports_success_when_verification_stays_incomplete() -> None:
+async def test_complex_task_returns_grounded_best_effort_when_verification_stops_progressing() -> None:
     llm = FakeLLM(
         responses=[
             [_text_chunk("所有阶段均已成功完成。")],
@@ -879,6 +879,11 @@ async def test_complex_task_never_reports_success_when_verification_stays_incomp
                 _text_chunk(
                     '{"satisfied":false,"reason":"仍无工具证据",'
                     '"missing":["执行阶段一","执行阶段二"]}'
+                )
+            ],
+            [
+                _text_chunk(
+                    "根据现有信息，阶段一和阶段二仍缺少可验证证据，当前不能宣称已经完成。"
                 )
             ],
         ]
@@ -911,12 +916,103 @@ async def test_complex_task_never_reports_success_when_verification_stays_incomp
     )
     assert "所有阶段均已成功完成" not in visible_text
     assert "现在真的全部成功了" not in visible_text
-    assert "还有几处证据不够扎实" in visible_text
-    assert "标记为成功" not in visible_text
-    assert "执行状态已保存" not in visible_text
-    assert any(event["type"] == "checkpoint" for event in events)
-    assert events[-1]["data"]["completed"] is False
-    assert events[-1]["data"]["status"] == "incomplete"
+    assert "当前不能宣称已经完成" in visible_text
+    assert not any(event["type"] == "checkpoint" for event in events)
+    assert events[-1]["data"]["completed"] is True
+    assert events[-1]["data"]["status"] == "completed"
+    assert events[-1]["data"]["completion_mode"] == "best_effort"
+
+
+@pytest.mark.anyio
+async def test_malformed_verifier_gets_one_format_repair_then_graceful_answer() -> None:
+    llm = FakeLLM(
+        responses=[
+            [_text_chunk("候选分析。")],
+            [_text_chunk("not-json")],
+            [_text_chunk("still-not-json")],
+            [_text_chunk("现有证据只能支持候选分析中的部分结论，其余部分尚未确认。")],
+        ]
+    )
+    engine = _make_engine(
+        llm=llm,
+        config=EngineConfig(max_iterations=8, max_verification_retries=3),
+        task_contract_builder=StaticTaskContractBuilder(
+            complex=True,
+            criteria=[AcceptanceCriterion(id="ac-1", description="给出有证据的分析")],
+        ),
+    )
+
+    events = await _collect(
+        engine,
+        messages=[{"role": "user", "content": "给出有证据的分析"}],
+        tools=[],
+    )
+
+    visible_text = "".join(
+        event["data"].get("text", "") for event in events if event["type"] == "assistant"
+    )
+    verifications = [event for event in events if event["type"] == "verification"]
+    assert llm.call_count == 4
+    assert verifications[0]["data"]["malformed"] is True
+    assert "尚未确认" in visible_text
+    assert not any(event["type"] == "checkpoint" for event in events)
+    assert events[-1]["data"]["completed"] is True
+    assert events[-1]["data"]["completion_mode"] == "best_effort"
+    final_state = [event for event in events if event["type"] == "task_state"][-1]
+    assert "尚未确认" in final_state["data"]["best_candidate"]["text"]
+
+
+@pytest.mark.anyio
+async def test_timed_out_partial_finalizer_uses_complete_retained_candidate() -> None:
+    class PartialFinalizerLLM(FakeLLM):
+        async def chat(
+            self,
+            messages: list[dict[str, Any]],
+            tools: list[dict[str, Any]] | None = None,
+            stream: bool = True,
+            **kwargs: Any,
+        ) -> Any:
+            if self.call_count < 3:
+                async for chunk in super().chat(
+                    messages,
+                    tools=tools,
+                    stream=stream,
+                    **kwargs,
+                ):
+                    yield chunk
+                return
+            self.call_count += 1
+            yield _text_chunk("不应展示的半截收尾", finish_reason=None)
+            await asyncio.sleep(1)
+
+    llm = PartialFinalizerLLM(
+        responses=[
+            [_text_chunk("完整候选分析。")],
+            [_text_chunk("not-json")],
+            [_text_chunk("still-not-json")],
+        ]
+    )
+    engine = _make_engine(
+        llm=llm,
+        config=EngineConfig(graceful_finalize_timeout_seconds=0.01),
+        task_contract_builder=StaticTaskContractBuilder(
+            complex=True,
+            criteria=[AcceptanceCriterion(id="ac-1", description="给出完整分析")],
+        ),
+    )
+
+    events = await _collect(
+        engine,
+        messages=[{"role": "user", "content": "给出完整分析"}],
+        tools=[],
+    )
+
+    visible_text = "".join(
+        event["data"].get("text", "") for event in events if event["type"] == "assistant"
+    )
+    assert "完整候选分析" in visible_text
+    assert "不应展示的半截收尾" not in visible_text
+    assert events[-1]["data"]["completion_mode"] == "best_effort"
 
 
 @pytest.mark.anyio
@@ -1334,8 +1430,12 @@ async def test_transient_failures_use_exponential_backoff(
 
 
 @pytest.mark.anyio
-async def test_global_elapsed_time_limit_checkpoint_is_resumable() -> None:
-    llm = FakeLLM(responses=[])
+async def test_global_elapsed_time_limit_returns_best_available_answer() -> None:
+    llm = FakeLLM(
+        responses=[
+            [_text_chunk("时间预算内尚未获得客户和订单检查结果，因此当前不能给出完成结论。")]
+        ]
+    )
     engine = _make_engine(
         llm=llm,
         config=EngineConfig(max_elapsed_seconds=0.000000001),
@@ -1359,12 +1459,97 @@ async def test_global_elapsed_time_limit_checkpoint_is_resumable() -> None:
         tools=[],
     )
 
-    checkpoint = next(event for event in events if event["type"] == "checkpoint")
-    assert checkpoint["data"]["reason_code"] == "time_limit"
-    assert checkpoint["data"]["resumable"] is True
-    assert checkpoint["data"]["remaining_work"] == ["检查客户数据", "检查订单数据"]
-    assert events[-1]["data"]["completed"] is False
-    assert events[-1]["data"]["status"] == "incomplete"
+    visible_text = "".join(
+        event["data"].get("text", "") for event in events if event["type"] == "assistant"
+    )
+    assert "当前不能给出完成结论" in visible_text
+    assert not any(event["type"] == "checkpoint" for event in events)
+    assert events[-1]["data"]["completed"] is True
+    assert events[-1]["data"]["status"] == "completed"
+    assert events[-1]["data"]["completion_mode"] == "best_effort"
+
+
+@pytest.mark.anyio
+async def test_soft_deadline_converges_before_hard_limit() -> None:
+    llm = FakeLLM(
+        responses=[
+            [_text_chunk("已根据当前证据整理结论；未取得的外部事实已明确标为未知。")]
+        ]
+    )
+    engine = _make_engine(
+        llm=llm,
+        config=EngineConfig(
+            soft_finalize_seconds=0.000000001,
+            max_elapsed_seconds=30,
+        ),
+        task_contract_builder=StaticTaskContractBuilder(
+            complex=True,
+            criteria=[AcceptanceCriterion(id="ac-1", description="整理当前证据")],
+        ),
+    )
+
+    events = await _collect(
+        engine,
+        messages=[{"role": "user", "content": "整理当前证据"}],
+        tools=[],
+    )
+
+    assistant = next(event for event in events if event["type"] == "assistant")
+    assert assistant["meta"]["reason_code"] == "soft_deadline"
+    assert assistant["data"]["best_effort"] is True
+    assert events[-1]["data"]["completed"] is True
+    assert events[-1]["data"]["completion_mode"] == "best_effort"
+
+
+@pytest.mark.anyio
+async def test_in_flight_planner_is_bounded_to_preserve_final_answer_window() -> None:
+    class SlowPlannerThenFinalizer:
+        def __init__(self) -> None:
+            self.call_count = 0
+
+        async def chat(
+            self,
+            messages: list[dict[str, Any]],
+            tools: list[dict[str, Any]] | None = None,
+            stream: bool = True,
+            **kwargs: Any,
+        ) -> Any:
+            del messages, tools, stream, kwargs
+            call_index = self.call_count
+            self.call_count += 1
+            if call_index == 0:
+                await asyncio.sleep(1)
+                yield _text_chunk("This planner response should be cancelled.")
+                return
+            yield _text_chunk("已停止继续探索，并根据已有信息给出可交付结论。")
+
+    llm = SlowPlannerThenFinalizer()
+    engine = _make_engine(
+        llm=llm,
+        config=EngineConfig(
+            soft_finalize_seconds=0.01,
+            graceful_finalize_timeout_seconds=1,
+            max_elapsed_seconds=2,
+        ),
+        task_contract_builder=StaticTaskContractBuilder(
+            complex=True,
+            criteria=[AcceptanceCriterion(id="ac-1", description="整理已有信息")],
+        ),
+    )
+
+    events = await _collect(
+        engine,
+        messages=[{"role": "user", "content": "整理已有信息"}],
+        tools=[],
+    )
+
+    assistant = next(event for event in events if event["type"] == "assistant")
+    assert llm.call_count == 2
+    assert assistant["meta"]["reason_code"] == "operation_soft_deadline"
+    assert "可交付结论" in assistant["data"]["text"]
+    assert not any(event["type"] == "error" for event in events)
+    assert events[-1]["data"]["completed"] is True
+    assert events[-1]["data"]["completion_mode"] == "best_effort"
 
 
 @pytest.mark.anyio

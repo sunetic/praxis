@@ -67,30 +67,44 @@ class TaskContractAgent:
         objective = latest_user_text(messages).strip()
         input_tokens = 0
         output_tokens = 0
+        llm_calls = 0
         try:
-            response: dict[str, Any] | None = None
-            async for chunk in self._llm.chat(
-                messages=[
-                    {
-                        "role": "system",
-                        "content": PromptLoader.render("agent/prompts/task_contract.tpl"),
-                    },
-                    {"role": "user", "content": objective},
-                ],
-                tools=None,
-                stream=False,
-                temperature=0,
-                response_format={"type": "json_object"},
-            ):
-                response = chunk
-                break
-            if response is None:
-                raise ValueError("empty_response")
-            usage = response.get("usage") if isinstance(response.get("usage"), dict) else {}
-            input_tokens = int(usage.get("prompt_tokens") or usage.get("input_tokens") or 0)
-            output_tokens = int(usage.get("completion_tokens") or usage.get("output_tokens") or 0)
-            content = _response_content(response)
+            content, used_input, used_output = await self._request_contract(
+                objective,
+                PromptLoader.render("agent/prompts/task_contract.tpl"),
+            )
+            llm_calls += 1
+            input_tokens += used_input
+            output_tokens += used_output
             contract = _contract_from_response(objective, content)
+            if contract.complex and not contract.acceptance_criteria:
+                try:
+                    repair_prompt = PromptLoader.render(
+                        "agent/prompts/task_contract_repair.tpl",
+                        first_contract_json=json.dumps(
+                            contract.to_dict(),
+                            ensure_ascii=False,
+                            indent=2,
+                        ),
+                    )
+                    repaired_content, used_input, used_output = await self._request_contract(
+                        objective,
+                        repair_prompt,
+                    )
+                    llm_calls += 1
+                    input_tokens += used_input
+                    output_tokens += used_output
+                    repaired = _contract_from_response(objective, repaired_content)
+                    if repaired.acceptance_criteria:
+                        contract = repaired
+                    else:
+                        logger.warning("task_contract_repair_empty")
+                except Exception as repair_exc:
+                    llm_calls += 1
+                    logger.warning(
+                        "task_contract_repair_degraded %s",
+                        fmt_kv(error_code=_error_code(repair_exc)),
+                    )
             logger.info(
                 "task_contract_build_succeeded %s",
                 fmt_kv(
@@ -101,7 +115,7 @@ class TaskContractAgent:
             )
             return TaskContractBuild(
                 contract=contract,
-                llm_calls=1,
+                llm_calls=llm_calls,
                 input_tokens=input_tokens,
                 output_tokens=output_tokens,
             )
@@ -110,12 +124,37 @@ class TaskContractAgent:
             logger.warning("task_contract_build_degraded %s", fmt_kv(error_code=error_code))
             return TaskContractBuild(
                 contract=TaskContract.unclassified(messages, conservative=True),
-                llm_calls=1,
+                llm_calls=max(1, llm_calls),
                 input_tokens=input_tokens,
                 output_tokens=output_tokens,
                 source="fallback",
                 error_code=error_code,
             )
+
+    async def _request_contract(
+        self,
+        objective: str,
+        system_prompt: str,
+    ) -> tuple[str, int, int]:
+        response: dict[str, Any] | None = None
+        async for chunk in self._llm.chat(
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": objective},
+            ],
+            tools=None,
+            stream=False,
+            temperature=0,
+            response_format={"type": "json_object"},
+        ):
+            response = chunk
+            break
+        if response is None:
+            raise ValueError("empty_response")
+        usage = response.get("usage") if isinstance(response.get("usage"), dict) else {}
+        input_tokens = int(usage.get("prompt_tokens") or usage.get("input_tokens") or 0)
+        output_tokens = int(usage.get("completion_tokens") or usage.get("output_tokens") or 0)
+        return _response_content(response), input_tokens, output_tokens
 
 
 def _response_content(response: dict[str, Any]) -> str:

@@ -186,7 +186,9 @@ async def test_chat_service_iteration_limit_returns_explicit_error():
     assistant_events = [event for event in events if event["type"] == "assistant"]
     assert not error_events
     assert assistant_events
-    assert "阶段性结论" in (assistant_events[-1]["data"].get("text") or "")
+    answer = assistant_events[-1]["data"].get("text") or ""
+    assert "Best available conclusion" in answer
+    assert "unknown_tool" in answer
 
 
 @pytest.mark.anyio

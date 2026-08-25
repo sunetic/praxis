@@ -44,6 +44,33 @@ class ContractLLM:
         }
 
 
+class SequentialContractLLM:
+    def __init__(self, responses: list[dict[str, Any]]) -> None:
+        self.responses = responses
+        self.calls: list[dict[str, Any]] = []
+
+    async def chat(
+        self,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None = None,
+        stream: bool = True,
+        **kwargs: Any,
+    ) -> Any:
+        self.calls.append(
+            {"messages": messages, "tools": tools, "stream": stream, "kwargs": kwargs}
+        )
+        response = self.responses[len(self.calls) - 1]
+        yield {
+            "choices": [
+                {
+                    "message": {"content": json.dumps(response, ensure_ascii=False)},
+                    "finish_reason": "stop",
+                }
+            ],
+            "usage": {"prompt_tokens": 31, "completion_tokens": 17},
+        }
+
+
 def _decision(*, complex: bool, high_value: bool = False) -> dict[str, Any]:
     return {
         "constraints": [
@@ -95,6 +122,27 @@ async def test_contract_semantics_come_from_model_decision_and_template() -> Non
     assert call["kwargs"]["response_format"] == {"type": "json_object"}
     assert "text length" in call["messages"][0]["content"]
     assert call["messages"][1] == {"role": "user", "content": "Please handle Z."}
+
+
+@pytest.mark.anyio
+async def test_complex_empty_contract_gets_one_grounded_llm_repair() -> None:
+    first = _decision(complex=True)
+    first["acceptance_criteria"] = []
+    repaired = _decision(complex=True)
+    llm = SequentialContractLLM([first, repaired])
+
+    result = await TaskContractAgent(llm).build(
+        [{"role": "user", "content": "Please handle Z."}]
+    )
+
+    assert result.source == "llm"
+    assert result.llm_calls == 2
+    assert result.input_tokens == 62
+    assert result.output_tokens == 34
+    assert len(result.contract.acceptance_criteria) == 1
+    repair_prompt = llm.calls[1]["messages"][0]["content"]
+    assert "classified this as a complex task" in repair_prompt
+    assert "no independently" in repair_prompt
 
 
 @pytest.mark.anyio

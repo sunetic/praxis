@@ -124,6 +124,10 @@ class ChatService:
         self.transient_backoff_base_seconds = settings.agent_transient_backoff_base_seconds
         self.transient_backoff_max_seconds = settings.agent_transient_backoff_max_seconds
         self.max_elapsed_seconds = settings.agent_max_elapsed_seconds
+        self.soft_finalize_seconds = settings.agent_soft_finalize_seconds
+        self.graceful_finalize_timeout_seconds = (
+            settings.agent_graceful_finalize_timeout_seconds
+        )
 
     async def chat_with_tools(
         self,
@@ -196,6 +200,8 @@ class ChatService:
                 transient_backoff_base_seconds=self.transient_backoff_base_seconds,
                 transient_backoff_max_seconds=self.transient_backoff_max_seconds,
                 max_elapsed_seconds=self.max_elapsed_seconds,
+                soft_finalize_seconds=self.soft_finalize_seconds,
+                graceful_finalize_timeout_seconds=self.graceful_finalize_timeout_seconds,
                 context_window_tokens=(context_window_tokens or 128_000),
                 compression_threshold_tokens=(compression_threshold_tokens or 96_000),
                 compression_tail_budget_tokens=max(

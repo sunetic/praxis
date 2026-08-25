@@ -10,6 +10,8 @@ import re
 import time
 import uuid
 from collections.abc import AsyncGenerator, Awaitable, Callable
+from contextlib import asynccontextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass
 from enum import StrEnum
 from textwrap import dedent
@@ -18,13 +20,16 @@ from typing import Any, Protocol
 from app.core.logging import fmt_kv, get_logger
 from app.services.agent.context_compressor import ContextCompressor, estimate_messages_tokens
 from app.services.agent.task_contract import TaskContract
-from app.services.agent.task_contract_agent import TaskContractAgent, TaskContractBuilder
+from app.services.agent.task_contract_agent import (
+    TaskContractAgent,
+    TaskContractBuild,
+    TaskContractBuilder,
+)
 from app.services.agent.task_runtime import (
     Observation,
     ProgressDecision,
     TaskJournal,
     VerificationResult,
-    build_component_evidence_prompt,
     build_verifier_prompt,
     deterministic_completion_precheck,
     enforce_compound_criterion_audit,
@@ -32,6 +37,7 @@ from app.services.agent.task_runtime import (
     parse_verification_result,
 )
 from app.services.llm import RateLimitError, get_llm_client
+from app.services.platform.prompt_loader import PromptLoader
 
 logger = get_logger("agent.reasoning_engine")
 
@@ -98,6 +104,8 @@ class EngineConfig:
     transient_backoff_base_seconds: float = 0.5
     transient_backoff_max_seconds: float = 4.0
     max_elapsed_seconds: float = 900.0
+    soft_finalize_seconds: float = 240.0
+    graceful_finalize_timeout_seconds: float = 30.0
 
 
 class ToolExecutor(Protocol):
@@ -199,6 +207,10 @@ class ReasoningEngine:
             "output_tokens": 0,
             "max_input_tokens": 0,
         }
+        self._execution_deadline_at: ContextVar[float | None] = ContextVar(
+            f"reasoning_deadline_{id(self)}",
+            default=None,
+        )
 
     async def run(
         self,
@@ -224,6 +236,11 @@ class ReasoningEngine:
         verification_policies = _extract_completion_verification_policies(system_prompt)
 
         cfg = self.config
+        self._execution_deadline_at.set(
+            started_at + cfg.soft_finalize_seconds
+            if cfg.soft_finalize_seconds > 0
+            else None
+        )
         resumed = cfg.persistent_journal_enabled and isinstance(task_state, dict)
         contract_source = "restored" if resumed else "disabled"
         contract_error_code: str | None = None
@@ -231,7 +248,15 @@ class ReasoningEngine:
             journal = TaskJournal.from_dict(task_state)
         else:
             if cfg.task_contract_enabled:
-                contract_build = await self.task_contract_builder.build(messages)
+                try:
+                    async with self._execution_budget():
+                        contract_build = await self.task_contract_builder.build(messages)
+                except TimeoutError:
+                    contract_build = TaskContractBuild(
+                        contract=TaskContract.unclassified(messages, conservative=True),
+                        source="fallback",
+                        error_code="soft_deadline",
+                    )
                 contract = contract_build.contract
                 contract_source = contract_build.source
                 contract_error_code = contract_build.error_code
@@ -314,6 +339,8 @@ class ReasoningEngine:
         )
         run_id = str(uuid.uuid4())
         final_status = "running"
+        completion_mode = "direct"
+        soft_finalize_attempted = False
         previous_elapsed_ms = journal.metrics.elapsed_ms
 
         logger.info(
@@ -363,18 +390,86 @@ class ReasoningEngine:
                 phase = ReasoningPhase.DONE
                 break
             elapsed_seconds = time.monotonic() - started_at
-            if cfg.max_elapsed_seconds > 0 and elapsed_seconds >= cfg.max_elapsed_seconds:
-                journal.status = "checkpointed"
-                final_status = "incomplete"
-                yield _checkpoint_event(
-                    journal=journal,
-                    phase=phase,
-                    iteration=iteration,
-                    run_id=run_id,
-                    reason_code="time_limit",
-                    reason="达到全局执行时限，当前进度已保存。",
+            if (
+                cfg.soft_finalize_seconds > 0
+                and not soft_finalize_attempted
+                and elapsed_seconds >= cfg.soft_finalize_seconds
+            ):
+                soft_finalize_attempted = True
+                finalized_text = await self._graceful_finalize(
+                    journal,
+                    reason="The soft execution deadline was reached; converge using existing evidence.",
                 )
-                phase = ReasoningPhase.DONE
+                if finalized_text:
+                    completion_mode = "best_effort"
+                    journal.metrics.graceful_finalizations += 1
+                    hard_blocked = _best_effort_hard_blocked(journal)
+                    journal.status = "checkpointed" if hard_blocked else "completed"
+                    final_status = "incomplete" if hard_blocked else "completed"
+                    emitted_text += finalized_text
+                    phase = ReasoningPhase.RESPONDING
+                    yield _event(
+                        type_="assistant",
+                        phase=phase,
+                        data={
+                            "text": finalized_text,
+                            "iteration": iteration,
+                            "incomplete": hard_blocked,
+                            "best_effort": True,
+                        },
+                        meta={
+                            "iteration": iteration,
+                            "run_id": run_id,
+                            "task_run_id": journal.task_run_id,
+                            "graceful_finalize": True,
+                            "reason_code": "soft_deadline",
+                        },
+                    )
+                    chat_messages.append({"role": "assistant", "content": finalized_text})
+                    break
+            if cfg.max_elapsed_seconds > 0 and elapsed_seconds >= cfg.max_elapsed_seconds:
+                finalized_text = await self._graceful_finalize(
+                    journal,
+                    reason="The hard execution deadline was reached; return the strongest available answer.",
+                )
+                if finalized_text:
+                    completion_mode = "best_effort"
+                    journal.metrics.graceful_finalizations += 1
+                    hard_blocked = _best_effort_hard_blocked(journal)
+                    journal.status = "checkpointed" if hard_blocked else "completed"
+                    final_status = "incomplete" if hard_blocked else "completed"
+                    emitted_text += finalized_text
+                    phase = ReasoningPhase.RESPONDING
+                    yield _event(
+                        type_="assistant",
+                        phase=phase,
+                        data={
+                            "text": finalized_text,
+                            "iteration": iteration,
+                            "incomplete": hard_blocked,
+                            "best_effort": True,
+                        },
+                        meta={
+                            "iteration": iteration,
+                            "run_id": run_id,
+                            "task_run_id": journal.task_run_id,
+                            "graceful_finalize": True,
+                            "reason_code": "hard_deadline",
+                        },
+                    )
+                    chat_messages.append({"role": "assistant", "content": finalized_text})
+                else:
+                    journal.status = "checkpointed"
+                    final_status = "incomplete"
+                    yield _checkpoint_event(
+                        journal=journal,
+                        phase=phase,
+                        iteration=iteration,
+                        run_id=run_id,
+                        reason_code="time_limit",
+                        reason="达到全局执行时限，当前进度已保存。",
+                    )
+                    phase = ReasoningPhase.DONE
                 break
 
             iteration += 1
@@ -554,38 +649,50 @@ class ReasoningEngine:
                         phase = ReasoningPhase.THINKING
                         continue
 
-                    journal.status = "checkpointed"
-                    final_status = "incomplete"
-                    yield _checkpoint_event(
-                        journal=journal,
-                        phase=phase,
-                        iteration=iteration,
-                        run_id=run_id,
-                        reason_code="verification_evidence_stalled",
-                        reason="验证失败后连续多轮未调用工具补充证据。",
-                    )
                     verification = journal.verification or VerificationResult(
                         satisfied=False,
                         reason="验证缺口尚未补齐。",
                         missing=["Collect new tool evidence for the verification gaps."],
                     )
-                    fallback_summary = _build_verification_checkpoint_summary(
-                        verification,
+                    finalized_text = await self._graceful_finalize(
                         journal,
+                        reason="Evidence collection stopped making progress; converge from retained evidence.",
                     )
-                    emitted_text += fallback_summary
+                    if not finalized_text:
+                        finalized_text = _build_best_candidate_fallback(journal, "")
+                    completion_mode = "best_effort"
+                    journal.metrics.graceful_finalizations += 1
+                    hard_blocked = _best_effort_hard_blocked(journal)
+                    journal.status = "checkpointed" if hard_blocked else "completed"
+                    final_status = "incomplete" if hard_blocked else "completed"
+                    if hard_blocked:
+                        yield _checkpoint_event(
+                            journal=journal,
+                            phase=phase,
+                            iteration=iteration,
+                            run_id=run_id,
+                            reason_code="verification_evidence_stalled",
+                            reason="验证失败后连续多轮未调用工具补充证据。",
+                        )
+                    emitted_text += finalized_text
                     yield _event(
                         type_="assistant",
                         phase=ReasoningPhase.RESPONDING,
-                        data={"text": fallback_summary, "incomplete": True},
+                        data={
+                            "text": finalized_text,
+                            "incomplete": hard_blocked,
+                            "best_effort": True,
+                        },
                         meta={
                             "iteration": iteration,
                             "run_id": run_id,
                             "task_run_id": journal.task_run_id,
-                            "checkpointed": True,
+                            "graceful_finalize": True,
+                            "reason_code": "verification_evidence_stalled",
                         },
                     )
-                    phase = ReasoningPhase.ERROR
+                    chat_messages.append({"role": "assistant", "content": finalized_text})
+                    phase = ReasoningPhase.RESPONDING
                     break
 
                 if plan["tool_calls"]:
@@ -715,7 +822,9 @@ class ReasoningEngine:
                         if run_parallel:
                             continue
 
-                        item = await self._execute_tool(prepared_tool_call)
+                        item = await self._await_with_execution_budget(
+                            self._execute_tool(prepared_tool_call)
+                        )
                         execution_results.append(item)
 
                         async for result_event in self._emit_tool_result(
@@ -733,8 +842,13 @@ class ReasoningEngine:
 
                     if run_parallel and prepared_calls:
                         execution_results = list(
-                            await asyncio.gather(
-                                *(self._execute_tool(tool_call) for tool_call in prepared_calls)
+                            await self._await_with_execution_budget(
+                                asyncio.gather(
+                                    *(
+                                        self._execute_tool(tool_call)
+                                        for tool_call in prepared_calls
+                                    )
+                                )
                             )
                         )
                         for item in execution_results:
@@ -946,6 +1060,8 @@ class ReasoningEngine:
                             )
                             candidate_text += truncation_notice
 
+                    journal.record_candidate(candidate_text, iteration=iteration)
+
                     should_verify = bool(
                         cfg.completion_verifier_enabled
                         and (
@@ -996,8 +1112,14 @@ class ReasoningEngine:
                             verification_policies=verification_policies,
                         )
                         journal.verification = verification
+                        journal.record_candidate(
+                            candidate_text,
+                            iteration=iteration,
+                            verification=verification,
+                        )
                         verification_no_progress_rounds = journal.record_verification_outcome(
-                            satisfied=verification.satisfied
+                            satisfied=verification.satisfied,
+                            verification=verification,
                         )
                         yield _event(
                             type_="verification",
@@ -1017,7 +1139,12 @@ class ReasoningEngine:
                         if cfg.persistent_journal_enabled:
                             yield _task_state_event(journal, phase, iteration, run_id)
                         if not verification.satisfied:
-                            if verification_no_progress_rounds < cfg.max_verification_retries:
+                            should_gracefully_finalize = bool(
+                                verification.malformed
+                                or verification_no_progress_rounds
+                                >= cfg.max_verification_retries
+                            )
+                            if not should_gracefully_finalize:
                                 verification_note = _build_verification_progress_note(
                                     journal,
                                     satisfied=False,
@@ -1075,33 +1202,56 @@ class ReasoningEngine:
                                 phase = ReasoningPhase.THINKING
                                 continue
 
-                            journal.status = "checkpointed"
-                            final_status = "incomplete"
-                            yield _checkpoint_event(
-                                journal=journal,
-                                phase=phase,
-                                iteration=iteration,
-                                run_id=run_id,
-                                reason_code="verification_incomplete",
-                                reason=verification.reason or "候选答案未覆盖全部验收条件。",
-                            )
-                            fallback_summary = _build_verification_checkpoint_summary(
-                                verification,
+                            finalized_text = await self._graceful_finalize(
                                 journal,
+                                reason=(
+                                    "The completion verifier remained malformed after format repair."
+                                    if verification.malformed
+                                    else "Completion verification stopped making semantic progress."
+                                ),
                             )
-                            emitted_text += fallback_summary
+                            if not finalized_text:
+                                finalized_text = _build_best_candidate_fallback(
+                                    journal,
+                                    candidate_text,
+                                )
+                            completion_mode = "best_effort"
+                            journal.metrics.graceful_finalizations += 1
+                            hard_blocked = _best_effort_hard_blocked(journal)
+                            journal.status = "checkpointed" if hard_blocked else "completed"
+                            final_status = "incomplete" if hard_blocked else "completed"
+                            if hard_blocked:
+                                yield _checkpoint_event(
+                                    journal=journal,
+                                    phase=phase,
+                                    iteration=iteration,
+                                    run_id=run_id,
+                                    reason_code="verification_blocked",
+                                    reason=verification.reason
+                                    or "候选答案仍有无法自行补齐的关键条件。",
+                                )
+                            emitted_text += finalized_text
                             yield _event(
                                 type_="assistant",
                                 phase=ReasoningPhase.RESPONDING,
-                                data={"text": fallback_summary, "incomplete": True},
+                                data={
+                                    "text": finalized_text,
+                                    "incomplete": hard_blocked,
+                                    "best_effort": True,
+                                },
                                 meta={
                                     "iteration": iteration,
                                     "run_id": run_id,
                                     "task_run_id": journal.task_run_id,
-                                    "checkpointed": True,
+                                    "graceful_finalize": True,
+                                    "reason_code": (
+                                        "verifier_malformed"
+                                        if verification.malformed
+                                        else "verification_no_progress"
+                                    ),
                                 },
                             )
-                            chat_messages.append({"role": "assistant", "content": fallback_summary})
+                            chat_messages.append({"role": "assistant", "content": finalized_text})
                             phase = ReasoningPhase.RESPONDING
                             break
 
@@ -1121,6 +1271,7 @@ class ReasoningEngine:
                                     "task_run_id": journal.task_run_id,
                                 },
                             )
+                        completion_mode = "verified"
 
                     transition_err = _check_transition(phase, ReasoningPhase.RESPONDING)
                     if transition_err:
@@ -1150,6 +1301,49 @@ class ReasoningEngine:
                     final_status = "completed"
                 break
 
+            except TimeoutError:
+                finalized_text = await self._graceful_finalize(
+                    journal,
+                    reason=(
+                        "The reserved final-answer window was reached during an in-flight "
+                        "operation; converge from retained evidence now."
+                    ),
+                )
+                completion_mode = "best_effort"
+                journal.metrics.graceful_finalizations += 1
+                hard_blocked = _best_effort_hard_blocked(journal)
+                journal.status = "checkpointed" if hard_blocked else "completed"
+                final_status = "incomplete" if hard_blocked else "completed"
+                if hard_blocked:
+                    yield _checkpoint_event(
+                        journal=journal,
+                        phase=phase,
+                        iteration=iteration,
+                        run_id=run_id,
+                        reason_code="operation_deadline_blocked",
+                        reason="执行预算已到，且仍有需要外部授权或真实动作证据的阻塞条件。",
+                    )
+                phase = ReasoningPhase.RESPONDING
+                emitted_text += finalized_text
+                yield _event(
+                    type_="assistant",
+                    phase=phase,
+                    data={
+                        "text": finalized_text,
+                        "iteration": iteration,
+                        "incomplete": hard_blocked,
+                        "best_effort": True,
+                    },
+                    meta={
+                        "iteration": iteration,
+                        "run_id": run_id,
+                        "task_run_id": journal.task_run_id,
+                        "graceful_finalize": True,
+                        "reason_code": "operation_soft_deadline",
+                    },
+                )
+                chat_messages.append({"role": "assistant", "content": finalized_text})
+                break
             except Exception as exc:
                 error_class = "rate_limited" if isinstance(exc, RateLimitError) else "runtime_error"
                 logger.exception(
@@ -1176,71 +1370,59 @@ class ReasoningEngine:
             ReasoningPhase.REFLECTING,
         }
         if iteration >= (cfg.max_iterations + progress_bonus_iterations) and phase in active_phases:
-            journal.status = "checkpointed"
-            final_status = "incomplete"
-            yield _checkpoint_event(
-                journal=journal,
-                phase=phase,
-                iteration=iteration,
-                run_id=run_id,
-                reason_code="iteration_limit",
-                reason="达到全局迭代上限，当前进度已保存。",
+            finalized_text = await self._graceful_finalize(
+                journal,
+                reason="The iteration budget was reached; converge using retained evidence.",
             )
-            synthesis: dict[str, Any] = {}
-            async for synth_event in self._synthesize_without_tools(chat_messages):
-                if synth_event["type"] == "text":
-                    emitted_text += synth_event["content"]
-                    yield _event(
-                        type_="assistant",
-                        phase=ReasoningPhase.RESPONDING,
-                        data={
-                            "text": synth_event["content"],
-                            "iteration": iteration,
-                            "incomplete": True,
-                        },
-                        meta={
-                            "iteration": iteration,
-                            "forced_finalize": True,
-                            "checkpointed": True,
-                            "run_id": run_id,
-                            "task_run_id": journal.task_run_id,
-                        },
-                    )
-                elif synth_event["type"] == "synthesis_result":
-                    synthesis = synth_event
-            if synthesis.get("assistant_text"):
-                phase = ReasoningPhase.RESPONDING
-                chat_messages.append({"role": "assistant", "content": synthesis["assistant_text"]})
-            else:
-                fallback_summary = _build_budget_exhausted_summary(chat_messages)
-                if fallback_summary:
-                    phase = ReasoningPhase.RESPONDING
-                    emitted_text += fallback_summary
-                    yield _event(
-                        type_="assistant",
+            if not finalized_text:
+                finalized_text = _build_best_candidate_fallback(journal, "")
+            if finalized_text:
+                completion_mode = "best_effort"
+                journal.metrics.graceful_finalizations += 1
+                hard_blocked = _best_effort_hard_blocked(journal)
+                journal.status = "checkpointed" if hard_blocked else "completed"
+                final_status = "incomplete" if hard_blocked else "completed"
+                if hard_blocked:
+                    yield _checkpoint_event(
+                        journal=journal,
                         phase=phase,
-                        data={"text": fallback_summary, "iteration": iteration},
-                        meta={
-                            "iteration": iteration,
-                            "forced_finalize": True,
-                            "fallback_finalize": True,
-                            "run_id": run_id,
-                            "task_run_id": journal.task_run_id,
-                            "checkpointed": True,
-                        },
-                    )
-                    chat_messages.append({"role": "assistant", "content": fallback_summary})
-                else:
-                    yield _error_event(
-                        phase=phase,
-                        message="Chat iteration limit reached before final response.",
                         iteration=iteration,
                         run_id=run_id,
-                        error_class="iteration_limit_exceeded",
+                        reason_code="iteration_limit",
+                        reason="达到全局迭代上限，关键阻塞条件仍未解决。",
                     )
-                    phase = ReasoningPhase.ERROR
-                    journal.status = "error"
-                    final_status = "error"
+                phase = ReasoningPhase.RESPONDING
+                emitted_text += finalized_text
+                yield _event(
+                    type_="assistant",
+                    phase=phase,
+                    data={
+                        "text": finalized_text,
+                        "iteration": iteration,
+                        "incomplete": hard_blocked,
+                        "best_effort": True,
+                    },
+                    meta={
+                        "iteration": iteration,
+                        "forced_finalize": True,
+                        "graceful_finalize": True,
+                        "run_id": run_id,
+                        "task_run_id": journal.task_run_id,
+                        "reason_code": "iteration_limit",
+                    },
+                )
+                chat_messages.append({"role": "assistant", "content": finalized_text})
+            else:
+                yield _error_event(
+                    phase=phase,
+                    message="Chat iteration limit reached before final response.",
+                    iteration=iteration,
+                    run_id=run_id,
+                    error_class="iteration_limit_exceeded",
+                )
+                phase = ReasoningPhase.ERROR
+                journal.status = "error"
+                final_status = "error"
 
         if not emitted_text.strip():
             if final_status == "completed":
@@ -1334,6 +1516,7 @@ class ReasoningEngine:
                 "text_emitted": bool(emitted_text.strip()),
                 "status": final_status if final_status != "running" else journal.status,
                 "completed": journal.status == "completed",
+                "completion_mode": completion_mode,
                 "task_run_id": journal.task_run_id,
                 "metrics": journal.to_dict()["metrics"],
             },
@@ -1439,16 +1622,6 @@ class ReasoningEngine:
         if not compound_audit.satisfied:
             return compound_audit
         primary = compound_audit
-        if any(
-            item.required and not item.requires_tool_evidence and len(item.component_hints) >= 2
-            for item in journal.contract.acceptance_criteria
-        ):
-            component_evidence = await self._run_verifier(
-                build_component_evidence_prompt(journal, primary, candidate_text),
-                evaluator="component_evidence_llm",
-            )
-            if not component_evidence.satisfied:
-                return component_evidence
         if self.config.adversarial_verification_enabled and journal.contract.high_value:
             arithmetic = await self._run_verifier(
                 build_verifier_prompt(
@@ -1476,28 +1649,11 @@ class ReasoningEngine:
         return primary
 
     async def _run_verifier(self, prompt: str, *, evaluator: str) -> VerificationResult:
-        messages = [
-            {
-                "role": "system",
-                "content": (
-                    "You are a completion verifier, not the task executor. "
-                    "Tools are disabled. Return strict JSON only."
-                ),
-            },
-            {"role": "user", "content": prompt},
-        ]
-        content = ""
         try:
-            self._run_usage["llm_calls"] += 1
-            async for chunk in self.llm.chat(messages, tools=None, stream=True):
-                self._record_chunk_usage(chunk)
-                choices = chunk.get("choices") or []
-                if not choices:
-                    continue
-                choice = choices[0] or {}
-                delta = choice.get("delta") if isinstance(choice.get("delta"), dict) else {}
-                message = choice.get("message") if isinstance(choice.get("message"), dict) else {}
-                content += str(delta.get("content") or message.get("content") or "")
+            content = await self._request_verifier_content(
+                system_prompt=PromptLoader.render("agent/prompts/verifier_system.tpl"),
+                user_prompt=prompt,
+            )
         except Exception as exc:
             logger.warning("completion_verifier_failed evaluator=%s error=%s", evaluator, str(exc))
             return VerificationResult(
@@ -1508,7 +1664,54 @@ class ReasoningEngine:
                 evaluator=evaluator,
                 malformed=True,
             )
-        return parse_verification_result(content, evaluator=evaluator)
+        result = parse_verification_result(content, evaluator=evaluator)
+        if not result.malformed:
+            return result
+        try:
+            repaired = await self._request_verifier_content(
+                system_prompt=PromptLoader.render("agent/prompts/verifier_system.tpl"),
+                user_prompt=PromptLoader.render(
+                    "agent/prompts/verifier_format_repair.tpl",
+                    verifier_prompt=prompt,
+                    malformed_output=content[:8_000],
+                ),
+            )
+        except Exception as exc:
+            logger.warning(
+                "completion_verifier_format_repair_failed evaluator=%s error=%s",
+                evaluator,
+                str(exc),
+            )
+            return result
+        return parse_verification_result(repaired, evaluator=f"{evaluator}_format_retry")
+
+    async def _request_verifier_content(
+        self,
+        *,
+        system_prompt: str,
+        user_prompt: str,
+    ) -> str:
+        content = ""
+        self._run_usage["llm_calls"] += 1
+        async for chunk in self._chat_with_execution_budget(
+            [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            tools=None,
+            stream=True,
+            temperature=0,
+            response_format={"type": "json_object"},
+        ):
+            self._record_chunk_usage(chunk)
+            choices = chunk.get("choices") or []
+            if not choices:
+                continue
+            choice = choices[0] or {}
+            delta = choice.get("delta") if isinstance(choice.get("delta"), dict) else {}
+            message = choice.get("message") if isinstance(choice.get("message"), dict) else {}
+            content += str(delta.get("content") or message.get("content") or "")
+        return content
 
     def _record_chunk_usage(self, chunk: dict[str, Any]) -> None:
         usage = chunk.get("usage") if isinstance(chunk.get("usage"), dict) else {}
@@ -1518,6 +1721,40 @@ class ReasoningEngine:
         self._run_usage["output_tokens"] += int(
             usage.get("completion_tokens") or usage.get("output_tokens") or 0
         )
+
+    @asynccontextmanager
+    async def _execution_budget(self) -> AsyncGenerator[None, None]:
+        """Bound normal work so the reserved final-answer window remains available."""
+        deadline_at = self._execution_deadline_at.get()
+        if deadline_at is None:
+            yield
+            return
+        remaining = deadline_at - time.monotonic()
+        if remaining <= 0:
+            raise TimeoutError("soft execution deadline reached")
+        async with asyncio.timeout(remaining):
+            yield
+
+    async def _chat_with_execution_budget(
+        self,
+        messages: list[dict[str, Any]],
+        *,
+        tools: list[dict[str, Any]] | None,
+        stream: bool,
+        **kwargs: Any,
+    ) -> AsyncGenerator[dict[str, Any], None]:
+        async with self._execution_budget():
+            async for chunk in self.llm.chat(
+                messages,
+                tools=tools,
+                stream=stream,
+                **kwargs,
+            ):
+                yield chunk
+
+    async def _await_with_execution_budget(self, awaitable: Awaitable[Any]) -> Any:
+        async with self._execution_budget():
+            return await awaitable
 
     async def _planner_step(
         self,
@@ -1539,7 +1776,12 @@ class ReasoningEngine:
             kwargs["tool_choice"] = "required"
 
         self._run_usage["llm_calls"] += 1
-        async for chunk in self.llm.chat(chat_messages, tools=tools, stream=True, **kwargs):
+        async for chunk in self._chat_with_execution_budget(
+            chat_messages,
+            tools=tools,
+            stream=True,
+            **kwargs,
+        ):
             self._record_chunk_usage(chunk)
             chunk_count += 1
             choices = chunk.get("choices") or []
@@ -1615,7 +1857,11 @@ class ReasoningEngine:
         ]
         full_text = ""
         self._run_usage["llm_calls"] += 1
-        async for chunk in self.llm.chat(continuation_messages, tools=None, stream=True):
+        async for chunk in self._chat_with_execution_budget(
+            continuation_messages,
+            tools=None,
+            stream=True,
+        ):
             self._record_chunk_usage(chunk)
             choices = chunk.get("choices") or []
             if not choices:
@@ -1630,6 +1876,70 @@ class ReasoningEngine:
         else:
             logger.warning("reasoning_engine_continuation_empty")
         yield {"type": "continuation_result", "text": full_text}
+
+    async def _graceful_finalize(
+        self,
+        journal: TaskJournal,
+        *,
+        reason: str,
+    ) -> str:
+        """Converge from retained evidence without reopening tool exploration."""
+        prompt = PromptLoader.render(
+            "agent/prompts/graceful_finalize.tpl",
+            reason=reason,
+            task_state_json=json.dumps(
+                journal.finalization_payload(),
+                ensure_ascii=False,
+                indent=2,
+            ),
+        )
+        content = ""
+        response_complete = False
+        try:
+            async with asyncio.timeout(self.config.graceful_finalize_timeout_seconds):
+                self._run_usage["llm_calls"] += 1
+                async for chunk in self.llm.chat(
+                    [{"role": "system", "content": prompt}],
+                    tools=None,
+                    stream=True,
+                ):
+                    self._record_chunk_usage(chunk)
+                    choices = chunk.get("choices") or []
+                    if not choices:
+                        continue
+                    choice = choices[0] or {}
+                    finish_reason = str(choice.get("finish_reason") or "")
+                    if finish_reason == "stop":
+                        response_complete = True
+                    delta = (
+                        choice.get("delta")
+                        if isinstance(choice.get("delta"), dict)
+                        else {}
+                    )
+                    message = (
+                        choice.get("message")
+                        if isinstance(choice.get("message"), dict)
+                        else {}
+                    )
+                    content += str(delta.get("content") or message.get("content") or "")
+        except Exception as exc:
+            logger.warning(
+                "graceful_finalize_failed %s",
+                fmt_kv(task_run_id=journal.task_run_id, error_class=type(exc).__name__),
+            )
+        if content.strip() and response_complete:
+            journal.record_candidate(
+                content,
+                iteration=journal.metrics.iterations,
+                verification=journal.verification,
+            )
+            return content.strip()
+        if content.strip():
+            logger.warning(
+                "graceful_finalize_partial_discarded %s",
+                fmt_kv(task_run_id=journal.task_run_id, chars=len(content)),
+            )
+        return _build_best_candidate_fallback(journal, "")
 
     async def _synthesize_without_tools(
         self,
@@ -2240,6 +2550,71 @@ def _build_terminal_summary(journal: TaskJournal, status: str) -> str:
         else ""
     )
     return f"{heading}\n\n{len(journal.evidence)} tool evidence records were retained.{suffix}"
+
+
+def _best_effort_hard_blocked(journal: TaskJournal) -> bool:
+    """Keep protocol/authority gates hard while semantic quality degrades gracefully."""
+    if journal.status in {
+        "blocked",
+        "awaiting_authority",
+        "awaiting_confirmation",
+        "cancelled",
+        "error",
+    }:
+        return True
+    precheck = deterministic_completion_precheck(journal)
+    if not precheck.satisfied and precheck.evaluator == "deterministic_action_evidence":
+        return True
+    verification = journal.verification
+    return bool(
+        verification is not None
+        and verification.repair_type == "blocked"
+        and not verification.malformed
+    )
+
+
+def _build_best_candidate_fallback(journal: TaskJournal, candidate_text: str) -> str:
+    """Return retained work when the final synthesis provider call itself fails."""
+    candidate = (
+        journal.best_candidate.text
+        if journal.best_candidate is not None and journal.best_candidate.text.strip()
+        else candidate_text.strip()
+    )
+    if not candidate:
+        unresolved = _remaining_work(journal)[:8]
+        evidence = journal.evidence[-5:]
+        if _prefers_chinese(journal):
+            sections = [
+                "阶段性结论",
+                "现有证据还不足以确认全部目标，因此这里不声明任务已经完成。",
+            ]
+            if evidence:
+                sections.append(
+                    "已获得的证据：\n"
+                    + "\n".join(f"- [{item.ref}] {item.summary}" for item in evidence)
+                )
+            if unresolved:
+                sections.append("尚未确认：\n" + "\n".join(f"- {item}" for item in unresolved))
+            return "\n\n".join(sections)
+        sections = [
+            "Best available conclusion",
+            "The available evidence is not enough to establish every requested outcome, so no unsupported completion claim is made.",
+        ]
+        if evidence:
+            sections.append(
+                "Evidence obtained:\n"
+                + "\n".join(f"- [{item.ref}] {item.summary}" for item in evidence)
+            )
+        if unresolved:
+            sections.append("Not yet confirmed:\n" + "\n".join(f"- {item}" for item in unresolved))
+        return "\n\n".join(sections)
+    verification = journal.verification
+    missing = list(verification.missing[:8]) if verification else []
+    if not missing:
+        return candidate
+    chinese = _prefers_chinese(journal)
+    label = "\n\n尚未确认：\n" if chinese else "\n\nNot yet confirmed:\n"
+    return candidate + label + "\n".join(f"- {item}" for item in missing)
 
 
 def _build_verification_feedback(verification: VerificationResult) -> str:

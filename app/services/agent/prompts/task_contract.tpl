@@ -13,6 +13,12 @@ substantial evidence gathering, or multiple independently verifiable outcomes. K
 simple requests simple. Set `high_value` to true only when an incorrect or unsafe result could
 have substantial operational, security, financial, data-integrity, or release impact.
 
+A complex task normally has one or more independently verifiable outcomes. Do not return an empty
+`acceptance_criteria` list merely because the user stated the request as prose instead of a numbered
+checklist. Extract the observable outcomes the user actually requested, while keeping every item
+grounded in exact user text. An empty list is appropriate only when the request genuinely contains
+no outcome that can be checked.
+
 Each acceptance criterion must describe an outcome rather than an implementation guess. Set
 `requires_tool_evidence` to true only when the outcome cannot honestly be established without an
 actual tool action or observed tool result. `required_tool_outcome` must be `any`, `success`, or
