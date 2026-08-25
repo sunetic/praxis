@@ -131,9 +131,7 @@ async def test_complex_empty_contract_gets_one_grounded_llm_repair() -> None:
     repaired = _decision(complex=True)
     llm = SequentialContractLLM([first, repaired])
 
-    result = await TaskContractAgent(llm).build(
-        [{"role": "user", "content": "Please handle Z."}]
-    )
+    result = await TaskContractAgent(llm).build([{"role": "user", "content": "Please handle Z."}])
 
     assert result.source == "llm"
     assert result.llm_calls == 2

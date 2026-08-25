@@ -237,9 +237,7 @@ class ReasoningEngine:
 
         cfg = self.config
         self._execution_deadline_at.set(
-            started_at + cfg.soft_finalize_seconds
-            if cfg.soft_finalize_seconds > 0
-            else None
+            started_at + cfg.soft_finalize_seconds if cfg.soft_finalize_seconds > 0 else None
         )
         resumed = cfg.persistent_journal_enabled and isinstance(task_state, dict)
         contract_source = "restored" if resumed else "disabled"
@@ -844,10 +842,7 @@ class ReasoningEngine:
                         execution_results = list(
                             await self._await_with_execution_budget(
                                 asyncio.gather(
-                                    *(
-                                        self._execute_tool(tool_call)
-                                        for tool_call in prepared_calls
-                                    )
+                                    *(self._execute_tool(tool_call) for tool_call in prepared_calls)
                                 )
                             )
                         )
@@ -1141,8 +1136,7 @@ class ReasoningEngine:
                         if not verification.satisfied:
                             should_gracefully_finalize = bool(
                                 verification.malformed
-                                or verification_no_progress_rounds
-                                >= cfg.max_verification_retries
+                                or verification_no_progress_rounds >= cfg.max_verification_retries
                             )
                             if not should_gracefully_finalize:
                                 verification_note = _build_verification_progress_note(
@@ -1911,15 +1905,9 @@ class ReasoningEngine:
                     finish_reason = str(choice.get("finish_reason") or "")
                     if finish_reason == "stop":
                         response_complete = True
-                    delta = (
-                        choice.get("delta")
-                        if isinstance(choice.get("delta"), dict)
-                        else {}
-                    )
+                    delta = choice.get("delta") if isinstance(choice.get("delta"), dict) else {}
                     message = (
-                        choice.get("message")
-                        if isinstance(choice.get("message"), dict)
-                        else {}
+                        choice.get("message") if isinstance(choice.get("message"), dict) else {}
                     )
                     content += str(delta.get("content") or message.get("content") or "")
         except Exception as exc:

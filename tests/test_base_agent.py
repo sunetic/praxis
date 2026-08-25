@@ -864,7 +864,9 @@ async def test_tool_task_emits_task_plan_then_model_transition_before_tool() -> 
 
 
 @pytest.mark.anyio
-async def test_complex_task_returns_grounded_best_effort_when_verification_stops_progressing() -> None:
+async def test_complex_task_returns_grounded_best_effort_when_verification_stops_progressing() -> (
+    None
+):
     llm = FakeLLM(
         responses=[
             [_text_chunk("所有阶段均已成功完成。")],
@@ -881,11 +883,7 @@ async def test_complex_task_returns_grounded_best_effort_when_verification_stops
                     '"missing":["执行阶段一","执行阶段二"]}'
                 )
             ],
-            [
-                _text_chunk(
-                    "根据现有信息，阶段一和阶段二仍缺少可验证证据，当前不能宣称已经完成。"
-                )
-            ],
+            [_text_chunk("根据现有信息，阶段一和阶段二仍缺少可验证证据，当前不能宣称已经完成。")],
         ]
     )
     engine = _make_engine(
@@ -1472,9 +1470,7 @@ async def test_global_elapsed_time_limit_returns_best_available_answer() -> None
 @pytest.mark.anyio
 async def test_soft_deadline_converges_before_hard_limit() -> None:
     llm = FakeLLM(
-        responses=[
-            [_text_chunk("已根据当前证据整理结论；未取得的外部事实已明确标为未知。")]
-        ]
+        responses=[[_text_chunk("已根据当前证据整理结论；未取得的外部事实已明确标为未知。")]]
     )
     engine = _make_engine(
         llm=llm,

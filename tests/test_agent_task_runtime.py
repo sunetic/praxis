@@ -794,10 +794,13 @@ def test_best_candidate_and_convergence_metrics_survive_round_trip() -> None:
     )
 
     journal.record_candidate("A retained draft.", iteration=2, verification=rejected)
-    assert journal.record_verification_outcome(
-        satisfied=False,
-        verification=rejected,
-    ) == 1
+    assert (
+        journal.record_verification_outcome(
+            satisfied=False,
+            verification=rejected,
+        )
+        == 1
+    )
 
     restored = TaskJournal.from_dict(journal.to_dict())
 
@@ -818,10 +821,13 @@ def test_more_activity_does_not_count_as_semantic_verification_progress() -> Non
         criterion_results=[{"id": "ac-1", "satisfied": False}],
     )
 
-    assert journal.record_verification_outcome(
-        satisfied=False,
-        verification=rejected,
-    ) == 1
+    assert (
+        journal.record_verification_outcome(
+            satisfied=False,
+            verification=rejected,
+        )
+        == 1
+    )
     _evaluate(
         journal,
         _execution(
@@ -833,10 +839,13 @@ def test_more_activity_does_not_count_as_semantic_verification_progress() -> Non
         2,
     )
 
-    assert journal.record_verification_outcome(
-        satisfied=False,
-        verification=rejected,
-    ) == 2
+    assert (
+        journal.record_verification_outcome(
+            satisfied=False,
+            verification=rejected,
+        )
+        == 2
+    )
 
 
 @pytest.mark.parametrize(

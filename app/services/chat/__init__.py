@@ -125,9 +125,7 @@ class ChatService:
         self.transient_backoff_max_seconds = settings.agent_transient_backoff_max_seconds
         self.max_elapsed_seconds = settings.agent_max_elapsed_seconds
         self.soft_finalize_seconds = settings.agent_soft_finalize_seconds
-        self.graceful_finalize_timeout_seconds = (
-            settings.agent_graceful_finalize_timeout_seconds
-        )
+        self.graceful_finalize_timeout_seconds = settings.agent_graceful_finalize_timeout_seconds
 
     async def chat_with_tools(
         self,

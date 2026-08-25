@@ -239,9 +239,7 @@ def _verification_progress_score(result: VerificationResult | None) -> int:
         return -1_000_000
     if result.satisfied:
         return 1_000_000
-    satisfied_criteria = sum(
-        1 for item in result.criterion_results if bool(item.get("satisfied"))
-    )
+    satisfied_criteria = sum(1 for item in result.criterion_results if bool(item.get("satisfied")))
     unsatisfied_criteria = sum(
         1 for item in result.criterion_results if not bool(item.get("satisfied"))
     )
@@ -347,9 +345,7 @@ class TaskJournal:
                 iteration=int(candidate.get("iteration") or 0),
                 evidence_count=int(candidate.get("evidence_count") or 0),
                 score=int(
-                    candidate.get("score")
-                    if candidate.get("score") is not None
-                    else -1_000_000
+                    candidate.get("score") if candidate.get("score") is not None else -1_000_000
                 ),
                 verification=(
                     dict(candidate["verification"])
@@ -433,12 +429,8 @@ class TaskJournal:
                 if metrics.get("best_verification_score") is not None
                 else -1_000_000
             ),
-            last_verification_signature=str(
-                metrics.get("last_verification_signature") or ""
-            ),
-            malformed_verification_rounds=int(
-                metrics.get("malformed_verification_rounds") or 0
-            ),
+            last_verification_signature=str(metrics.get("last_verification_signature") or ""),
+            malformed_verification_rounds=int(metrics.get("malformed_verification_rounds") or 0),
             graceful_finalizations=int(metrics.get("graceful_finalizations") or 0),
             resumptions=int(metrics.get("resumptions") or 0) + 1,
             llm_calls=int(metrics.get("llm_calls") or 0),
@@ -514,11 +506,15 @@ class TaskJournal:
             verification=verification.to_dict() if verification else None,
         )
         current = self.best_candidate
-        if current is None or score > current.score or (
-            score == current.score
-            and (
-                snapshot.evidence_count > current.evidence_count
-                or snapshot.iteration >= current.iteration
+        if (
+            current is None
+            or score > current.score
+            or (
+                score == current.score
+                and (
+                    snapshot.evidence_count > current.evidence_count
+                    or snapshot.iteration >= current.iteration
+                )
             )
         ):
             self.best_candidate = snapshot
