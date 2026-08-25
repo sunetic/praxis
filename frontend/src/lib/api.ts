@@ -1811,12 +1811,16 @@ export type PlatformSettings = {
   external_cli_pre_flags?: string
   external_cli_post_flags?: string
   sql_allow_mutating?: boolean
-  ai_api_key?: string
+  ai_api_key_configured: boolean
   ai_model?: string
   ai_base_url?: string
   context_window_tokens: number
   context_compression_threshold_percent: number
-  [key: string]: unknown
+  praxis_edition?: string
+}
+
+export type PlatformSettingsUpdate = Omit<Partial<PlatformSettings>, 'ai_api_key_configured'> & {
+  ai_api_key?: string
 }
 
 export type EngineTestResult = {
@@ -1832,7 +1836,7 @@ export const settingsApi = {
   get: (): Promise<PlatformSettings> =>
     api.get('/settings').then((res) => res.data),
 
-  patch: (payload: Partial<PlatformSettings>): Promise<PlatformSettings> =>
+  patch: (payload: PlatformSettingsUpdate): Promise<PlatformSettings> =>
     api.patch('/settings', payload).then((res) => res.data),
 
   testEngine: (command?: string): Promise<EngineTestResult> =>

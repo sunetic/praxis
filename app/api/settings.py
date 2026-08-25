@@ -46,12 +46,19 @@ def get_setting(db: Session, key: str) -> Any:
     return _DEFAULTS.get(key)
 
 
+def _get_response(db: Session) -> PlatformSettingsResponse:
+    result = _get_all(db)
+    api_key = result.pop("ai_api_key", None)
+    result["ai_api_key_configured"] = bool(str(api_key).strip()) if api_key is not None else False
+    result["praxis_edition"] = get_settings().praxis_edition
+    return PlatformSettingsResponse.model_validate(result)
+
+
 @router.get("", response_model=PlatformSettingsResponse)
 def list_settings(db: Session = Depends(get_db)) -> PlatformSettingsResponse:
-    result = _get_all(db)
-    result["praxis_edition"] = get_settings().praxis_edition
-    logger.info("list_settings %s", fmt_kv(count=len(result)))
-    return PlatformSettingsResponse.model_validate(result)
+    response = _get_response(db)
+    logger.info("list_settings")
+    return response
 
 
 @router.patch("", response_model=PlatformSettingsResponse)
@@ -68,10 +75,8 @@ def patch_settings(
         else:
             db.add(PlatformSetting(key=key, value=value))
     db.commit()
-    result = _get_all(db)
-    result["praxis_edition"] = get_settings().praxis_edition
     logger.info("patch_settings %s", fmt_kv(keys=list(update_data.keys())))
-    return PlatformSettingsResponse.model_validate(result)
+    return _get_response(db)
 
 
 @router.post("/test-engine", response_model=SettingsEngineTestResponse)

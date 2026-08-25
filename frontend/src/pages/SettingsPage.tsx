@@ -19,6 +19,8 @@ type TabId = "llm" | "build" | "safety"
 function LlmTab() {
   const { t } = useShellI18n()
   const [apiKey, setApiKey] = useState("")
+  const [apiKeyChanged, setApiKeyChanged] = useState(false)
+  const [apiKeyConfigured, setApiKeyConfigured] = useState(false)
   const [model, setModel] = useState("")
   const [baseUrl, setBaseUrl] = useState("")
   const [contextWindow, setContextWindow] = useState("128000")
@@ -29,7 +31,7 @@ function LlmTab() {
 
   useEffect(() => {
     settingsApi.get().then((data) => {
-      setApiKey(typeof data.ai_api_key === "string" ? data.ai_api_key : "")
+      setApiKeyConfigured(data.ai_api_key_configured === true)
       setModel(typeof data.ai_model === "string" ? data.ai_model : "")
       setBaseUrl(typeof data.ai_base_url === "string" ? data.ai_base_url : "")
       setContextWindow(String(data.context_window_tokens || 128000))
@@ -42,19 +44,23 @@ function LlmTab() {
     setSaving(true)
     setSaved(false)
     try {
-      await settingsApi.patch({
-        ai_api_key: apiKey.trim(),
+      const payload = {
         ai_model: model.trim(),
         ai_base_url: baseUrl.trim(),
         context_window_tokens: Number(contextWindow),
         context_compression_threshold_percent: Number(compressionThreshold),
-      })
+        ...(apiKeyChanged ? { ai_api_key: apiKey.trim() } : {}),
+      }
+      const settings = await settingsApi.patch(payload)
+      setApiKey("")
+      setApiKeyChanged(false)
+      setApiKeyConfigured(settings.ai_api_key_configured === true)
       setSaved(true)
       setTimeout(() => setSaved(false), 2000)
     } finally {
       setSaving(false)
     }
-  }, [apiKey, model, baseUrl, contextWindow, compressionThreshold])
+  }, [apiKey, apiKeyChanged, model, baseUrl, contextWindow, compressionThreshold])
 
   const contextWindowNumber = Number(contextWindow)
   const compressionThresholdNumber = Number(compressionThreshold)
@@ -84,14 +90,25 @@ function LlmTab() {
   return (
     <div className="space-y-5 p-5 max-w-lg">
       <div className="space-y-1.5">
-        <label className="text-sm font-medium">API Key</label>
+        <label htmlFor="ai-api-key" className="text-sm font-medium">{t("settings.llm.apiKey")}</label>
         <Input
+          id="ai-api-key"
           type="password"
           value={apiKey}
-          onChange={(e) => setApiKey(e.target.value)}
-          placeholder="sk-..."
+          onChange={(event) => {
+            setApiKey(event.target.value)
+            setApiKeyChanged(true)
+          }}
+          placeholder={apiKeyConfigured
+            ? t("settings.llm.apiKeyConfiguredPlaceholder")
+            : "sk-..."}
           autoComplete="off"
         />
+        {apiKeyConfigured && (
+          <p className="text-xs text-muted-foreground">
+            {t("settings.llm.apiKeyConfiguredHint")}
+          </p>
+        )}
       </div>
 
       <div className="space-y-1.5">

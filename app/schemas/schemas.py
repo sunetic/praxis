@@ -1128,7 +1128,7 @@ class PlatformSettingsResponse(BaseModel):
     external_cli_pre_flags: str = ""
     external_cli_post_flags: str = ""
     sql_allow_mutating: bool = False
-    ai_api_key: str | None = None
+    ai_api_key_configured: bool = False
     ai_model: str | None = None
     ai_base_url: str | None = None
     context_window_tokens: int = 128_000

@@ -1271,12 +1271,20 @@ def test_p0_datasource_crud_lifecycle(api_client):
     assert gone.status_code == 404
 
 
-def test_p0_settings_get(api_client):
+def test_p0_settings_get_redacts_api_key(api_client):
     client, _ = api_client
+
+    updated = client.patch("/api/v1/settings", json={"ai_api_key": "secret-value"})
+    assert updated.status_code == 200
+    assert updated.json()["ai_api_key_configured"] is True
+    assert "ai_api_key" not in updated.json()
+
     resp = client.get("/api/v1/settings")
     assert resp.status_code == 200
     payload = resp.json()
     assert isinstance(payload, dict)
+    assert payload["ai_api_key_configured"] is True
+    assert "ai_api_key" not in payload
 
 
 def test_p0_onboarding_status_and_complete(api_client):

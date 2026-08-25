@@ -21,12 +21,12 @@ describe("SettingsPage build engine", () => {
     settingsApi.get.mockResolvedValue({
       build_engine: "external_cli",
       external_cli_command: "claude",
-      ai_api_key: "sk-test",
+      ai_api_key_configured: true,
       ai_model: "gpt-test",
       context_window_tokens: 128000,
       context_compression_threshold_percent: 75,
     })
-    settingsApi.patch.mockResolvedValue({})
+    settingsApi.patch.mockResolvedValue({ ai_api_key_configured: true })
   })
 
   it("applies a validated command suggested by the backend", async () => {
@@ -86,6 +86,7 @@ describe("SettingsPage build engine", () => {
       context_window_tokens: 200000,
       context_compression_threshold_percent: 80,
     })))
+    expect(settingsApi.patch.mock.calls[0][0]).not.toHaveProperty("ai_api_key")
   })
 
   it("blocks saving an unsafe context threshold", async () => {
@@ -101,12 +102,13 @@ describe("SettingsPage build engine", () => {
 
   it("allows context settings to be saved for a keyless local model", async () => {
     settingsApi.get.mockResolvedValueOnce({
-      ai_api_key: "",
+      ai_api_key_configured: false,
       ai_model: "local-model",
       ai_base_url: "http://127.0.0.1:11434/v1",
       context_window_tokens: 128000,
       context_compression_threshold_percent: 75,
     })
+    settingsApi.patch.mockResolvedValueOnce({ ai_api_key_configured: false })
     const user = userEvent.setup()
     render(<SettingsPage />)
 
@@ -115,9 +117,25 @@ describe("SettingsPage build engine", () => {
     await user.click(save)
 
     await waitFor(() => expect(settingsApi.patch).toHaveBeenCalledWith(expect.objectContaining({
-      ai_api_key: "",
       context_window_tokens: 128000,
       context_compression_threshold_percent: 75,
+    })))
+    expect(settingsApi.patch.mock.calls[0][0]).not.toHaveProperty("ai_api_key")
+  })
+
+  it("keeps a configured API key hidden until it is replaced", async () => {
+    const user = userEvent.setup()
+    render(<SettingsPage />)
+
+    const apiKey = await screen.findByLabelText("API Key")
+    expect(apiKey).toHaveValue("")
+    expect(apiKey).toHaveAttribute("placeholder", "已配置，输入新值以替换")
+
+    await user.type(apiKey, "sk-replacement")
+    await user.click(screen.getByRole("button", { name: "保存" }))
+
+    await waitFor(() => expect(settingsApi.patch).toHaveBeenCalledWith(expect.objectContaining({
+      ai_api_key: "sk-replacement",
     })))
   })
 })
