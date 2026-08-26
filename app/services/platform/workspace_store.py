@@ -88,8 +88,8 @@ def _resolve_adapter() -> CodingEngineAdapter:
     pre_flags = ""
     post_flags = ""
     try:
-        from app.api.settings import get_setting
         from app.db.database import SessionLocal
+        from app.services.platform.settings_store import get_setting
 
         db = SessionLocal()
         try:

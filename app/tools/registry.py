@@ -177,7 +177,7 @@ class ExecuteSQLTool(BaseTool):
             pool = get_pool_for_datasource(routed.datasource)
             is_mutating = is_mutating_sql(sql)
             if is_mutating:
-                from app.api.settings import get_setting
+                from app.services.platform.settings_store import get_setting
 
                 allow_mutating = get_setting(db, "sql_allow_mutating")
                 if not allow_mutating:

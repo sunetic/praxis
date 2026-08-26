@@ -73,10 +73,18 @@ async def startup():
             _HANDBOOK_SITE,
         )
     init_db()
+    from app.db.database import SessionLocal
+    from app.services.platform.settings_store import migrate_sensitive_settings
+
+    with SessionLocal() as _settings_db:
+        migrated_settings = migrate_sensitive_settings(_settings_db)
+        if migrated_settings:
+            _settings_db.commit()
+        logger.info("sensitive_platform_settings_migrated count=%s", migrated_settings)
+
     # CE built-in functions + schedules
     try:
         from app.builtin_functions import register_builtin_functions
-        from app.db.database import SessionLocal
 
         with SessionLocal() as _seed_db:
             outcome = register_builtin_functions(_seed_db)

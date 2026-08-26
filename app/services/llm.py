@@ -6,6 +6,7 @@ from contextlib import contextmanager
 from typing import Any
 
 from opentelemetry import trace
+from sqlalchemy.exc import SQLAlchemyError
 
 from app.core.config import get_settings
 from app.core.logging import fmt_kv, get_logger
@@ -131,21 +132,16 @@ def _resolve_llm_config() -> dict[str, str]:
     }
     try:
         from app.db.database import SessionLocal
-        from app.models.models import PlatformSetting
+        from app.services.platform.settings_store import load_settings
 
         with SessionLocal() as db:
-            rows = (
-                db.query(PlatformSetting)
-                .filter(PlatformSetting.key.in_(["ai_base_url", "ai_api_key", "ai_model"]))
-                .all()
-            )
-            for row in rows:
-                if row.value:
-                    key = row.key
+            stored_settings = load_settings(db, ["ai_base_url", "ai_api_key", "ai_model"])
+            for key, value in stored_settings.items():
+                if value:
                     field = key[3:]  # strip "ai_" → "api_key" / "base_url" / "model"
-                    result[field] = str(row.value)
-    except Exception:
-        pass
+                    result[field] = str(value)
+    except SQLAlchemyError as exc:
+        logger.warning("platform_llm_settings_unavailable error=%s", exc)
     return result
 
 

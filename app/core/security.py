@@ -12,7 +12,7 @@ _FERNET_TOKEN_PREFIX = b"gAAAAA"
 _DERIVED_KEY: bytes | None = None
 
 
-def get_datasource_encryption_key() -> bytes:
+def get_encryption_key() -> bytes:
     global _DERIVED_KEY
     if _DERIVED_KEY is not None:
         return _DERIVED_KEY
@@ -31,7 +31,7 @@ def get_datasource_encryption_key() -> bytes:
         import logging
 
         logging.getLogger("app.core.security").warning(
-            "secret_key is the default dev value; datasource passwords are encrypted with a weak key. "
+            "secret_key is the default dev value; protected values are encrypted with a weak key. "
             "Set SECRET_KEY or DATASOURCE_ENCRYPTION_KEY in .env for production."
         )
     material = settings.secret_key.encode()
@@ -46,15 +46,21 @@ def get_datasource_encryption_key() -> bytes:
 
 
 def _fernet() -> Fernet:
-    return Fernet(get_datasource_encryption_key())
+    return Fernet(get_encryption_key())
 
 
-def encrypt_password(plaintext: str) -> str:
+def encrypt_secret(plaintext: str) -> str:
     return _fernet().encrypt(plaintext.encode()).decode()
 
 
-def decrypt_password(ciphertext: str) -> str:
-    return _fernet().decrypt(ciphertext.encode()).decode()
+def decrypt_secret(ciphertext: str) -> str:
+    try:
+        return _fernet().decrypt(ciphertext.encode()).decode()
+    except InvalidToken as exc:
+        raise ValueError(
+            "Failed to decrypt protected value — the encryption key may have changed. "
+            "Set DATASOURCE_ENCRYPTION_KEY to the original key to recover access."
+        ) from exc
 
 
 def is_encrypted(value: str) -> bool:
@@ -72,17 +78,11 @@ class EncryptedString(TypeDecorator):
             return None
         if is_encrypted(value):
             return value
-        return encrypt_password(value)
+        return encrypt_secret(value)
 
     def process_result_value(self, value: str | None, dialect) -> str | None:
         if value is None:
             return None
         if not is_encrypted(value):
             return value
-        try:
-            return decrypt_password(value)
-        except InvalidToken as exc:
-            raise ValueError(
-                "Failed to decrypt datasource password — the encryption key may have changed. "
-                "Set DATASOURCE_ENCRYPTION_KEY to the original key to recover access."
-            ) from exc
+        return decrypt_secret(value)

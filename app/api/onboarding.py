@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import pathlib
-from datetime import datetime
 from typing import Any
 
 from fastapi import APIRouter, Depends
@@ -9,7 +8,7 @@ from sqlalchemy.orm import Session
 
 from app.core.logging import get_logger
 from app.db.database import get_db
-from app.models.models import PlatformSetting
+from app.services.platform.settings_store import get_setting, upsert_setting
 
 router = APIRouter(prefix="/onboarding", tags=["Onboarding"])
 logger = get_logger("api.onboarding")
@@ -20,17 +19,7 @@ _ONBOARDING_KEY = "onboarding_completed"
 
 
 def is_onboarding_completed(db: Session) -> bool:
-    row = db.query(PlatformSetting).filter(PlatformSetting.key == _ONBOARDING_KEY).first()
-    return bool(row and row.value)
-
-
-def _upsert(db: Session, key: str, value: Any) -> None:
-    row = db.query(PlatformSetting).filter(PlatformSetting.key == key).first()
-    if row is not None:
-        row.value = value
-        row.updated_at = datetime.utcnow()
-    else:
-        db.add(PlatformSetting(key=key, value=value))
+    return bool(get_setting(db, _ONBOARDING_KEY))
 
 
 @router.get("/status")
@@ -52,16 +41,16 @@ async def complete_onboarding(
 
     # Save using the keys that LLMClient reads: ai_base_url, ai_api_key, ai_model
     if "llm_api_key" in llm_config:
-        _upsert(db, "ai_api_key", llm_config["llm_api_key"])
+        upsert_setting(db, "ai_api_key", llm_config["llm_api_key"])
     if "llm_model" in llm_config:
-        _upsert(db, "ai_model", llm_config["llm_model"])
+        upsert_setting(db, "ai_model", llm_config["llm_model"])
     if "llm_base_url" in llm_config:
-        _upsert(db, "ai_base_url", llm_config["llm_base_url"])
+        upsert_setting(db, "ai_base_url", llm_config["llm_base_url"])
     # Also store provider for display purposes
     if "llm_provider" in llm_config:
-        _upsert(db, "llm_provider", llm_config["llm_provider"])
+        upsert_setting(db, "llm_provider", llm_config["llm_provider"])
 
-    _upsert(db, _ONBOARDING_KEY, True)
+    upsert_setting(db, _ONBOARDING_KEY, True)
     db.commit()
 
     # Initialize monitordb schema (EE-only — skipped if collector module absent)

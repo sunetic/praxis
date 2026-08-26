@@ -15,6 +15,7 @@ from sqlalchemy.orm import sessionmaker
 from app.api import chat_pending as chat_pending_api
 from app.api import functions as functions_api
 from app.api import schedules as schedules_api
+from app.core.security import is_encrypted
 from app.db import database as db_module
 from app.db.database import Base
 from app.models import models
@@ -1272,12 +1273,16 @@ def test_p0_datasource_crud_lifecycle(api_client):
 
 
 def test_p0_settings_get_redacts_api_key(api_client):
-    client, _ = api_client
+    client, session_local = api_client
 
     updated = client.patch("/api/v1/settings", json={"ai_api_key": "secret-value"})
     assert updated.status_code == 200
     assert updated.json()["ai_api_key_configured"] is True
     assert "ai_api_key" not in updated.json()
+    with session_local() as db:
+        stored_api_key = db.get(models.PlatformSetting, "ai_api_key").value
+        assert isinstance(stored_api_key, str)
+        assert is_encrypted(stored_api_key)
 
     resp = client.get("/api/v1/settings")
     assert resp.status_code == 200
@@ -1288,7 +1293,7 @@ def test_p0_settings_get_redacts_api_key(api_client):
 
 
 def test_p0_onboarding_status_and_complete(api_client):
-    client, _ = api_client
+    client, session_local = api_client
 
     status = client.get("/api/v1/onboarding/status")
     assert status.status_code == 200
@@ -1306,6 +1311,10 @@ def test_p0_onboarding_status_and_complete(api_client):
     )
     assert complete.status_code == 200
     assert complete.json()["completed"] is True
+    with session_local() as db:
+        stored_api_key = db.get(models.PlatformSetting, "ai_api_key").value
+        assert isinstance(stored_api_key, str)
+        assert is_encrypted(stored_api_key)
 
     status_after = client.get("/api/v1/onboarding/status")
     assert status_after.json()["completed"] is True

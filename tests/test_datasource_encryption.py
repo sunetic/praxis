@@ -5,9 +5,9 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
 
 from app.core.security import (
-    decrypt_password,
-    encrypt_password,
-    get_datasource_encryption_key,
+    decrypt_secret,
+    encrypt_secret,
+    get_encryption_key,
     is_encrypted,
 )
 from app.db.database import Base
@@ -40,13 +40,13 @@ def db_session(tmp_path):
 
 
 def test_encrypt_produces_fernet_token():
-    token = encrypt_password("secret123")
+    token = encrypt_secret("secret123")
     assert is_encrypted(token)
 
 
 def test_decrypt_roundtrip():
     plain = "my-database-password"
-    assert decrypt_password(encrypt_password(plain)) == plain
+    assert decrypt_secret(encrypt_secret(plain)) == plain
 
 
 def test_is_encrypted_rejects_plaintext():
@@ -55,8 +55,8 @@ def test_is_encrypted_rejects_plaintext():
 
 
 def test_encrypt_same_plaintext_different_tokens():
-    t1 = encrypt_password("pw")
-    t2 = encrypt_password("pw")
+    t1 = encrypt_secret("pw")
+    t2 = encrypt_secret("pw")
     assert t1 != t2  # Fernet uses random IV
 
 
@@ -64,9 +64,9 @@ def test_key_derivation_is_deterministic(monkeypatch):
     import app.core.security as sec
 
     monkeypatch.setattr(sec, "_DERIVED_KEY", None)
-    k1 = get_datasource_encryption_key()
+    k1 = get_encryption_key()
     monkeypatch.setattr(sec, "_DERIVED_KEY", None)
-    k2 = get_datasource_encryption_key()
+    k2 = get_encryption_key()
     assert k1 == k2
 
 
@@ -81,7 +81,7 @@ def test_explicit_datasource_encryption_key_overrides_derivation(monkeypatch):
     monkeypatch.setattr(settings, "datasource_encryption_key", explicit_key)
     monkeypatch.setattr(sec, "_DERIVED_KEY", None)
 
-    k = get_datasource_encryption_key()
+    k = get_encryption_key()
     assert k is not None
     assert len(k) > 0
 
