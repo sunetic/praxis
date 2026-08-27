@@ -79,18 +79,6 @@ class DataSourceResponse(DataSourceBase):
     updated_at: datetime
 
 
-class DataSourceConnectInfo(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-
-    id: int
-    host: str
-    port: int
-    db_type: str
-    user: str
-    password: str
-    database: str
-
-
 # ---------------------------------------------------------------------------
 # Service
 # ---------------------------------------------------------------------------

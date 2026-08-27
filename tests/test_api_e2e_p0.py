@@ -1256,14 +1256,26 @@ def test_p0_datasource_crud_lifecycle(api_client):
     ds = _create_datasource(client, "ds-crud-smoke")
     ds_id = ds["id"]
     assert ds["name"] == "ds-crud-smoke"
+    assert "password" not in ds
+
+    listed_after_create = client.get("/api/v1/datasources")
+    assert listed_after_create.status_code == 200
+    assert listed_after_create.json()[0]["id"] == ds_id
+    assert "password" not in listed_after_create.json()[0]
 
     fetched = client.get(f"/api/v1/datasources/{ds_id}")
     assert fetched.status_code == 200
     assert fetched.json()["id"] == ds_id
+    assert "password" not in fetched.json()
 
     updated = client.patch(f"/api/v1/datasources/{ds_id}", json={"name": "ds-crud-renamed"})
     assert updated.status_code == 200
     assert updated.json()["name"] == "ds-crud-renamed"
+    assert "password" not in updated.json()
+
+    connect_info = client.get(f"/api/v1/datasources/{ds_id}/connect-info")
+    assert connect_info.status_code == 410
+    assert "secret" not in connect_info.text
 
     deleted = client.delete(f"/api/v1/datasources/{ds_id}")
     assert deleted.status_code in (200, 204)

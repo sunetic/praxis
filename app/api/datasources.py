@@ -142,12 +142,14 @@ def get_datasource(datasource_id: int, db: Session = Depends(get_db)):
     return datasource
 
 
-@router.get("/{datasource_id}/connect-info", response_model=schemas.DataSourceConnectInfo)
-def get_datasource_connect_info(datasource_id: int, db: Session = Depends(get_db)):
-    datasource = db.query(models.DataSource).filter(models.DataSource.id == datasource_id).first()
-    if not datasource:
-        raise HTTPException(status_code=404, detail="DataSource not found")
-    return datasource
+@router.get("/{datasource_id}/connect-info", status_code=status.HTTP_410_GONE)
+def reject_datasource_connect_info(datasource_id: int) -> None:
+    """Reject legacy requests that exposed decrypted datasource credentials."""
+    logger.warning("datasource_connect_info_removed %s", fmt_kv(datasource_id=datasource_id))
+    raise HTTPException(
+        status_code=status.HTTP_410_GONE,
+        detail="Datasource connection info is no longer available",
+    )
 
 
 @router.post("", response_model=schemas.DataSourceResponse, status_code=status.HTTP_201_CREATED)
