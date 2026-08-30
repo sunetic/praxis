@@ -1,4 +1,4 @@
-"""Shared real-service runtime for database DBA eval suites."""
+"""Shared real-service runtime for database DBA Eval suites."""
 
 from __future__ import annotations
 
@@ -21,9 +21,9 @@ from typing import Any, Protocol, TextIO
 import httpx
 
 from app.core.config import DEFAULT_SQLITE_DB_PATH, Settings
-from evals.dba.catalog import EvalCase, EvalCatalog, load_catalog
-from evals.dba.reporting import write_reports
-from evals.dba.scoring import (
+from evals.dba_core.catalog import EvalCase, EvalCatalog, load_catalog
+from evals.dba_core.reporting import render_markdown, write_reports
+from evals.dba_core.scoring import (
     aggregate_scores,
     provider_available,
     score_case,
@@ -94,6 +94,9 @@ class SuiteDefinition:
     """Static metadata and knowledge fixture for one DBA suite."""
 
     key: str
+    cli_description: str
+    image_option: str
+    default_image: str
     report_title: str
     catalog_path: Path
     artifact_subdirectory: str | None
@@ -101,6 +104,45 @@ class SuiteDefinition:
     knowledge_description: str
     knowledge_tags: tuple[str, ...]
     knowledge_policy_path: Path
+
+
+@dataclass(frozen=True)
+class SuiteRunner:
+    """Bind one engine-specific fixture to the shared DBA Eval runtime."""
+
+    suite: SuiteDefinition
+    fixture: DatabaseFixture
+
+    def load_catalog(self) -> EvalCatalog:
+        """Load this suite's versioned case catalog."""
+        return load_catalog(self.suite.catalog_path)
+
+    def render_report(
+        self,
+        summary: dict[str, Any],
+        baseline: dict[str, Any] | None = None,
+    ) -> str:
+        """Render this suite's Markdown scorecard."""
+        return render_markdown(summary, baseline, title=self.suite.report_title)
+
+    def build_parser(self) -> argparse.ArgumentParser:
+        """Build this suite's command-line parser."""
+        parser = argparse.ArgumentParser(description=self.suite.cli_description)
+        add_common_arguments(
+            parser,
+            self.load_catalog(),
+            image_option=self.suite.image_option,
+            default_image=self.suite.default_image,
+        )
+        return parser
+
+    def run(self, args: argparse.Namespace) -> int:
+        """Execute this suite and return its classified exit code."""
+        return run_eval(args, suite=self.suite, fixture=self.fixture)
+
+    def main(self) -> None:
+        """Run this suite as a command-line entry point."""
+        run_main(self.build_parser(), suite=self.suite, fixture=self.fixture)
 
 
 def _decode_json_value(value: Any) -> str:
@@ -495,7 +537,7 @@ def _run_model_case(
     max_tool_rounds: int,
 ) -> dict[str, Any]:
     """Run a candidate through the stable harness and persist comparable evidence."""
-    from evals.dba.model_harness import run_case
+    from evals.dba_core.model_harness import run_case
 
     result = run_case(
         config=config,

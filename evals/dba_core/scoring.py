@@ -1,4 +1,4 @@
-"""Deterministic scoring and failure classification for DBA eval evidence."""
+"""Deterministic scoring and failure classification for DBA Eval evidence."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
-from evals.dba.catalog import EvalCase
+from evals.dba_core.catalog import EvalCase
 
 _MUTATING_SQL_RE = re.compile(
     r"^(?:alter|analyze|call|create|delete|drop|flush|grant|insert|kill|load|lock|merge|"

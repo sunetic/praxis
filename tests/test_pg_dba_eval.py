@@ -10,11 +10,10 @@ import pytest
 
 from app.services.platform import object_tools
 from app.tools import registry
-from evals.dba import runtime
-from evals.pg_dba.catalog import load_catalog
-from evals.pg_dba.reporting import render_markdown
-from evals.pg_dba.run import resolve_llm_config
-from evals.pg_dba.scoring import aggregate_scores, score_case
+from evals.dba_core import runtime
+from evals.dba_core.runtime import resolve_llm_config
+from evals.dba_core.scoring import aggregate_scores, score_case
+from evals.pg_dba.run import RUNNER
 
 
 def _event(event_type: str, **payload):
@@ -26,7 +25,7 @@ def _sql_event(sql: str = "SELECT 1"):
 
 
 def test_catalog_has_stable_pg_dba_cases():
-    catalog = load_catalog()
+    catalog = RUNNER.load_catalog()
 
     assert catalog.suite == "praxis-pg-dba"
     assert catalog.version == "2.1.0"
@@ -37,7 +36,7 @@ def test_catalog_has_stable_pg_dba_cases():
 def test_cases_do_not_reference_praxis_implementation_details():
     prohibited = ("praxis_", "verifier", "minimum_tool", "minimum_sql", "skill")
 
-    for case in load_catalog().cases:
+    for case in RUNNER.load_catalog().cases:
         case_text = " ".join(
             [
                 case.title,
@@ -50,7 +49,7 @@ def test_cases_do_not_reference_praxis_implementation_details():
 
 
 def test_exact_reconciliation_answer_scores_as_passed():
-    case = load_catalog().by_id()["C08"]
+    case = RUNNER.load_catalog().by_id()["C08"]
     evidence = {
         "stream_http_status": 200,
         "stream_error": None,
@@ -78,7 +77,7 @@ def test_exact_reconciliation_answer_scores_as_passed():
 
 
 def test_http_200_without_completed_terminal_is_incomplete():
-    case = load_catalog().by_id()["C03"]
+    case = RUNNER.load_catalog().by_id()["C03"]
     evidence = {
         "stream_http_status": 200,
         "stream_error": None,
@@ -140,7 +139,7 @@ def test_chat_stream_uses_total_case_deadline(monkeypatch):
 
 
 def test_local_case_timeout_is_incomplete_not_provider_failure():
-    case = load_catalog().by_id()["C03"]
+    case = RUNNER.load_catalog().by_id()["C03"]
     evidence = {
         "stream_http_status": 200,
         "stream_error": None,
@@ -155,7 +154,7 @@ def test_local_case_timeout_is_incomplete_not_provider_failure():
 
 
 def test_executed_mutating_sql_is_a_hard_safety_failure():
-    case = load_catalog().by_id()["C09"]
+    case = RUNNER.load_catalog().by_id()["C09"]
     evidence = {
         "stream_http_status": 200,
         "stream_error": None,
@@ -183,7 +182,7 @@ def test_executed_mutating_sql_is_a_hard_safety_failure():
 
 
 def test_mutating_cte_is_also_a_hard_safety_failure():
-    case = load_catalog().by_id()["C01"]
+    case = RUNNER.load_catalog().by_id()["C01"]
     evidence = {
         "stream_http_status": 200,
         "stream_error": None,
@@ -297,7 +296,7 @@ def test_report_shows_scorecard_and_baseline_delta():
         }
     }
 
-    report = render_markdown(summary, baseline)
+    report = RUNNER.render_report(summary, baseline)
 
     assert "Task outcome" in report
     assert "Answer quality" in report

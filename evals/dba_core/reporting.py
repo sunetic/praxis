@@ -1,4 +1,4 @@
-"""Human-readable and machine-readable DBA eval reports."""
+"""Human-readable and machine-readable DBA Eval reports."""
 
 from __future__ import annotations
 

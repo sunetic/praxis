@@ -1,4 +1,4 @@
-"""Stable, Praxis-independent tool harness for candidate-model comparison."""
+"""Stable, Praxis-independent DBA tool harness for candidate-model comparison."""
 
 from __future__ import annotations
 
@@ -10,9 +10,9 @@ from typing import Any, Protocol
 
 import httpx
 
-from evals.dba.catalog import EvalCase
-from evals.dba.runtime import LLMConfig
-from evals.dba.scoring import is_mutating_sql, score_case, terminal_metrics
+from evals.dba_core.catalog import EvalCase
+from evals.dba_core.runtime import LLMConfig
+from evals.dba_core.scoring import is_mutating_sql, score_case, terminal_metrics
 
 PROMPT_PATH = Path(__file__).resolve().parent / "prompts" / "model_harness.tpl"
 MAX_TOOL_RESULT_CHARS = 60_000

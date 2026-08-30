@@ -1,4 +1,4 @@
-"""Versioned DBA eval case catalog loading."""
+"""Versioned DBA Eval case catalog loading."""
 
 from __future__ import annotations
 

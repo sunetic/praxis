@@ -1,5 +1,5 @@
 # PostgreSQL DBA Eval
 
-这里是 PostgreSQL DBA Eval 的可执行 suite 源码、fixture、知识材料和评分规则。通用命令、参数、判定方式和报告说明见 [Evaluation 文档](../../docs/reliability/evaluation.md)，case 目录见 [PostgreSQL DBA Cases](../../docs/reliability/pg-dba-eval.md)。
+This directory contains the executable PostgreSQL DBA Eval suite, fixture, knowledge material, and scoring rules. See the [Evaluation documentation](../../docs/reliability/evaluation.md) for shared commands, options, assessment rules, and reporting guidance. See [PostgreSQL DBA Cases](../../docs/reliability/pg-dba-eval.md) for the case catalog.
 
-快速运行：`make eval`；模型对比：`make eval EVAL_PROFILE=model`；列出 case：`make eval-list`。
+Run the suite with `make eval`, run the fixed-harness model comparison with `make eval EVAL_PROFILE=model`, or list cases with `make eval-list`.
