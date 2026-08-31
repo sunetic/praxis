@@ -336,6 +336,7 @@ class ReasoningEngine:
         run_id = str(uuid.uuid4())
         final_status = "running"
         completion_mode = "direct"
+        audit_status = "not_run"
         previous_elapsed_ms = journal.metrics.elapsed_ms
 
         logger.info(
@@ -1052,65 +1053,64 @@ class ReasoningEngine:
                         )
                         if cfg.persistent_journal_enabled:
                             yield _task_state_event(journal, phase, iteration, run_id)
-                        if not verification.satisfied:
-                            finalized_text = _build_best_candidate_fallback(
+                        audit_status = _completion_audit_status(verification)
+                        if verification.satisfied:
+                            verification_note = _build_verification_progress_note(
                                 journal,
-                                candidate_text,
+                                satisfied=True,
                             )
-                            completion_mode = "partial"
-                            journal.status = "checkpointed"
-                            final_status = "incomplete"
-                            reason_code = (
-                                "verification_malformed"
-                                if verification.malformed
-                                else "verification_incomplete"
-                            )
-                            yield _checkpoint_event(
-                                journal=journal,
-                                phase=phase,
-                                iteration=iteration,
-                                run_id=run_id,
-                                reason_code=reason_code,
-                                reason=verification.reason
-                                or "完成审查未能确认原始请求已经满足。",
-                            )
-                            emitted_text += finalized_text
-                            yield _event(
-                                type_="assistant",
-                                phase=ReasoningPhase.RESPONDING,
-                                data={
-                                    "text": finalized_text,
-                                    "incomplete": True,
-                                    "best_effort": True,
-                                },
-                                meta={
-                                    "iteration": iteration,
-                                    "run_id": run_id,
-                                    "task_run_id": journal.task_run_id,
-                                    "reason_code": reason_code,
-                                },
-                            )
-                            chat_messages.append({"role": "assistant", "content": finalized_text})
-                            phase = ReasoningPhase.RESPONDING
-                            break
+                            if verification_note not in emitted_progress_notes:
+                                emitted_progress_notes.add(verification_note)
+                                yield _event(
+                                    type_="assistant_progress",
+                                    phase=phase,
+                                    data={"text": verification_note, "stage": "verified"},
+                                    meta={
+                                        "iteration": iteration,
+                                        "run_id": run_id,
+                                        "task_run_id": journal.task_run_id,
+                                    },
+                                )
+                            completion_mode = "verified"
+                        else:
+                            completion_mode = "audited"
 
-                        verification_note = _build_verification_progress_note(
+                    unresolved_failures = journal.unresolved_failure_episodes()
+                    if unresolved_failures:
+                        finalized_text = _build_best_candidate_fallback(
                             journal,
-                            satisfied=True,
+                            candidate_text,
                         )
-                        if verification_note not in emitted_progress_notes:
-                            emitted_progress_notes.add(verification_note)
-                            yield _event(
-                                type_="assistant_progress",
-                                phase=phase,
-                                data={"text": verification_note, "stage": "verified"},
-                                meta={
-                                    "iteration": iteration,
-                                    "run_id": run_id,
-                                    "task_run_id": journal.task_run_id,
-                                },
-                            )
-                        completion_mode = "verified"
+                        completion_mode = "partial"
+                        journal.status = "checkpointed"
+                        final_status = "incomplete"
+                        yield _checkpoint_event(
+                            journal=journal,
+                            phase=phase,
+                            iteration=iteration,
+                            run_id=run_id,
+                            reason_code="unresolved_tool_failure",
+                            reason="存在尚未恢复的工具执行失败；当前结果仅作为阶段性结果保留。",
+                        )
+                        emitted_text += finalized_text
+                        yield _event(
+                            type_="assistant",
+                            phase=ReasoningPhase.RESPONDING,
+                            data={
+                                "text": finalized_text,
+                                "incomplete": True,
+                                "best_effort": True,
+                            },
+                            meta={
+                                "iteration": iteration,
+                                "run_id": run_id,
+                                "task_run_id": journal.task_run_id,
+                                "reason_code": "unresolved_tool_failure",
+                            },
+                        )
+                        chat_messages.append({"role": "assistant", "content": finalized_text})
+                        phase = ReasoningPhase.RESPONDING
+                        break
 
                     transition_err = _check_transition(phase, ReasoningPhase.RESPONDING)
                     if transition_err:
@@ -1125,7 +1125,7 @@ class ReasoningEngine:
                             "iteration": iteration,
                             "run_id": run_id,
                             "task_run_id": journal.task_run_id,
-                            "verified": should_verify,
+                            "verified": audit_status == "passed",
                         },
                     )
                     chat_messages.append({"role": "assistant", "content": candidate_text})
@@ -1341,6 +1341,7 @@ class ReasoningEngine:
                 "run_status": run_status,
                 "task_outcome": task_outcome,
                 "completion_mode": completion_mode,
+                "audit_status": audit_status,
                 "task_run_id": journal.task_run_id,
                 "metrics": journal.to_dict()["metrics"],
             },
@@ -1410,7 +1411,6 @@ class ReasoningEngine:
             ),
             evaluator="llm",
         )
-        journal.apply_failure_assessments(primary)
         primary = enforce_failure_episode_audit(journal, primary)
         if not primary.satisfied:
             return primary
@@ -1883,8 +1883,6 @@ def _remaining_work(journal: TaskJournal) -> list[str]:
         f"解决故障链 {episode.id}：{episode.category} {episode.target_object}".strip()
         for episode in journal.unresolved_failure_episodes()
     )
-    if journal.verification and not journal.verification.satisfied:
-        remaining.extend(journal.verification.missing)
     return list(dict.fromkeys(item for item in remaining if item))[:20]
 
 
@@ -2286,6 +2284,13 @@ def _terminal_semantics(legacy_status: str, journal_status: str) -> tuple[str, s
     return "finished", "partial"
 
 
+def _completion_audit_status(verification: VerificationResult) -> str:
+    """Expose semantic review as telemetry without turning it into an execution gate."""
+    if verification.malformed:
+        return "unknown"
+    return "passed" if verification.satisfied else "warning"
+
+
 def _build_best_candidate_fallback(journal: TaskJournal, candidate_text: str) -> str:
     """Return retained work without presenting an incomplete run as completed."""
     candidate = (
@@ -2328,14 +2333,14 @@ def _build_best_candidate_fallback(journal: TaskJournal, candidate_text: str) ->
     chinese = _prefers_chinese(journal)
     if chinese:
         result = (
-            "阶段性结果（未通过完成审计，不能视为最终结论）\n\n"
+            "阶段性结果（本次执行未完整结束，不能视为最终结论）\n\n"
             + candidate
         )
         if missing:
             result += "\n\n尚未确认：\n" + "\n".join(f"- {item}" for item in missing)
         return result
     result = (
-        "Partial result (completion audit did not pass; do not treat this as final)\n\n"
+        "Partial result (this run did not finish; do not treat it as final)\n\n"
         + candidate
     )
     if missing:

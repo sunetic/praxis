@@ -36,7 +36,7 @@ def test_unverified_retained_candidate_is_labelled_partial() -> None:
 
     result = _build_best_candidate_fallback(journal, "")
 
-    assert result.startswith("阶段性结果（未通过完成审计，不能视为最终结论）")
+    assert result.startswith("阶段性结果（本次执行未完整结束，不能视为最终结论）")
     assert "已检查客户数据。" in result
 
 
@@ -647,7 +647,7 @@ async def test_independent_recoverable_failures_have_independent_retry_budgets()
 
 
 @pytest.mark.anyio
-async def test_tool_task_runs_one_completion_audit_and_stops_on_a_gap() -> None:
+async def test_tool_task_runs_one_advisory_completion_audit_on_a_gap() -> None:
     executed_sql: list[str] = []
 
     async def executor(name: str, args: dict[str, Any]) -> dict[str, Any]:
@@ -703,12 +703,15 @@ async def test_tool_task_runs_one_completion_audit_and_stops_on_a_gap() -> None:
 
     assert executed_sql == ["SELECT COUNT(*) AS checked FROM eval_customers"]
     assert "客户检查完成，任务全部成功" in visible_text
+    assert "尚未确认" not in visible_text
     assert [item["satisfied"] for item in verifications] == [False]
-    assert any(event["type"] == "checkpoint" for event in events)
-    assert done["data"]["completed"] is False
-    assert done["data"]["status"] == "incomplete"
+    assert not any(event["type"] == "checkpoint" for event in events)
+    assert done["data"]["completed"] is True
+    assert done["data"]["status"] == "completed"
     assert done["data"]["run_status"] == "finished"
-    assert done["data"]["task_outcome"] == "partial"
+    assert done["data"]["task_outcome"] == "success"
+    assert done["data"]["completion_mode"] == "audited"
+    assert done["data"]["audit_status"] == "warning"
 
 
 @pytest.mark.anyio
@@ -767,8 +770,9 @@ async def test_verifier_semantic_rejection_does_not_restart_execution() -> None:
         event["data"]["text"] for event in events if event["type"] == "assistant_progress"
     ]
     assert any("确认服务当前是否可用" in note for note in progress_notes)
-    assert events[-1]["data"]["completed"] is False
-    assert events[-1]["data"]["task_outcome"] == "partial"
+    assert events[-1]["data"]["completed"] is True
+    assert events[-1]["data"]["task_outcome"] == "success"
+    assert events[-1]["data"]["audit_status"] == "warning"
 
 
 @pytest.mark.anyio
@@ -825,7 +829,7 @@ async def test_tool_task_emits_task_plan_then_model_transition_before_tool() -> 
 
 
 @pytest.mark.anyio
-async def test_failed_completion_audit_returns_retained_candidate_as_partial() -> None:
+async def test_failed_completion_audit_is_advisory_and_hidden_from_answer() -> None:
     llm = FakeLLM(
         responses=[
             [_text_chunk("所有阶段均已成功完成。")],
@@ -864,16 +868,19 @@ async def test_failed_completion_audit_returns_retained_candidate_as_partial() -
         event["data"].get("text", "") for event in events if event["type"] == "assistant"
     )
     assert "所有阶段均已成功完成" in visible_text
+    assert "执行阶段一" not in visible_text
+    assert "阶段性结果" not in visible_text
     assert llm.call_count == 2
-    assert any(event["type"] == "checkpoint" for event in events)
-    assert events[-1]["data"]["completed"] is False
-    assert events[-1]["data"]["status"] == "incomplete"
-    assert events[-1]["data"]["task_outcome"] == "partial"
-    assert events[-1]["data"]["completion_mode"] == "partial"
+    assert not any(event["type"] == "checkpoint" for event in events)
+    assert events[-1]["data"]["completed"] is True
+    assert events[-1]["data"]["status"] == "completed"
+    assert events[-1]["data"]["task_outcome"] == "success"
+    assert events[-1]["data"]["completion_mode"] == "audited"
+    assert events[-1]["data"]["audit_status"] == "warning"
 
 
 @pytest.mark.anyio
-async def test_malformed_verifier_stops_after_one_audit() -> None:
+async def test_malformed_verifier_is_advisory_after_one_audit() -> None:
     llm = FakeLLM(
         responses=[
             [_text_chunk("候选分析。")],
@@ -902,10 +909,12 @@ async def test_malformed_verifier_stops_after_one_audit() -> None:
     assert llm.call_count == 2
     assert verifications[0]["data"]["malformed"] is True
     assert "候选分析" in visible_text
-    assert any(event["type"] == "checkpoint" for event in events)
-    assert events[-1]["data"]["completed"] is False
-    assert events[-1]["data"]["task_outcome"] == "partial"
-    assert events[-1]["data"]["completion_mode"] == "partial"
+    assert "Run completion verification again" not in visible_text
+    assert not any(event["type"] == "checkpoint" for event in events)
+    assert events[-1]["data"]["completed"] is True
+    assert events[-1]["data"]["task_outcome"] == "success"
+    assert events[-1]["data"]["completion_mode"] == "audited"
+    assert events[-1]["data"]["audit_status"] == "unknown"
     final_state = [event for event in events if event["type"] == "task_state"][-1]
     assert "候选分析" in final_state["data"]["best_candidate"]["text"]
 
@@ -1018,6 +1027,7 @@ async def test_tool_task_runs_exactly_one_successful_completion_audit() -> None:
     assert events[-1]["data"]["run_status"] == "finished"
     assert events[-1]["data"]["task_outcome"] == "success"
     assert events[-1]["data"]["completed"] is True
+    assert events[-1]["data"]["audit_status"] == "passed"
 
 
 @pytest.mark.anyio

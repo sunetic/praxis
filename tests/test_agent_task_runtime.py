@@ -543,47 +543,6 @@ def test_unrelated_success_does_not_resolve_active_failure_episode() -> None:
     assert deterministic_completion_precheck(journal).satisfied is True
 
 
-def test_llm_failure_assessment_can_supersede_non_blocking_attempt() -> None:
-    journal = _journal()
-    _evaluate(
-        journal,
-        _execution(
-            call_id="optional-attempt",
-            sql="SELECT missing_column FROM eval_customers",
-            success=False,
-            category="unknown_column",
-            message="Unknown column 'missing_column' in 'field list'",
-            errno=1054,
-        ),
-        1,
-    )
-    episode = journal.failure_episodes[0]
-    result = parse_verification_result(
-        json.dumps(
-            {
-                "satisfied": True,
-                "reason": "The failed attempt is not required by the user's requested outcome.",
-                "missing": [],
-                "repair_type": "none",
-                "failure_assessments": [
-                    {
-                        "id": episode.id,
-                        "blocking": False,
-                        "reason": "Alternative evidence already establishes the requested outcome.",
-                        "evidence_refs": [],
-                    }
-                ],
-            }
-        )
-    )
-
-    journal.apply_failure_assessments(result)
-
-    assert enforce_failure_episode_audit(journal, result).satisfied is True
-    assert episode.status == "superseded"
-    assert journal.unresolved_failure_episodes() == []
-
-
 def test_failure_audit_rejects_unassessed_open_episode_without_domain_rules() -> None:
     journal = _journal()
     _evaluate(

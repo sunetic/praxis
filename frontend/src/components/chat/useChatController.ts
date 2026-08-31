@@ -1085,12 +1085,11 @@ export function useChatController({
               ? (raw.data as Record<string, unknown>)
               : (raw && typeof raw === "object" ? raw : {})
             const satisfied = Boolean(d.satisfied)
-            const reason = typeof d.reason === "string" ? d.reason : ""
             setRuntimeStatus({
               phase: "reflect",
               text: satisfied
                 ? "Acceptance criteria verified. Preparing final response..."
-                : (reason || "Verification found missing work. Continuing execution..."),
+                : "Advisory quality review recorded. Preparing final response...",
             })
             return
           }

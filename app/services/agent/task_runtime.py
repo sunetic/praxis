@@ -830,28 +830,6 @@ class TaskJournal:
         self.updated_at = _utc_now()
         return self.metrics.verification_no_progress_rounds
 
-    def apply_failure_assessments(self, verification: VerificationResult) -> None:
-        """Apply LLM semantic judgments without encoding domain recovery rules."""
-        by_id = {
-            str(item.get("id") or ""): item
-            for item in verification.failure_assessments
-            if isinstance(item, dict)
-        }
-        for episode in self.unresolved_failure_episodes():
-            assessment = by_id.get(episode.id)
-            if assessment is None:
-                continue
-            episode.semantic_assessment = str(assessment.get("reason") or "").strip() or None
-            if bool(assessment.get("blocking", True)):
-                continue
-            episode.status = "superseded"
-            refs = [str(item) for item in assessment.get("evidence_refs") or [] if str(item)]
-            episode.resolution_evidence_ref = refs[0] if refs else None
-            self.metrics.recovered_failures += 1
-        if not self.unresolved_failure_episodes():
-            self.active_failure_episode_id = None
-        self.updated_at = _utc_now()
-
     def _record_failure(self, observation: Observation) -> FailureEpisode:
         episode = next(
             (

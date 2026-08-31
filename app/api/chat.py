@@ -1215,6 +1215,7 @@ async def chat_stream(
                             "completed": False,
                             "run_status": "cancelled",
                             "task_outcome": "partial",
+                            "audit_status": "not_run",
                             "reason_code": "client_disconnected",
                         },
                     )
@@ -1253,6 +1254,7 @@ async def chat_stream(
                             "completed": False,
                             "run_status": "cancelled",
                             "task_outcome": "partial",
+                            "audit_status": "not_run",
                             "reason_code": "stream_cancelled",
                         },
                     )
@@ -1305,6 +1307,7 @@ async def chat_stream(
                     "completed": False,
                     "run_status": "error",
                     "task_outcome": "unknown",
+                    "audit_status": "not_run",
                     "reason_code": "runtime_error",
                 },
             )
@@ -1322,6 +1325,7 @@ async def chat_stream(
                                 "completed": False,
                                 "run_status": "finished",
                                 "task_outcome": "partial",
+                                "audit_status": "not_run",
                                 "reason_code": "stream_ended_without_terminal_event",
                             },
                         )
