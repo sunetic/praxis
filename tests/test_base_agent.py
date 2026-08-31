@@ -14,23 +14,30 @@ from app.services.agent.reasoning_engine import (
     ReasoningEngine,
     ReasoningPhase,
     SimpleToolExecutor,
+    _build_best_candidate_fallback,
     _build_initial_progress_note,
     _build_observation_progress_note,
     _build_plan_progress_note,
-    _build_private_revision_context,
     _build_retry_system_hint,
-    _build_verification_progress_note,
-    _candidate_self_containment_precheck,
     _check_transition,
     _extract_completion_verification_policies,
     _reflector_step,
     _summarize_planning_objectives,
     _tool_signature,
-    _verification_requires_new_evidence,
 )
 from app.services.agent.task_contract import AcceptanceCriterion, TaskContract, latest_user_text
 from app.services.agent.task_contract_agent import TaskContractBuild
-from app.services.agent.task_runtime import Observation, TaskJournal, VerificationResult
+from app.services.agent.task_runtime import Observation, TaskJournal
+
+
+def test_unverified_retained_candidate_is_labelled_partial() -> None:
+    journal = TaskJournal.create(TaskContract(objective="检查客户数据"))
+    journal.record_candidate("已检查客户数据。", iteration=1)
+
+    result = _build_best_candidate_fallback(journal, "")
+
+    assert result.startswith("阶段性结果（未通过完成审计，不能视为最终结论）")
+    assert "已检查客户数据。" in result
 
 
 def _failed_sql_observation(
@@ -71,21 +78,6 @@ def test_complex_initial_progress_names_the_user_task_without_copying_sql() -> N
     assert "商品经营周报" in note
     assert "SELECT" not in note
     assert 60 <= len(note) <= 220
-
-
-def test_verification_progress_explains_unsupported_calculation_naturally() -> None:
-    journal = TaskJournal.create(TaskContract(objective="完成数据检查并提供证据"))
-    journal.verification = VerificationResult(
-        satisfied=False,
-        reason="Numeric claims cannot be recomputed from the current evidence.",
-        evaluator="llm",
-    )
-
-    note = _build_verification_progress_note(journal, satisfied=False)
-
-    assert "系统" not in note
-    assert "不能从现有查询结果直接得到" in note
-    assert "不做无关查询" in note
 
 
 @pytest.mark.parametrize(
@@ -192,13 +184,6 @@ def _text_chunk(text: str, finish_reason: str = "stop") -> dict[str, Any]:
     return {"choices": [{"delta": {"content": text}, "finish_reason": finish_reason}]}
 
 
-def _message_chunk(text: str) -> dict[str, Any]:
-    return {
-        "choices": [{"message": {"content": text}, "finish_reason": "stop"}],
-        "usage": {"prompt_tokens": 19, "completion_tokens": 11},
-    }
-
-
 def _tool_call_chunk(
     name: str,
     arguments: str,
@@ -251,7 +236,13 @@ def _make_engine(
     task_contract_builder: Any | None = None,
 ) -> ReasoningEngine:
     return ReasoningEngine(
-        config=config or EngineConfig(),
+        # Most tests below exercise the legacy opt-in contract path explicitly.
+        # Product defaults are covered separately and keep this classifier disabled.
+        config=config
+        or EngineConfig(
+            task_contract_enabled=True,
+            completion_verifier_enabled=False,
+        ),
         llm=llm,
         tool_executor=SimpleToolExecutor(executor) if executor is not None else None,
         compressor=compressor,
@@ -656,7 +647,7 @@ async def test_independent_recoverable_failures_have_independent_retry_budgets()
 
 
 @pytest.mark.anyio
-async def test_complex_task_withholds_incomplete_candidate_until_verifier_passes() -> None:
+async def test_tool_task_runs_one_completion_audit_and_stops_on_a_gap() -> None:
     executed_sql: list[str] = []
 
     async def executor(name: str, args: dict[str, Any]) -> dict[str, Any]:
@@ -678,25 +669,11 @@ async def test_complex_task_withholds_incomplete_candidate_until_verifier_passes
                     '"missing":["ac-2 order audit"],"contradictions":[],"criterion_results":[]}'
                 )
             ],
-            _tool_call_chunk(
-                "execute_sql",
-                '{"sql":"SELECT COUNT(*) AS checked FROM eval_orders"}',
-                call_id="tc-orders",
-            ),
-            [_text_chunk("客户与订单检查均已完成，并附有查询证据。")],
-            [
-                _text_chunk(
-                    '{"satisfied":true,"reason":"all criteria covered","missing":[],'
-                    '"contradictions":[],"criterion_results":['
-                    '{"id":"ac-1","satisfied":true,"evidence_refs":["tc-customers"]},'
-                    '{"id":"ac-2","satisfied":true,"evidence_refs":["tc-orders"]}]}'
-                )
-            ],
         ]
     )
     engine = _make_engine(
         llm=llm,
-        config=EngineConfig(max_iterations=8, max_verification_retries=2),
+        config=EngineConfig(max_iterations=8, task_contract_enabled=True),
         executor=executor,
         task_contract_builder=StaticTaskContractBuilder(
             complex=True,
@@ -724,19 +701,18 @@ async def test_complex_task_withholds_incomplete_candidate_until_verifier_passes
     verifications = [event["data"] for event in events if event["type"] == "verification"]
     done = events[-1]
 
-    assert executed_sql == [
-        "SELECT COUNT(*) AS checked FROM eval_customers",
-        "SELECT COUNT(*) AS checked FROM eval_orders",
-    ]
-    assert "客户检查完成，任务全部成功" not in visible_text
-    assert visible_text == "客户与订单检查均已完成，并附有查询证据。"
-    assert [item["satisfied"] for item in verifications] == [False, True]
-    assert done["data"]["completed"] is True
-    assert done["data"]["status"] == "completed"
+    assert executed_sql == ["SELECT COUNT(*) AS checked FROM eval_customers"]
+    assert "客户检查完成，任务全部成功" in visible_text
+    assert [item["satisfied"] for item in verifications] == [False]
+    assert any(event["type"] == "checkpoint" for event in events)
+    assert done["data"]["completed"] is False
+    assert done["data"]["status"] == "incomplete"
+    assert done["data"]["run_status"] == "finished"
+    assert done["data"]["task_outcome"] == "partial"
 
 
 @pytest.mark.anyio
-async def test_verifier_semantic_rejection_rewrites_without_forced_tool_busywork() -> None:
+async def test_verifier_semantic_rejection_does_not_restart_execution() -> None:
     executed_actions: list[str] = []
 
     async def executor(name: str, args: dict[str, Any]) -> dict[str, Any]:
@@ -759,18 +735,11 @@ async def test_verifier_semantic_rejection_rewrites_without_forced_tool_busywork
                     '"criterion_results":[{"id":"ac-2","satisfied":false}]}'
                 )
             ],
-            [_text_chunk("本次检查确认服务当前可用；长期运行风险仍需历史数据才能判断。")],
-            [
-                _text_chunk(
-                    '{"satisfied":true,"reason":"supported wording",'
-                    '"missing":[],"contradictions":[],"criterion_results":[]}'
-                )
-            ],
         ]
     )
     engine = _make_engine(
         llm=llm,
-        config=EngineConfig(max_iterations=6, max_verification_retries=2),
+        config=EngineConfig(max_iterations=6, task_contract_enabled=True),
         executor=executor,
         task_contract_builder=StaticTaskContractBuilder(
             complex=True,
@@ -793,21 +762,13 @@ async def test_verifier_semantic_rejection_rewrites_without_forced_tool_busywork
     )
 
     assert executed_actions == ["/health"]
-    assert llm.call_kwargs[3].get("tool_choice") != "required"
-    rewrite_messages = llm.calls[3]
-    assert any(
-        item.get("role") == "system"
-        and "<rejected_draft>" in str(item.get("content") or "")
-        and "长期运行没有风险" in str(item.get("content") or "")
-        and "Completion verification failed" in str(item.get("content") or "")
-        for item in rewrite_messages
-    )
+    assert llm.call_count == 3
     progress_notes = [
         event["data"]["text"] for event in events if event["type"] == "assistant_progress"
     ]
     assert any("确认服务当前是否可用" in note for note in progress_notes)
-    assert any("说明运行风险" in note and "现有证据" in note for note in progress_notes)
-    assert events[-1]["data"]["completed"] is True
+    assert events[-1]["data"]["completed"] is False
+    assert events[-1]["data"]["task_outcome"] == "partial"
 
 
 @pytest.mark.anyio
@@ -864,9 +825,7 @@ async def test_tool_task_emits_task_plan_then_model_transition_before_tool() -> 
 
 
 @pytest.mark.anyio
-async def test_complex_task_returns_grounded_best_effort_when_verification_stops_progressing() -> (
-    None
-):
+async def test_failed_completion_audit_returns_retained_candidate_as_partial() -> None:
     llm = FakeLLM(
         responses=[
             [_text_chunk("所有阶段均已成功完成。")],
@@ -876,19 +835,11 @@ async def test_complex_task_returns_grounded_best_effort_when_verification_stops
                     '"missing":["执行阶段一","执行阶段二"]}'
                 )
             ],
-            [_text_chunk("现在真的全部成功了。")],
-            [
-                _text_chunk(
-                    '{"satisfied":false,"reason":"仍无工具证据",'
-                    '"missing":["执行阶段一","执行阶段二"]}'
-                )
-            ],
-            [_text_chunk("根据现有信息，阶段一和阶段二仍缺少可验证证据，当前不能宣称已经完成。")],
         ]
     )
     engine = _make_engine(
         llm=llm,
-        config=EngineConfig(max_iterations=5, max_verification_retries=2),
+        config=EngineConfig(max_iterations=5, task_contract_enabled=True),
         task_contract_builder=StaticTaskContractBuilder(
             complex=True,
             criteria=[
@@ -912,28 +863,26 @@ async def test_complex_task_returns_grounded_best_effort_when_verification_stops
     visible_text = "".join(
         event["data"].get("text", "") for event in events if event["type"] == "assistant"
     )
-    assert "所有阶段均已成功完成" not in visible_text
-    assert "现在真的全部成功了" not in visible_text
-    assert "当前不能宣称已经完成" in visible_text
-    assert not any(event["type"] == "checkpoint" for event in events)
-    assert events[-1]["data"]["completed"] is True
-    assert events[-1]["data"]["status"] == "completed"
-    assert events[-1]["data"]["completion_mode"] == "best_effort"
+    assert "所有阶段均已成功完成" in visible_text
+    assert llm.call_count == 2
+    assert any(event["type"] == "checkpoint" for event in events)
+    assert events[-1]["data"]["completed"] is False
+    assert events[-1]["data"]["status"] == "incomplete"
+    assert events[-1]["data"]["task_outcome"] == "partial"
+    assert events[-1]["data"]["completion_mode"] == "partial"
 
 
 @pytest.mark.anyio
-async def test_malformed_verifier_gets_one_format_repair_then_graceful_answer() -> None:
+async def test_malformed_verifier_stops_after_one_audit() -> None:
     llm = FakeLLM(
         responses=[
             [_text_chunk("候选分析。")],
             [_text_chunk("not-json")],
-            [_text_chunk("still-not-json")],
-            [_text_chunk("现有证据只能支持候选分析中的部分结论，其余部分尚未确认。")],
         ]
     )
     engine = _make_engine(
         llm=llm,
-        config=EngineConfig(max_iterations=8, max_verification_retries=3),
+        config=EngineConfig(max_iterations=8, task_contract_enabled=True),
         task_contract_builder=StaticTaskContractBuilder(
             complex=True,
             criteria=[AcceptanceCriterion(id="ac-1", description="给出有证据的分析")],
@@ -950,156 +899,124 @@ async def test_malformed_verifier_gets_one_format_repair_then_graceful_answer() 
         event["data"].get("text", "") for event in events if event["type"] == "assistant"
     )
     verifications = [event for event in events if event["type"] == "verification"]
-    assert llm.call_count == 4
+    assert llm.call_count == 2
     assert verifications[0]["data"]["malformed"] is True
-    assert "尚未确认" in visible_text
-    assert not any(event["type"] == "checkpoint" for event in events)
-    assert events[-1]["data"]["completed"] is True
-    assert events[-1]["data"]["completion_mode"] == "best_effort"
+    assert "候选分析" in visible_text
+    assert any(event["type"] == "checkpoint" for event in events)
+    assert events[-1]["data"]["completed"] is False
+    assert events[-1]["data"]["task_outcome"] == "partial"
+    assert events[-1]["data"]["completion_mode"] == "partial"
     final_state = [event for event in events if event["type"] == "task_state"][-1]
-    assert "尚未确认" in final_state["data"]["best_candidate"]["text"]
+    assert "候选分析" in final_state["data"]["best_candidate"]["text"]
 
 
 @pytest.mark.anyio
-async def test_timed_out_partial_finalizer_uses_complete_retained_candidate() -> None:
-    class PartialFinalizerLLM(FakeLLM):
-        async def chat(
-            self,
-            messages: list[dict[str, Any]],
-            tools: list[dict[str, Any]] | None = None,
-            stream: bool = True,
-            **kwargs: Any,
-        ) -> Any:
-            if self.call_count < 3:
-                async for chunk in super().chat(
-                    messages,
-                    tools=tools,
-                    stream=stream,
-                    **kwargs,
-                ):
-                    yield chunk
-                return
-            self.call_count += 1
-            yield _text_chunk("不应展示的半截收尾", finish_reason=None)
-            await asyncio.sleep(1)
-
-    llm = PartialFinalizerLLM(
-        responses=[
-            [_text_chunk("完整候选分析。")],
-            [_text_chunk("not-json")],
-            [_text_chunk("still-not-json")],
-        ]
-    )
-    engine = _make_engine(
-        llm=llm,
-        config=EngineConfig(graceful_finalize_timeout_seconds=0.01),
-        task_contract_builder=StaticTaskContractBuilder(
-            complex=True,
-            criteria=[AcceptanceCriterion(id="ac-1", description="给出完整分析")],
-        ),
-    )
-
-    events = await _collect(
-        engine,
-        messages=[{"role": "user", "content": "给出完整分析"}],
-        tools=[],
-    )
-
-    visible_text = "".join(
-        event["data"].get("text", "") for event in events if event["type"] == "assistant"
-    )
-    assert "完整候选分析" in visible_text
-    assert "不应展示的半截收尾" not in visible_text
-    assert events[-1]["data"]["completion_mode"] == "best_effort"
-
-
-@pytest.mark.anyio
-async def test_verification_can_exceed_global_attempt_limit_while_evidence_grows() -> None:
-    executed_sql: list[str] = []
-
+async def test_tool_timeout_closes_started_call_and_returns_partial() -> None:
     async def executor(name: str, args: dict[str, Any]) -> dict[str, Any]:
-        assert name == "execute_sql"
-        executed_sql.append(str(args.get("sql") or ""))
-        return {"success": True, "data": {"rows": [{"checked": True}]}}
+        del name, args
+        await asyncio.sleep(1)
+        return {"success": True}
 
     llm = FakeLLM(
         responses=[
-            _tool_call_chunk(
-                "execute_sql",
-                '{"sql":"SELECT COUNT(*) FROM eval_orders","intent":"核对基础数量"}',
-                call_id="tc-orders",
-            ),
-            [_text_chunk("初稿。")],
-            [
-                _text_chunk(
-                    '{"satisfied":false,"reason":"缺少金额证据","missing":["金额"],"repair_type":"new_evidence"}'
-                )
-            ],
-            _tool_call_chunk(
-                "execute_sql",
-                '{"sql":"SELECT SUM(total_amount) FROM eval_orders","intent":"核对汇总值"}',
-                call_id="tc-amount",
-            ),
-            [_text_chunk("第二稿。")],
-            [
-                _text_chunk(
-                    '{"satisfied":false,"reason":"缺少状态证据","missing":["状态"],"repair_type":"new_evidence"}'
-                )
-            ],
-            _tool_call_chunk(
-                "execute_sql",
-                '{"sql":"SELECT status, COUNT(*) FROM eval_orders GROUP BY status",'
-                '"intent":"核对分类分布"}',
-                call_id="tc-status",
-            ),
-            [_text_chunk("订单数量和金额均已通过查询验证。")],
-            [_text_chunk('{"satisfied":true,"reason":"证据完整","missing":[]}')],
+            _tool_call_chunk("execute_sql", '{"sql":"SELECT pg_sleep(10)"}', call_id="tc-slow")
         ]
     )
     engine = _make_engine(
         llm=llm,
-        config=EngineConfig(max_iterations=8, max_verification_retries=1),
-        executor=executor,
-        task_contract_builder=StaticTaskContractBuilder(
-            complex=True,
-            criteria=[
-                AcceptanceCriterion(id="ac-1", description="核对订单数量"),
-                AcceptanceCriterion(id="ac-2", description="核对订单金额"),
-            ],
+        config=EngineConfig(
+            task_contract_enabled=False,
+            tool_timeout_seconds=0.01,
+            max_transient_retries=0,
         ),
+        executor=executor,
     )
 
     events = await _collect(
         engine,
-        messages=[
-            {
-                "role": "user",
-                "content": "请完成订单审计：\n1. 核对订单数量\n2. 核对订单金额",
-            }
-        ],
+        messages=[{"role": "user", "content": "运行慢查询并报告结果"}],
         tools=[{"type": "function", "function": {"name": "execute_sql"}}],
     )
 
-    verifications = [event["data"] for event in events if event["type"] == "verification"]
-    assert executed_sql == [
-        "SELECT COUNT(*) FROM eval_orders",
-        "SELECT SUM(total_amount) FROM eval_orders",
-        "SELECT status, COUNT(*) FROM eval_orders GROUP BY status",
-    ]
-    assert [item["satisfied"] for item in verifications] == [False, False, True]
-    assert [item["no_progress_rounds"] for item in verifications] == [0, 0, 0]
-    assert llm.call_kwargs[3]["tool_choice"] == "required"
-    assert llm.call_kwargs[6]["tool_choice"] == "required"
-    progress_notes = [
-        event["data"]["text"] for event in events if event["type"] == "assistant_progress"
-    ]
-    assert len(progress_notes[0]) >= 80
-    assert "核对订单数量" in progress_notes[0]
-    assert "核对订单金额" in progress_notes[0]
-    assert "直接证据" in progress_notes[0]
-    assert any("核对汇总值" in note for note in progress_notes)
-    assert any("缺少直接证据" in note for note in progress_notes)
-    assert progress_notes[-1] == "复核已经通过，关键结论都有对应证据。我正在整理最终报告。"
+    starts = [event["data"]["tool_call_id"] for event in events if event["type"] == "tool_start"]
+    results = [event["data"] for event in events if event["type"] == "tool_result"]
+    assert starts == ["tc-slow"]
+    assert [item["tool_call_id"] for item in results] == starts
+    assert results[0]["result"]["error"]["code"] == "tool_timeout"
+    assert events[-1]["data"]["completed"] is False
+    assert events[-1]["data"]["task_outcome"] == "partial"
+
+
+@pytest.mark.anyio
+async def test_tool_exception_closes_started_call_and_returns_partial() -> None:
+    async def executor(name: str, args: dict[str, Any]) -> dict[str, Any]:
+        del name, args
+        raise RuntimeError("database connection dropped")
+
+    llm = FakeLLM(
+        responses=[
+            _tool_call_chunk("execute_sql", '{"sql":"SELECT 1"}', call_id="tc-error")
+        ]
+    )
+    engine = _make_engine(
+        llm=llm,
+        config=EngineConfig(
+            task_contract_enabled=False,
+            max_reflections=0,
+        ),
+        executor=executor,
+    )
+
+    events = await _collect(
+        engine,
+        messages=[{"role": "user", "content": "运行查询并报告结果"}],
+        tools=[{"type": "function", "function": {"name": "execute_sql"}}],
+    )
+
+    starts = [event["data"]["tool_call_id"] for event in events if event["type"] == "tool_start"]
+    results = [event["data"] for event in events if event["type"] == "tool_result"]
+    assert starts == ["tc-error"]
+    assert [item["tool_call_id"] for item in results] == starts
+    assert results[0]["result"]["error"]["code"] == "tool_execution_error"
+    assert events[-1]["data"]["completed"] is False
+    assert events[-1]["data"]["task_outcome"] == "partial"
+
+
+@pytest.mark.anyio
+async def test_tool_task_runs_exactly_one_successful_completion_audit() -> None:
+    async def executor(name: str, args: dict[str, Any]) -> dict[str, Any]:
+        del name, args
+        return {"success": True, "data": {"rows": [{"value": 1}]}}
+
+    llm = FakeLLM(
+        responses=[
+            _tool_call_chunk("execute_sql", '{"sql":"SELECT 1"}', call_id="tc-one"),
+            [_text_chunk("查询返回 1。")],
+            [
+                _text_chunk(
+                    '{"satisfied":true,"reason":"request answered from tool evidence",'
+                    '"missing":[],"contradictions":[],"criterion_results":[]}'
+                )
+            ],
+        ]
+    )
+    engine = _make_engine(
+        llm=llm,
+        config=EngineConfig(task_contract_enabled=False),
+        executor=executor,
+    )
+
+    events = await _collect(
+        engine,
+        messages=[{"role": "user", "content": "查询数据库中的数字"}],
+        tools=[{"type": "function", "function": {"name": "execute_sql"}}],
+    )
+
+    assert llm.call_count == 3
+    assert len([event for event in events if event["type"] == "verification"]) == 1
+    assert not [event for event in events if event["type"] == "task_contract"]
+    assert events[-1]["data"]["run_status"] == "finished"
+    assert events[-1]["data"]["task_outcome"] == "success"
     assert events[-1]["data"]["completed"] is True
 
 
@@ -1121,29 +1038,8 @@ async def test_simple_contract_skips_completion_verifier() -> None:
 
 
 @pytest.mark.anyio
-async def test_engine_builds_task_contract_before_planning_and_counts_usage() -> None:
-    contract_response = {
-        "constraints": [],
-        "acceptance_criteria": [
-            {
-                "description": "Answer the request",
-                "required": True,
-                "requires_tool_evidence": False,
-                "required_tool_outcome": "any",
-                "component_hints": [],
-                "source_excerpt": "Handle the request.",
-            }
-        ],
-        "output_requirements": [],
-        "complex": False,
-        "high_value": False,
-    }
-    llm = FakeLLM(
-        responses=[
-            [_message_chunk(json.dumps(contract_response))],
-            [_text_chunk("done")],
-        ]
-    )
+async def test_default_engine_uses_original_request_without_llm_classification() -> None:
+    llm = FakeLLM(responses=[[_text_chunk("done")]])
     engine = ReasoningEngine(llm=llm)
 
     events = await _collect(
@@ -1153,12 +1049,35 @@ async def test_engine_builds_task_contract_before_planning_and_counts_usage() ->
     )
 
     state = next(event["data"] for event in events if event["type"] == "task_state")
-    assert llm.call_count == 2
-    assert state["contract"]["acceptance_criteria"][0]["description"] == "Answer the request"
-    assert state["metrics"]["llm_calls"] == 2
-    assert state["metrics"]["input_tokens"] == 19
-    assert state["metrics"]["output_tokens"] == 11
+    assert llm.call_count == 1
+    assert state["contract"]["objective"] == "Handle the request."
+    assert state["contract"]["acceptance_criteria"][0]["description"] == "Handle the request."
+    assert not [event for event in events if event["type"] == "task_contract"]
+    assert state["metrics"]["llm_calls"] == 1
     assert events[-1]["data"]["completed"] is True
+    assert events[-1]["data"]["run_status"] == "finished"
+    assert events[-1]["data"]["task_outcome"] == "success"
+
+
+@pytest.mark.anyio
+async def test_available_tools_do_not_force_tool_use_or_completion_audit() -> None:
+    llm = FakeLLM(responses=[[_text_chunk("A direct answer is sufficient.")]])
+    engine = _make_engine(
+        llm=llm,
+        config=EngineConfig(task_contract_enabled=False),
+    )
+
+    events = await _collect(
+        engine,
+        messages=[{"role": "user", "content": "Explain what a database index is."}],
+        tools=[{"type": "function", "function": {"name": "execute_sql"}}],
+    )
+
+    assert llm.call_count == 1
+    assert not [event for event in events if event["type"] == "tool_start"]
+    assert not [event for event in events if event["type"] == "verification"]
+    assert events[-1]["data"]["completed"] is True
+    assert events[-1]["data"]["task_outcome"] == "success"
 
 
 @pytest.mark.anyio
@@ -1213,7 +1132,7 @@ async def test_simple_task_cannot_claim_completion_with_unresolved_failure() -> 
     )
     engine = _make_engine(
         llm=llm,
-        config=EngineConfig(max_verification_retries=2),
+        config=EngineConfig(task_contract_enabled=True),
         executor=executor,
     )
 
@@ -1227,103 +1146,11 @@ async def test_simple_task_cannot_claim_completion_with_unresolved_failure() -> 
         event["data"].get("text", "") for event in events if event["type"] == "assistant"
     )
     verifications = [event["data"] for event in events if event["type"] == "verification"]
-    assert "查询已经成功完成" not in visible
-    assert "现在可以宣布成功" not in visible
-    assert "第三次仍然没有修复查询" not in visible
-    assert "本次执行尚未完成" in visible
-    assert "已保留 1 条工具证据" in visible
+    assert "查询已经成功完成" in visible
+    assert "尚未确认" in visible
     assert verifications
     assert all(item["evaluator"] == "failure_episode_audit" for item in verifications)
     assert events[-1]["data"]["completed"] is False
-
-
-@pytest.mark.anyio
-async def test_high_value_task_can_require_adversarial_verification() -> None:
-    llm = FakeLLM(
-        responses=[
-            [_text_chunk("生产安全审计完成，未发现问题。")],
-            [_text_chunk('{"satisfied":true,"reason":"primary pass","missing":[]}')],
-            [_text_chunk('{"satisfied":true,"reason":"arithmetic pass","missing":[]}')],
-            [
-                _text_chunk(
-                    '{"satisfied":true,"reason":"adversarial pass",'
-                    '"missing":[],"contradictions":[]}'
-                )
-            ],
-        ]
-    )
-    engine = _make_engine(
-        llm=llm,
-        config=EngineConfig(adversarial_verification_enabled=True),
-        task_contract_builder=StaticTaskContractBuilder(complex=True, high_value=True),
-    )
-
-    events = await _collect(
-        engine,
-        messages=[
-            {
-                "role": "user",
-                "content": "请执行生产安全审计：\n1. 检查权限边界\n2. 输出审计报告",
-            }
-        ],
-        tools=[],
-    )
-
-    verification = next(event["data"] for event in events if event["type"] == "verification")
-    assert llm.call_count == 4
-    assert verification["satisfied"] is True
-    assert verification["evaluator"] == "llm+arithmetic_llm+adversarial_llm"
-    assert events[-1]["data"]["completed"] is True
-
-
-@pytest.mark.anyio
-async def test_complex_final_candidate_cannot_reference_hidden_failed_draft() -> None:
-    llm = FakeLLM(responses=[])
-    engine = _make_engine(llm=llm)
-    journal = TaskJournal.create(
-        TaskContract(
-            objective="完成检查并输出完整报告",
-            complex=True,
-        )
-    )
-    journal.metrics.verification_attempts = 1
-
-    result = await engine._verify_candidate(
-        journal,
-        "Updated impact: 89.90. All other findings in the original report remain accurate.",
-    )
-
-    assert result.satisfied is False
-    assert result.evaluator == "deterministic_candidate"
-    assert "self-contained" in result.missing[0]
-    assert llm.call_count == 0
-
-
-def test_revision_reply_to_internal_feedback_is_not_a_final_answer() -> None:
-    journal = TaskJournal.create(TaskContract(objective="完成检查并输出完整报告", complex=True))
-    journal.metrics.verification_attempts = 2
-
-    result = _candidate_self_containment_precheck(
-        journal,
-        "您的复核结论非常准确和全面！让我确认一下最终版本应该如何调整。",
-    )
-
-    assert result is not None
-    assert result.evaluator == "deterministic_candidate"
-
-
-def test_self_containment_defect_rewrites_without_more_tool_calls() -> None:
-    verification = VerificationResult(
-        satisfied=False,
-        reason="Candidate is not a self-contained final report.",
-        missing=["Rewrite and restate the complete report."],
-        evaluator="llm",
-    )
-
-    assert _verification_requires_new_evidence(verification) is False
-    context = _build_private_revision_context("旧草稿", "请重写")
-    assert "not a user message" in context
-    assert "<rejected_draft>\n旧草稿" in context
 
 
 def test_skill_verification_policies_are_extracted_as_opaque_extensions() -> None:
@@ -1407,6 +1234,7 @@ async def test_transient_failures_use_exponential_backoff(
         config=EngineConfig(
             transient_backoff_base_seconds=0.25,
             transient_backoff_max_seconds=1.0,
+            completion_verifier_enabled=False,
         ),
         executor=executor,
     )
@@ -1460,46 +1288,17 @@ async def test_global_elapsed_time_limit_returns_best_available_answer() -> None
     visible_text = "".join(
         event["data"].get("text", "") for event in events if event["type"] == "assistant"
     )
-    assert "当前不能给出完成结论" in visible_text
-    assert not any(event["type"] == "checkpoint" for event in events)
-    assert events[-1]["data"]["completed"] is True
-    assert events[-1]["data"]["status"] == "completed"
-    assert events[-1]["data"]["completion_mode"] == "best_effort"
+    assert "不声明任务已经完成" in visible_text
+    assert any(event["type"] == "checkpoint" for event in events)
+    assert events[-1]["data"]["completed"] is False
+    assert events[-1]["data"]["status"] == "incomplete"
+    assert events[-1]["data"]["task_outcome"] == "partial"
+    assert events[-1]["data"]["completion_mode"] == "partial"
 
 
 @pytest.mark.anyio
-async def test_soft_deadline_converges_before_hard_limit() -> None:
-    llm = FakeLLM(
-        responses=[[_text_chunk("已根据当前证据整理结论；未取得的外部事实已明确标为未知。")]]
-    )
-    engine = _make_engine(
-        llm=llm,
-        config=EngineConfig(
-            soft_finalize_seconds=0.000000001,
-            max_elapsed_seconds=30,
-        ),
-        task_contract_builder=StaticTaskContractBuilder(
-            complex=True,
-            criteria=[AcceptanceCriterion(id="ac-1", description="整理当前证据")],
-        ),
-    )
-
-    events = await _collect(
-        engine,
-        messages=[{"role": "user", "content": "整理当前证据"}],
-        tools=[],
-    )
-
-    assistant = next(event for event in events if event["type"] == "assistant")
-    assert assistant["meta"]["reason_code"] == "soft_deadline"
-    assert assistant["data"]["best_effort"] is True
-    assert events[-1]["data"]["completed"] is True
-    assert events[-1]["data"]["completion_mode"] == "best_effort"
-
-
-@pytest.mark.anyio
-async def test_in_flight_planner_is_bounded_to_preserve_final_answer_window() -> None:
-    class SlowPlannerThenFinalizer:
+async def test_in_flight_planner_timeout_returns_deterministic_partial_result() -> None:
+    class SlowPlanner:
         def __init__(self) -> None:
             self.call_count = 0
 
@@ -1511,21 +1310,16 @@ async def test_in_flight_planner_is_bounded_to_preserve_final_answer_window() ->
             **kwargs: Any,
         ) -> Any:
             del messages, tools, stream, kwargs
-            call_index = self.call_count
             self.call_count += 1
-            if call_index == 0:
-                await asyncio.sleep(1)
-                yield _text_chunk("This planner response should be cancelled.")
-                return
-            yield _text_chunk("已停止继续探索，并根据已有信息给出可交付结论。")
+            await asyncio.sleep(1)
+            yield _text_chunk("This planner response should be cancelled.")
 
-    llm = SlowPlannerThenFinalizer()
+    llm = SlowPlanner()
     engine = _make_engine(
         llm=llm,
         config=EngineConfig(
-            soft_finalize_seconds=0.01,
-            graceful_finalize_timeout_seconds=1,
-            max_elapsed_seconds=2,
+            max_elapsed_seconds=0.01,
+            task_contract_enabled=True,
         ),
         task_contract_builder=StaticTaskContractBuilder(
             complex=True,
@@ -1540,12 +1334,13 @@ async def test_in_flight_planner_is_bounded_to_preserve_final_answer_window() ->
     )
 
     assistant = next(event for event in events if event["type"] == "assistant")
-    assert llm.call_count == 2
-    assert assistant["meta"]["reason_code"] == "operation_soft_deadline"
-    assert "可交付结论" in assistant["data"]["text"]
+    assert llm.call_count == 1
+    assert assistant["meta"]["reason_code"] == "operation_timeout"
+    assert "不声明任务已经完成" in assistant["data"]["text"]
     assert not any(event["type"] == "error" for event in events)
-    assert events[-1]["data"]["completed"] is True
-    assert events[-1]["data"]["completion_mode"] == "best_effort"
+    assert events[-1]["data"]["completed"] is False
+    assert events[-1]["data"]["task_outcome"] == "partial"
+    assert events[-1]["data"]["completion_mode"] == "partial"
 
 
 @pytest.mark.anyio
@@ -1766,7 +1561,11 @@ async def test_budget_exhausted_forces_finalize_response() -> None:
 
     engine = _make_engine(
         llm=llm,
-        config=EngineConfig(max_iterations=2, max_progress_bonus=0),
+        config=EngineConfig(
+            max_iterations=2,
+            max_progress_bonus=0,
+            completion_verifier_enabled=False,
+        ),
         executor=executor,
     )
 
@@ -1782,7 +1581,9 @@ async def test_budget_exhausted_forces_finalize_response() -> None:
         if event["type"] == "assistant" and event["meta"].get("forced_finalize") is True
     ]
     assert forced_finalize_events
-    assert forced_finalize_events[0]["data"]["text"] == "Summary: partial findings."
+    assert "Best available conclusion" in forced_finalize_events[0]["data"]["text"]
+    assert "no unsupported completion claim" in forced_finalize_events[0]["data"]["text"]
+    assert llm.call_count == 2
     assert events[-1]["type"] == "done"
 
 
@@ -1907,7 +1708,11 @@ async def test_checkpoint_can_resume_after_engine_restart_with_failure_history()
     )
     first_engine = _make_engine(
         llm=first_llm,
-        config=EngineConfig(max_iterations=1, max_progress_bonus=0),
+        config=EngineConfig(
+            max_iterations=1,
+            max_progress_bonus=0,
+            completion_verifier_enabled=False,
+        ),
         executor=failing_executor,
     )
     first_events = await _collect(
@@ -1940,7 +1745,7 @@ async def test_checkpoint_can_resume_after_engine_restart_with_failure_history()
     )
     second_engine = _make_engine(
         llm=second_llm,
-        config=EngineConfig(max_iterations=5),
+        config=EngineConfig(max_iterations=5, completion_verifier_enabled=False),
         executor=recovery_executor,
     )
     resumed_events = await _collect(

@@ -1213,6 +1213,8 @@ async def chat_stream(
                         {
                             "status": "incomplete",
                             "completed": False,
+                            "run_status": "cancelled",
+                            "task_outcome": "partial",
                             "reason_code": "client_disconnected",
                         },
                     )
@@ -1249,6 +1251,8 @@ async def chat_stream(
                         {
                             "status": "cancelled",
                             "completed": False,
+                            "run_status": "cancelled",
+                            "task_outcome": "partial",
                             "reason_code": "stream_cancelled",
                         },
                     )
@@ -1299,6 +1303,8 @@ async def chat_stream(
                 {
                     "status": "error",
                     "completed": False,
+                    "run_status": "error",
+                    "task_outcome": "unknown",
                     "reason_code": "runtime_error",
                 },
             )
@@ -1314,6 +1320,8 @@ async def chat_stream(
                             {
                                 "status": "incomplete",
                                 "completed": False,
+                                "run_status": "finished",
+                                "task_outcome": "partial",
                                 "reason_code": "stream_ended_without_terminal_event",
                             },
                         )

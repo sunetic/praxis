@@ -75,7 +75,6 @@ class ChatService:
         completion_verifier_enabled: bool | None = None,
         persistent_journal_enabled: bool | None = None,
         parallel_read_only_enabled: bool | None = None,
-        adversarial_verification_enabled: bool | None = None,
     ):
         settings = get_settings()
         self.max_iterations = max_iterations
@@ -112,20 +111,13 @@ class ChatService:
             if parallel_read_only_enabled is None
             else parallel_read_only_enabled
         )
-        self.adversarial_verification_enabled = (
-            settings.agent_adversarial_verification_enabled
-            if adversarial_verification_enabled is None
-            else adversarial_verification_enabled
-        )
         self.max_transient_retries = settings.agent_max_transient_retries
         self.max_no_progress_rounds = settings.agent_max_no_progress_rounds
-        self.max_verification_retries = settings.agent_max_verification_retries
         self.max_parallel_tools = settings.agent_max_parallel_tools
         self.transient_backoff_base_seconds = settings.agent_transient_backoff_base_seconds
         self.transient_backoff_max_seconds = settings.agent_transient_backoff_max_seconds
         self.max_elapsed_seconds = settings.agent_max_elapsed_seconds
-        self.soft_finalize_seconds = settings.agent_soft_finalize_seconds
-        self.graceful_finalize_timeout_seconds = settings.agent_graceful_finalize_timeout_seconds
+        self.tool_timeout_seconds = settings.agent_tool_timeout_seconds
 
     async def chat_with_tools(
         self,
@@ -190,16 +182,13 @@ class ChatService:
                 completion_verifier_enabled=self.completion_verifier_enabled,
                 persistent_journal_enabled=self.persistent_journal_enabled,
                 parallel_read_only_enabled=self.parallel_read_only_enabled,
-                adversarial_verification_enabled=self.adversarial_verification_enabled,
                 max_transient_retries=self.max_transient_retries,
                 max_no_progress_rounds=self.max_no_progress_rounds,
-                max_verification_retries=self.max_verification_retries,
                 max_parallel_tools=self.max_parallel_tools,
                 transient_backoff_base_seconds=self.transient_backoff_base_seconds,
                 transient_backoff_max_seconds=self.transient_backoff_max_seconds,
                 max_elapsed_seconds=self.max_elapsed_seconds,
-                soft_finalize_seconds=self.soft_finalize_seconds,
-                graceful_finalize_timeout_seconds=self.graceful_finalize_timeout_seconds,
+                tool_timeout_seconds=self.tool_timeout_seconds,
                 context_window_tokens=(context_window_tokens or 128_000),
                 compression_threshold_tokens=(compression_threshold_tokens or 96_000),
                 compression_tail_budget_tokens=max(

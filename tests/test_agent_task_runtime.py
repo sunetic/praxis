@@ -11,7 +11,6 @@ from app.services.agent.task_runtime import (
     ProgressDecision,
     TaskJournal,
     VerificationResult,
-    build_component_evidence_prompt,
     build_verifier_prompt,
     deterministic_completion_precheck,
     enforce_compound_criterion_audit,
@@ -117,7 +116,7 @@ def test_generic_evidence_envelope_preserves_nested_content_and_redacts_secrets(
     assert observation.evidence_truncated is False
 
 
-def test_evidence_keeps_sql_methodology_and_verifier_rejects_mixed_units() -> None:
+def test_completion_audit_keeps_evidence_and_does_not_prescribe_a_tool_path() -> None:
     journal = _journal()
     _evaluate(
         journal,
@@ -136,26 +135,17 @@ def test_evidence_keeps_sql_methodology_and_verifier_rejects_mixed_units() -> No
     prompt = build_verifier_prompt(
         journal,
         "Metric from entity A divided by a total from entity B is 9.3%.",
-        adversarial=True,
         verification_policies=[
             "Check domain-specific population compatibility and source provenance."
         ],
     )
-    assert "same population" in prompt
     assert "SELECT SUM(total_amount)" in prompt
     assert "order IDs" not in prompt
     assert "ACTIVE SKILL VERIFICATION POLICIES" in prompt
     assert "source provenance" in prompt
-    assert "not inspected means unknown, not absent" in prompt
-    assert "checklist supplied by component_hints" in prompt
-    assert "Evidence for one named component" in prompt
-    arithmetic_prompt = build_verifier_prompt(
-        journal,
-        "Headline: 10; components: 4 + 5.",
-        arithmetic=True,
-    )
-    assert "forensic arithmetic reconciler" in arithmetic_prompt
-    assert "reject any headline that does not equal its stated components" in arithmetic_prompt
+    assert "Do not invent requirements" in prompt
+    assert "minimum number of calls" in prompt
+    assert "FIXED USER REQUEST" in prompt
 
 
 def test_verifier_requires_dispatched_tool_result_for_explicit_action() -> None:
@@ -176,8 +166,8 @@ def test_verifier_requires_dispatched_tool_result_for_explicit_action() -> None:
     prompt = build_verifier_prompt(journal, "检查已经完成。")
 
     assert '"requires_tool_evidence": true' in prompt
-    assert "malformed arguments do not satisfy it" in prompt
-    assert "failure result from the intended tool" in prompt
+    assert "executed actions" in prompt
+    assert "Do not invent requirements" in prompt
 
 
 def test_compound_criterion_requires_component_level_verifier_results() -> None:
@@ -233,13 +223,6 @@ def test_compound_criterion_requires_component_level_verifier_results() -> None:
     )
     assert enforce_compound_criterion_audit(journal, complete).satisfied is True
     assert criterion.component_hints == ["最终报告必须覆盖队列", "事件异常"]
-    component_prompt = build_component_evidence_prompt(journal, complete, "候选报告正文")
-    assert "narrow evidence-to-component verifier" in component_prompt
-    assert "related but different named entity" in component_prompt
-    assert "Normal semantic equivalence is allowed" in component_prompt
-    assert "事件异常" in component_prompt
-    assert '"component": "最终报告必须覆盖队列"' not in component_prompt
-    assert "CANDIDATE ANSWER:\n候选报告正文" in component_prompt
 
 
 def test_explicit_action_criterion_uses_action_gate_not_component_audit() -> None:

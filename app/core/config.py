@@ -36,6 +36,12 @@ def _normalize_sqlite_url(url: str) -> str:
 _ENV_LINE_RE = re.compile(
     r"^(?:export\s+)?(?P<key>[A-Za-z_]\w*)=(?P<value>[^\"'\r\n]*)$",
 )
+_DEPRECATED_AGENT_SETTINGS = {
+    "agent_adversarial_verification_enabled",
+    "agent_graceful_finalize_timeout_seconds",
+    "agent_max_verification_retries",
+    "agent_soft_finalize_seconds",
+}
 
 
 def _read_raw_env_values(path: str | Path = DEFAULT_ENV_FILE) -> dict[str, str]:
@@ -67,6 +73,9 @@ class Settings(BaseSettings):
     @classmethod
     def _patch_dotenv_hash_values(cls, data: dict) -> dict:
         """Fix values truncated by python-dotenv's inline ``#`` comment parsing."""
+        for key in list(data):
+            if str(key).lower() in _DEPRECATED_AGENT_SETTINGS:
+                data.pop(key, None)
         raw = _read_raw_env_values()
         for key, raw_value in raw.items():
             if key in data and isinstance(data[key], str) and data[key] != raw_value:
@@ -97,20 +106,17 @@ class Settings(BaseSettings):
     ai_context_char_limit: int = 80_000
 
     agent_failure_episode_enabled: bool = True
-    agent_task_contract_enabled: bool = True
+    agent_task_contract_enabled: bool = False
     agent_completion_verifier_enabled: bool = True
     agent_persistent_journal_enabled: bool = True
     agent_parallel_read_only_enabled: bool = True
-    agent_adversarial_verification_enabled: bool = True
     agent_max_transient_retries: int = 3
     agent_max_no_progress_rounds: int = 3
-    agent_max_verification_retries: int = 3
     agent_max_parallel_tools: int = 4
     agent_transient_backoff_base_seconds: float = 0.5
     agent_transient_backoff_max_seconds: float = 4.0
     agent_max_elapsed_seconds: float = 900.0
-    agent_soft_finalize_seconds: float = 240.0
-    agent_graceful_finalize_timeout_seconds: float = 30.0
+    agent_tool_timeout_seconds: float = 120.0
 
     vite_api_base_url: str = "http://localhost:8000/api/v1"
     builder_runtime_enabled: bool = True

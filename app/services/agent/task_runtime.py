@@ -197,7 +197,6 @@ class TaskMetrics:
     best_verification_score: int = -1_000_000
     last_verification_signature: str = ""
     malformed_verification_rounds: int = 0
-    graceful_finalizations: int = 0
     resumptions: int = 0
     llm_calls: int = 0
     input_tokens: int = 0
@@ -431,7 +430,6 @@ class TaskJournal:
             ),
             last_verification_signature=str(metrics.get("last_verification_signature") or ""),
             malformed_verification_rounds=int(metrics.get("malformed_verification_rounds") or 0),
-            graceful_finalizations=int(metrics.get("graceful_finalizations") or 0),
             resumptions=int(metrics.get("resumptions") or 0) + 1,
             llm_calls=int(metrics.get("llm_calls") or 0),
             input_tokens=int(metrics.get("input_tokens") or 0),
@@ -1278,101 +1276,12 @@ def enforce_compound_criterion_audit(
     return result
 
 
-def build_component_evidence_prompt(
-    journal: TaskJournal,
-    result: VerificationResult,
-    candidate_text: str = "",
-) -> str:
-    evidence_by_ref = {item.ref: asdict(item) for item in journal.evidence}
-    audits: list[dict[str, Any]] = []
-    criteria_by_id = {item.id: item for item in journal.contract.acceptance_criteria}
-    for criterion_result in result.criterion_results:
-        criterion = criteria_by_id.get(str(criterion_result.get("id") or ""))
-        if (
-            criterion is None
-            or criterion.requires_tool_evidence
-            or len(criterion.component_hints) < 2
-        ):
-            continue
-        for component in criterion_result.get("component_results") or []:
-            if not isinstance(component, dict):
-                continue
-            component_text = str(component.get("component") or "")
-            if re.search(
-                r"(?:报告|输出|总结|answer|report|output|summary).{0,16}(?:覆盖|包含|包括|cover|include)",
-                component_text,
-                re.I,
-            ):
-                continue
-            refs = [str(item) for item in component.get("evidence_refs") or []]
-            if not refs:
-                continue
-            audits.append(
-                {
-                    "criterion_id": criterion.id,
-                    "component": component_text,
-                    "claimed_satisfied": bool(component.get("satisfied")),
-                    "evidence": [evidence_by_ref[ref] for ref in refs if ref in evidence_by_ref],
-                }
-            )
-    return (
-        "Act as a narrow evidence-to-component verifier. Tools are disabled. Judge only whether each supplied "
-        "evidence request and result actually establishes the component's meaning. Normal semantic equivalence is "
-        "allowed: schema inspection can establish available fields, grouping expressions can establish dimensions, "
-        "and computed aggregates can establish named metrics even when SQL and prose use different words. Reject "
-        "only when the evidence method cannot establish the component, especially when it inspects a related but "
-        "different named entity, action, population, field, relationship, or time scope. A narrative reason, intent "
-        "label, alias, or broad topical similarity cannot substitute for inspecting the entity or relationship that "
-        "the component actually names. Inspect both the claimed evidence and all available journal evidence. If a "
-        "claimed reference is incomplete but another available evidence item directly establishes the component, "
-        "treat the component as supported; request new evidence only when the whole journal lacks a suitable method. "
-        "Use the candidate answer to judge presentation requirements such as whether a report covers or distinguishes "
-        "a topic, but never use candidate prose as a substitute for tool evidence behind a factual claim. "
-        "For factual components, empty evidence is insufficient. Return JSON only with satisfied (boolean), reason "
-        "(string), missing (string[]), contradictions (string[]), and criterion_results (array). Name each unsupported "
-        "component verbatim in missing.\n\n"
-        "COMPONENT EVIDENCE AUDIT:\n"
-        + json.dumps(
-            {
-                "components": audits,
-                "available_evidence": list(evidence_by_ref.values()),
-            },
-            ensure_ascii=False,
-            indent=2,
-        )
-        + "\n\nCANDIDATE ANSWER:\n"
-        + candidate_text
-    )
-
-
 def build_verifier_prompt(
     journal: TaskJournal,
     candidate_text: str,
     *,
-    adversarial: bool = False,
-    arithmetic: bool = False,
     verification_policies: list[str] | None = None,
 ) -> str:
-    if arithmetic:
-        mode = (
-            "Act as a forensic arithmetic reconciler. Ignore rhetorical quality and audit every count, total, "
-            "subtotal, average, date span, ratio, and percentage in the candidate. Recompute displayed component "
-            "lists even when a separate query returned the headline value, and reject any headline that does not "
-            "equal its stated components. Verify denominators, rounding, signs, "
-            "deduplication, and that the same inclusion rule is used in the headline and breakdown."
-        )
-    elif adversarial:
-        mode = (
-            "Act as an adversarial evidence auditor. Assume polished prose may hide unsupported claims. "
-            "Actively recompute arithmetic from the supplied evidence, challenge every number, percentage, "
-            "range, score, and categorical conclusion, and search for omissions, contradictions, unsafe side "
-            "effects, or evidence references that do not actually contain the claimed fact. Inspect each evidence "
-            "request as executable proof rather than trusting its title, intent, or output label. Reject circular "
-            "evidence that merely restates the desired conclusion. Check population, units, scope, inclusion rules, "
-            "and derivation steps for accidental or circular results."
-        )
-    else:
-        mode = "Act as an independent completion verifier."
     evidence = _verification_evidence_payload(journal.evidence)
     active_policies = [item.strip() for item in verification_policies or [] if item.strip()]
     policy_block = (
@@ -1383,60 +1292,31 @@ def build_verifier_prompt(
         else ""
     )
     return (
-        f"{mode}\n"
-        "Tools are disabled. Judge only from the task contract, journal evidence, and candidate answer.\n"
-        "The task contract is fixed for this verification. Do not invent, expand, rename, or reinterpret its "
-        "acceptance criteria. Judge answer-text requirements such as presentation, prioritization, uncertainty, "
-        "recommendations, approval boundaries, and whether an action is proposed directly from the candidate text; "
-        "do not demand a tool call to prove those textual properties. External-state facts still require suitable "
-        "journal evidence when presented as observed facts.\n"
-        "The candidate must be a self-contained final answer because failed drafts are withheld from the user. "
-        "Reject delta-only text that refers to an original/previous report, says all other findings remain, or "
-        "only lists corrections without restating every required acceptance criterion.\n"
+        "Act as an independent completion auditor. Tools are disabled.\n"
+        "Judge only whether the candidate fulfills the fixed user request using the supplied input and evidence. "
+        "Do not invent requirements or prescribe an internal plan, tool, tool order, knowledge lookup, or minimum "
+        "number of calls. A correct result reached by a different valid path must pass.\n"
+        "External-state claims, executed actions, numbers, and absence claims must be supported by relevant evidence. "
+        "Text structure, explanations, uncertainty labels, and recommendations are judged from the candidate itself. "
+        "A failed call blocks completion only when its unresolved outcome still prevents the user request from being "
+        "satisfied; a later successful alternative may resolve it.\n"
+        "The candidate must be self-contained. If evidence is incomplete, it must state the limitation instead of "
+        "claiming success.\n"
         "Return JSON only with: satisfied (boolean), reason (string), missing (string[]), "
         "contradictions (string[]), repair_type ('none'|'rewrite'|'new_evidence'|'blocked'), "
         "failure_assessments ([{id, blocking, reason, evidence_refs}]), criterion_results "
         "([{id, satisfied, evidence_refs, reason, component_results: "
         "[{component, satisfied, evidence_refs, reason}]}]).\n"
-        "Every required acceptance criterion needs support appropriate to its kind: tool-backed external facts use "
-        "journal evidence, while answer structure and language requirements use the candidate text. Natural-language "
-        "confidence is not evidence for an external fact. "
-        "A failed tool attempt is historical evidence, not automatically an unfinished user requirement. For every "
-        "failure episode whose status is open, diagnosing, or stalled, include one failure_assessments entry. Set "
-        "blocking=true only when that failure still prevents a user-stated acceptance criterion from being met. "
-        "When alternative successful evidence establishes the requested outcome, mark the failed attempt non-blocking "
-        "and cite those evidence refs. Never invent a tool, lookup, or output requirement merely because it was tried. "
-        "Treat a compound acceptance criterion as the checklist supplied by component_hints. Evidence for one named component "
-        "must not be used to mark its siblings satisfied; criterion_results must cite evidence for each factual "
-        "component or report the uncovered component in missing. For every compound criterion, component_results "
-        "is mandatory and must contain at least two separately judged entries. The task contract supplies "
-        "component_hints for these criteria; copy every hint verbatim into a component_results.component value, "
-        "then judge that exact component. Do not translate, merge, omit, or rename component_hints. "
-        "When an acceptance criterion has requires_tool_evidence=true, require a journal evidence item showing "
-        "that the requested action was actually dispatched to the relevant tool. Match the action semantically "
-        "against tool_name and request_summary; planning text, later substitute actions, and malformed arguments "
-        "do not satisfy it. A requested failing execution is satisfied only by a failure result from the intended "
-        "tool for the requested action, not by argument parsing or transport failure before dispatch. "
-        "Every material claim must be traceable to journal evidence, explicit task input, or a clearly labelled "
-        "assumption. Reject unsupported labels, ratings, causal conclusions, and absence claims.\n"
-        "For every numeric claim, verify that it is directly present in evidence or recompute it from complete "
-        "evidence using a stated formula. Numerators and denominators in percentages or impact totals must use "
-        "compatible units, the same population and entity grain, and a clearly stated inclusion rule; reject any "
-        "calculation that combines incomparable measures. A separately evidenced headline total does not excuse "
-        "an unexplained mismatch with the candidate's displayed breakdown: require the answer to reconcile the "
-        "difference and state any different filters, populations, or grains. If the available "
-        "evidence is sampled or truncated, reject claims that "
-        "depend on unseen items and request evidence at the complete population level. Do not accept an evidence "
-        "item merely because its title or output label matches the claim; its method must actually establish the "
-        "claim. Set satisfied=false when an unsupported claim materially changes a requested outcome; otherwise require "
-        "the candidate to qualify or remove it. Treat every absence statement as a material "
-        "claim: not inspected means unknown, not absent.\n"
+        "Include one failure_assessments item for every open, diagnosing, or stalled failure. For any criterion with "
+        "component_hints, judge every component separately in component_results without renaming it.\n"
         "If satisfied=false, missing must contain actionable repairs. Set repair_type=new_evidence only when the "
-        "journal truly lacks source facts; use rewrite when the available evidence is sufficient but the candidate "
+        "evidence truly lacks required facts; use rewrite when the evidence is sufficient but the candidate "
         "misstates, omits, or overclaims it; use blocked only when progress needs new authority or an unavailable "
         "external condition. Set repair_type=none only when satisfied=true.\n"
         f"{policy_block}\n"
-        f"TASK CONTRACT:\n{json.dumps(journal.contract.to_dict(), ensure_ascii=False, indent=2)}\n\n"
+        f"FIXED USER REQUEST:\n{journal.contract.objective}\n\n"
+        f"EXPLICIT ACCEPTANCE DETAILS:\n"
+        f"{json.dumps(journal.contract.to_dict(), ensure_ascii=False, indent=2)}\n\n"
         f"USER CORRECTIONS (newest instructions override conflicting earlier details):\n"
         f"{json.dumps(journal.user_corrections, ensure_ascii=False, indent=2)}\n\n"
         f"TASK STATUS: {journal.status}\n"

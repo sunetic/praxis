@@ -19,7 +19,7 @@ from typing import Any, Protocol
 
 from app.core.logging import fmt_kv, get_logger
 from app.services.agent.context_compressor import ContextCompressor, estimate_messages_tokens
-from app.services.agent.task_contract import TaskContract
+from app.services.agent.task_contract import AcceptanceCriterion, TaskContract, latest_user_text
 from app.services.agent.task_contract_agent import (
     TaskContractAgent,
     TaskContractBuild,
@@ -92,20 +92,17 @@ class EngineConfig:
     compression_tail_budget_tokens: int = 20_000
     context_window_tokens: int = 128_000
     failure_episode_enabled: bool = True
-    task_contract_enabled: bool = True
+    task_contract_enabled: bool = False
     completion_verifier_enabled: bool = True
     persistent_journal_enabled: bool = True
     parallel_read_only_enabled: bool = True
-    adversarial_verification_enabled: bool = False
     max_transient_retries: int = 3
     max_no_progress_rounds: int = 3
-    max_verification_retries: int = 5
     max_parallel_tools: int = 4
     transient_backoff_base_seconds: float = 0.5
     transient_backoff_max_seconds: float = 4.0
     max_elapsed_seconds: float = 900.0
-    soft_finalize_seconds: float = 240.0
-    graceful_finalize_timeout_seconds: float = 30.0
+    tool_timeout_seconds: float = 120.0
 
 
 class ToolExecutor(Protocol):
@@ -153,8 +150,14 @@ class SimpleToolExecutor:
         except Exception as exc:
             result = {
                 "success": False,
-                "error": str(exc),
-                "error_class": "execution_error",
+                "data": None,
+                "error": {
+                    "code": "tool_execution_error",
+                    "category": "execution_error",
+                    "message": str(exc) or type(exc).__name__,
+                    "phase": "execution",
+                },
+                "error_class": "tool_execution_error",
             }
         error_class = None
         if isinstance(result, dict):
@@ -237,7 +240,7 @@ class ReasoningEngine:
 
         cfg = self.config
         self._execution_deadline_at.set(
-            started_at + cfg.soft_finalize_seconds if cfg.soft_finalize_seconds > 0 else None
+            started_at + cfg.max_elapsed_seconds if cfg.max_elapsed_seconds > 0 else None
         )
         resumed = cfg.persistent_journal_enabled and isinstance(task_state, dict)
         contract_source = "restored" if resumed else "disabled"
@@ -253,7 +256,7 @@ class ReasoningEngine:
                     contract_build = TaskContractBuild(
                         contract=TaskContract.unclassified(messages, conservative=True),
                         source="fallback",
-                        error_code="soft_deadline",
+                        error_code="operation_timeout",
                     )
                 contract = contract_build.contract
                 contract_source = contract_build.source
@@ -265,7 +268,9 @@ class ReasoningEngine:
                     self._run_usage["max_input_tokens"], contract_build.input_tokens
                 )
             else:
-                contract = TaskContract.unclassified(messages)
+                contract = _build_request_goal(messages)
+            if not contract.acceptance_criteria:
+                contract = _build_request_goal(messages)
             journal = TaskJournal.create(contract)
         if resumed:
             journal.apply_user_correction(messages)
@@ -328,17 +333,9 @@ class ReasoningEngine:
         last_tool_signature = ""
         emitted_progress_notes: set[str] = set()
         initial_progress_emitted = False
-        force_evidence_collection = bool(
-            tools
-            and resumed
-            and journal.verification is not None
-            and not journal.verification.satisfied
-            and journal.verification.repair_type == "new_evidence"
-        )
         run_id = str(uuid.uuid4())
         final_status = "running"
         completion_mode = "direct"
-        soft_finalize_attempted = False
         previous_elapsed_ms = journal.metrics.elapsed_ms
 
         logger.info(
@@ -388,54 +385,20 @@ class ReasoningEngine:
                 phase = ReasoningPhase.DONE
                 break
             elapsed_seconds = time.monotonic() - started_at
-            if (
-                cfg.soft_finalize_seconds > 0
-                and not soft_finalize_attempted
-                and elapsed_seconds >= cfg.soft_finalize_seconds
-            ):
-                soft_finalize_attempted = True
-                finalized_text = await self._graceful_finalize(
-                    journal,
-                    reason="The soft execution deadline was reached; converge using existing evidence.",
-                )
-                if finalized_text:
-                    completion_mode = "best_effort"
-                    journal.metrics.graceful_finalizations += 1
-                    hard_blocked = _best_effort_hard_blocked(journal)
-                    journal.status = "checkpointed" if hard_blocked else "completed"
-                    final_status = "incomplete" if hard_blocked else "completed"
-                    emitted_text += finalized_text
-                    phase = ReasoningPhase.RESPONDING
-                    yield _event(
-                        type_="assistant",
-                        phase=phase,
-                        data={
-                            "text": finalized_text,
-                            "iteration": iteration,
-                            "incomplete": hard_blocked,
-                            "best_effort": True,
-                        },
-                        meta={
-                            "iteration": iteration,
-                            "run_id": run_id,
-                            "task_run_id": journal.task_run_id,
-                            "graceful_finalize": True,
-                            "reason_code": "soft_deadline",
-                        },
-                    )
-                    chat_messages.append({"role": "assistant", "content": finalized_text})
-                    break
             if cfg.max_elapsed_seconds > 0 and elapsed_seconds >= cfg.max_elapsed_seconds:
-                finalized_text = await self._graceful_finalize(
-                    journal,
-                    reason="The hard execution deadline was reached; return the strongest available answer.",
-                )
+                finalized_text = _build_best_candidate_fallback(journal, "")
                 if finalized_text:
-                    completion_mode = "best_effort"
-                    journal.metrics.graceful_finalizations += 1
-                    hard_blocked = _best_effort_hard_blocked(journal)
-                    journal.status = "checkpointed" if hard_blocked else "completed"
-                    final_status = "incomplete" if hard_blocked else "completed"
+                    completion_mode = "partial"
+                    journal.status = "checkpointed"
+                    final_status = "incomplete"
+                    yield _checkpoint_event(
+                        journal=journal,
+                        phase=phase,
+                        iteration=iteration,
+                        run_id=run_id,
+                        reason_code="time_limit",
+                        reason="达到全局执行时限；当前结果为阶段性结果。",
+                    )
                     emitted_text += finalized_text
                     phase = ReasoningPhase.RESPONDING
                     yield _event(
@@ -444,15 +407,14 @@ class ReasoningEngine:
                         data={
                             "text": finalized_text,
                             "iteration": iteration,
-                            "incomplete": hard_blocked,
+                            "incomplete": True,
                             "best_effort": True,
                         },
                         meta={
                             "iteration": iteration,
                             "run_id": run_id,
                             "task_run_id": journal.task_run_id,
-                            "graceful_finalize": True,
-                            "reason_code": "hard_deadline",
+                            "reason_code": "time_limit",
                         },
                     )
                     chat_messages.append({"role": "assistant", "content": finalized_text})
@@ -582,7 +544,7 @@ class ReasoningEngine:
                 async for planner_event in self._planner_step(
                     chat_messages,
                     tools,
-                    require_tool_call=force_evidence_collection,
+                    require_tool_call=False,
                 ):
                     if planner_event["type"] == "text":
                         planner_chunks.append(planner_event["content"])
@@ -623,78 +585,7 @@ class ReasoningEngine:
                     },
                 )
 
-                if force_evidence_collection and not plan["tool_calls"]:
-                    verification_no_progress_rounds = journal.record_verification_outcome(
-                        satisfied=False
-                    )
-                    chat_messages.extend(
-                        [
-                            {
-                                "role": "system",
-                                "content": (
-                                    "Evidence collection was required, but no tool was called. "
-                                    "Do not write or revise the report. Your next response must invoke one or "
-                                    "more read-only tools that directly address the unresolved verification gaps. "
-                                    "The tool request must measure or inspect the missing fact rather than merely "
-                                    "restate the desired conclusion."
-                                ),
-                            },
-                        ]
-                    )
-                    if cfg.persistent_journal_enabled:
-                        yield _task_state_event(journal, phase, iteration, run_id)
-                    if verification_no_progress_rounds < cfg.max_verification_retries:
-                        phase = ReasoningPhase.THINKING
-                        continue
-
-                    verification = journal.verification or VerificationResult(
-                        satisfied=False,
-                        reason="验证缺口尚未补齐。",
-                        missing=["Collect new tool evidence for the verification gaps."],
-                    )
-                    finalized_text = await self._graceful_finalize(
-                        journal,
-                        reason="Evidence collection stopped making progress; converge from retained evidence.",
-                    )
-                    if not finalized_text:
-                        finalized_text = _build_best_candidate_fallback(journal, "")
-                    completion_mode = "best_effort"
-                    journal.metrics.graceful_finalizations += 1
-                    hard_blocked = _best_effort_hard_blocked(journal)
-                    journal.status = "checkpointed" if hard_blocked else "completed"
-                    final_status = "incomplete" if hard_blocked else "completed"
-                    if hard_blocked:
-                        yield _checkpoint_event(
-                            journal=journal,
-                            phase=phase,
-                            iteration=iteration,
-                            run_id=run_id,
-                            reason_code="verification_evidence_stalled",
-                            reason="验证失败后连续多轮未调用工具补充证据。",
-                        )
-                    emitted_text += finalized_text
-                    yield _event(
-                        type_="assistant",
-                        phase=ReasoningPhase.RESPONDING,
-                        data={
-                            "text": finalized_text,
-                            "incomplete": hard_blocked,
-                            "best_effort": True,
-                        },
-                        meta={
-                            "iteration": iteration,
-                            "run_id": run_id,
-                            "task_run_id": journal.task_run_id,
-                            "graceful_finalize": True,
-                            "reason_code": "verification_evidence_stalled",
-                        },
-                    )
-                    chat_messages.append({"role": "assistant", "content": finalized_text})
-                    phase = ReasoningPhase.RESPONDING
-                    break
-
                 if plan["tool_calls"]:
-                    force_evidence_collection = False
                     current_tool_signature = _tool_signature(plan["tool_calls"])
                     if current_tool_signature and current_tool_signature == last_tool_signature:
                         repeated_tool_rounds += 1
@@ -782,7 +673,7 @@ class ReasoningEngine:
                         ordered_calls, max_parallel_tools=cfg.max_parallel_tools
                     )
 
-                    prepared_calls: list[dict[str, Any]] = []
+                    prepared_calls: list[tuple[dict[str, Any], dict[str, Any]]] = []
                     for raw_tool_call in ordered_calls:
                         start_preview = self._preview_tool_start(raw_tool_call)
                         yield _event(
@@ -808,6 +699,31 @@ class ReasoningEngine:
                                     run_id=run_id, iteration=iteration, tool=start_preview["name"]
                                 ),
                             )
+                            item = _tool_cancelled_result(start_preview)
+                            execution_results.append(item)
+                            async for result_event in self._emit_tool_result(
+                                item=item,
+                                chat_messages=chat_messages,
+                                iteration=iteration,
+                                run_id=run_id,
+                                task_run_id=journal.task_run_id,
+                                parallel=run_parallel,
+                            ):
+                                yield result_event
+                            if run_parallel and prepared_calls:
+                                for _, pending_preview in prepared_calls:
+                                    pending_item = _tool_cancelled_result(pending_preview)
+                                    execution_results.append(pending_item)
+                                    async for result_event in self._emit_tool_result(
+                                        item=pending_item,
+                                        chat_messages=chat_messages,
+                                        iteration=iteration,
+                                        run_id=run_id,
+                                        task_run_id=journal.task_run_id,
+                                        parallel=True,
+                                    ):
+                                        yield result_event
+                                prepared_calls.clear()
                             break
 
                         prepared_tool_call = (
@@ -815,13 +731,14 @@ class ReasoningEngine:
                             if raw_tool_call.get("id")
                             else {**raw_tool_call, "id": start_preview["tool_call_id"]}
                         )
-                        prepared_calls.append(prepared_tool_call)
+                        prepared_calls.append((prepared_tool_call, start_preview))
 
                         if run_parallel:
                             continue
 
-                        item = await self._await_with_execution_budget(
-                            self._execute_tool(prepared_tool_call)
+                        item = await self._execute_tool_with_timeout(
+                            prepared_tool_call,
+                            start_preview,
                         )
                         execution_results.append(item)
 
@@ -840,9 +757,10 @@ class ReasoningEngine:
 
                     if run_parallel and prepared_calls:
                         execution_results = list(
-                            await self._await_with_execution_budget(
-                                asyncio.gather(
-                                    *(self._execute_tool(tool_call) for tool_call in prepared_calls)
+                            await asyncio.gather(
+                                *(
+                                    self._execute_tool_with_timeout(tool_call, preview)
+                                    for tool_call, preview in prepared_calls
                                 )
                             )
                         )
@@ -1060,7 +978,8 @@ class ReasoningEngine:
                     should_verify = bool(
                         cfg.completion_verifier_enabled
                         and (
-                            (cfg.task_contract_enabled and journal.contract.complex)
+                            journal.metrics.tool_calls > 0
+                            or (cfg.task_contract_enabled and journal.contract.complex)
                             or bool(verification_policies)
                             or journal.unresolved_failure_episodes()
                             or journal.unresolved_steps()
@@ -1134,115 +1053,41 @@ class ReasoningEngine:
                         if cfg.persistent_journal_enabled:
                             yield _task_state_event(journal, phase, iteration, run_id)
                         if not verification.satisfied:
-                            should_gracefully_finalize = bool(
-                                verification.malformed
-                                or verification_no_progress_rounds >= cfg.max_verification_retries
-                            )
-                            if not should_gracefully_finalize:
-                                verification_note = _build_verification_progress_note(
-                                    journal,
-                                    satisfied=False,
-                                )
-                                if verification_note not in emitted_progress_notes:
-                                    emitted_progress_notes.add(verification_note)
-                                    yield _event(
-                                        type_="assistant_progress",
-                                        phase=phase,
-                                        data={
-                                            "text": verification_note,
-                                            "stage": "recovering",
-                                        },
-                                        meta={
-                                            "iteration": iteration,
-                                            "run_id": run_id,
-                                            "task_run_id": journal.task_run_id,
-                                        },
-                                    )
-                                feedback = _build_verification_feedback(verification)
-                                if verification.evaluator == "deterministic_action_evidence":
-                                    chat_messages.append(
-                                        {
-                                            "role": "system",
-                                            "content": (
-                                                "IMMEDIATE NEXT ACTION: satisfy the explicit action-evidence gap "
-                                                "before any further diagnosis. Your next tool call must dispatch "
-                                                "the user's original fenced payload verbatim through the relevant "
-                                                "tool exactly once. Do not issue a smaller probe, test individual "
-                                                "parts, rewrite the payload, or submit another candidate first."
-                                            ),
-                                        }
-                                    )
-                                # Keep the rejected draft hidden from the user, but retain it in
-                                # an explicitly internal revision block.  Adding it as a normal
-                                # assistant turn makes some models answer the verifier as though
-                                # it were a user; the system wrapper makes the required operation
-                                # unambiguous while still giving the rewriter the exact draft.
-                                chat_messages.append(
-                                    {
-                                        "role": "system",
-                                        "content": _build_private_revision_context(
-                                            candidate_text,
-                                            feedback,
-                                        ),
-                                    }
-                                )
-                                if journal.metrics.verification_attempts % 3 == 0:
-                                    chat_messages.append(
-                                        {"role": "system", "content": journal.context_block()}
-                                    )
-                                force_evidence_collection = bool(
-                                    tools and _verification_requires_new_evidence(verification)
-                                )
-                                phase = ReasoningPhase.THINKING
-                                continue
-
-                            finalized_text = await self._graceful_finalize(
+                            finalized_text = _build_best_candidate_fallback(
                                 journal,
-                                reason=(
-                                    "The completion verifier remained malformed after format repair."
-                                    if verification.malformed
-                                    else "Completion verification stopped making semantic progress."
-                                ),
+                                candidate_text,
                             )
-                            if not finalized_text:
-                                finalized_text = _build_best_candidate_fallback(
-                                    journal,
-                                    candidate_text,
-                                )
-                            completion_mode = "best_effort"
-                            journal.metrics.graceful_finalizations += 1
-                            hard_blocked = _best_effort_hard_blocked(journal)
-                            journal.status = "checkpointed" if hard_blocked else "completed"
-                            final_status = "incomplete" if hard_blocked else "completed"
-                            if hard_blocked:
-                                yield _checkpoint_event(
-                                    journal=journal,
-                                    phase=phase,
-                                    iteration=iteration,
-                                    run_id=run_id,
-                                    reason_code="verification_blocked",
-                                    reason=verification.reason
-                                    or "候选答案仍有无法自行补齐的关键条件。",
-                                )
+                            completion_mode = "partial"
+                            journal.status = "checkpointed"
+                            final_status = "incomplete"
+                            reason_code = (
+                                "verification_malformed"
+                                if verification.malformed
+                                else "verification_incomplete"
+                            )
+                            yield _checkpoint_event(
+                                journal=journal,
+                                phase=phase,
+                                iteration=iteration,
+                                run_id=run_id,
+                                reason_code=reason_code,
+                                reason=verification.reason
+                                or "完成审查未能确认原始请求已经满足。",
+                            )
                             emitted_text += finalized_text
                             yield _event(
                                 type_="assistant",
                                 phase=ReasoningPhase.RESPONDING,
                                 data={
                                     "text": finalized_text,
-                                    "incomplete": hard_blocked,
+                                    "incomplete": True,
                                     "best_effort": True,
                                 },
                                 meta={
                                     "iteration": iteration,
                                     "run_id": run_id,
                                     "task_run_id": journal.task_run_id,
-                                    "graceful_finalize": True,
-                                    "reason_code": (
-                                        "verifier_malformed"
-                                        if verification.malformed
-                                        else "verification_no_progress"
-                                    ),
+                                    "reason_code": reason_code,
                                 },
                             )
                             chat_messages.append({"role": "assistant", "content": finalized_text})
@@ -1296,27 +1141,18 @@ class ReasoningEngine:
                 break
 
             except TimeoutError:
-                finalized_text = await self._graceful_finalize(
-                    journal,
-                    reason=(
-                        "The reserved final-answer window was reached during an in-flight "
-                        "operation; converge from retained evidence now."
-                    ),
+                finalized_text = _build_best_candidate_fallback(journal, "")
+                completion_mode = "partial"
+                journal.status = "checkpointed"
+                final_status = "incomplete"
+                yield _checkpoint_event(
+                    journal=journal,
+                    phase=phase,
+                    iteration=iteration,
+                    run_id=run_id,
+                    reason_code="operation_timeout",
+                    reason="当前操作未在执行预算内返回；已保存进度并返回阶段性结果。",
                 )
-                completion_mode = "best_effort"
-                journal.metrics.graceful_finalizations += 1
-                hard_blocked = _best_effort_hard_blocked(journal)
-                journal.status = "checkpointed" if hard_blocked else "completed"
-                final_status = "incomplete" if hard_blocked else "completed"
-                if hard_blocked:
-                    yield _checkpoint_event(
-                        journal=journal,
-                        phase=phase,
-                        iteration=iteration,
-                        run_id=run_id,
-                        reason_code="operation_deadline_blocked",
-                        reason="执行预算已到，且仍有需要外部授权或真实动作证据的阻塞条件。",
-                    )
                 phase = ReasoningPhase.RESPONDING
                 emitted_text += finalized_text
                 yield _event(
@@ -1325,15 +1161,14 @@ class ReasoningEngine:
                     data={
                         "text": finalized_text,
                         "iteration": iteration,
-                        "incomplete": hard_blocked,
+                        "incomplete": True,
                         "best_effort": True,
                     },
                     meta={
                         "iteration": iteration,
                         "run_id": run_id,
                         "task_run_id": journal.task_run_id,
-                        "graceful_finalize": True,
-                        "reason_code": "operation_soft_deadline",
+                        "reason_code": "operation_timeout",
                     },
                 )
                 chat_messages.append({"role": "assistant", "content": finalized_text})
@@ -1364,27 +1199,19 @@ class ReasoningEngine:
             ReasoningPhase.REFLECTING,
         }
         if iteration >= (cfg.max_iterations + progress_bonus_iterations) and phase in active_phases:
-            finalized_text = await self._graceful_finalize(
-                journal,
-                reason="The iteration budget was reached; converge using retained evidence.",
-            )
-            if not finalized_text:
-                finalized_text = _build_best_candidate_fallback(journal, "")
+            finalized_text = _build_best_candidate_fallback(journal, "")
             if finalized_text:
-                completion_mode = "best_effort"
-                journal.metrics.graceful_finalizations += 1
-                hard_blocked = _best_effort_hard_blocked(journal)
-                journal.status = "checkpointed" if hard_blocked else "completed"
-                final_status = "incomplete" if hard_blocked else "completed"
-                if hard_blocked:
-                    yield _checkpoint_event(
-                        journal=journal,
-                        phase=phase,
-                        iteration=iteration,
-                        run_id=run_id,
-                        reason_code="iteration_limit",
-                        reason="达到全局迭代上限，关键阻塞条件仍未解决。",
-                    )
+                completion_mode = "partial"
+                journal.status = "checkpointed"
+                final_status = "incomplete"
+                yield _checkpoint_event(
+                    journal=journal,
+                    phase=phase,
+                    iteration=iteration,
+                    run_id=run_id,
+                    reason_code="iteration_limit",
+                    reason="达到全局迭代上限；当前结果为阶段性结果。",
+                )
                 phase = ReasoningPhase.RESPONDING
                 emitted_text += finalized_text
                 yield _event(
@@ -1393,13 +1220,12 @@ class ReasoningEngine:
                     data={
                         "text": finalized_text,
                         "iteration": iteration,
-                        "incomplete": hard_blocked,
+                        "incomplete": True,
                         "best_effort": True,
                     },
                     meta={
                         "iteration": iteration,
                         "forced_finalize": True,
-                        "graceful_finalize": True,
                         "run_id": run_id,
                         "task_run_id": journal.task_run_id,
                         "reason_code": "iteration_limit",
@@ -1503,13 +1329,17 @@ class ReasoningEngine:
             "reasoning_engine_complete %s",
             fmt_kv(run_id=run_id, iterations=iteration, final_phase=phase.value),
         )
+        legacy_status = final_status if final_status != "running" else journal.status
+        run_status, task_outcome = _terminal_semantics(legacy_status, journal.status)
         yield _event(
             type_="done",
             phase=phase if phase == ReasoningPhase.DONE else ReasoningPhase.ERROR,
             data={
                 "text_emitted": bool(emitted_text.strip()),
-                "status": final_status if final_status != "running" else journal.status,
-                "completed": journal.status == "completed",
+                "status": legacy_status,
+                "completed": task_outcome == "success",
+                "run_status": run_status,
+                "task_outcome": task_outcome,
                 "completion_mode": completion_mode,
                 "task_run_id": journal.task_run_id,
                 "metrics": journal.to_dict()["metrics"],
@@ -1568,9 +1398,6 @@ class ReasoningEngine:
         verification_policies: list[str] | None = None,
     ) -> VerificationResult:
         journal.metrics.verification_attempts += 1
-        self_containment = _candidate_self_containment_precheck(journal, candidate_text)
-        if self_containment is not None:
-            return self_containment
         precheck = deterministic_completion_precheck(journal)
         if not precheck.satisfied:
             return precheck
@@ -1588,59 +1415,9 @@ class ReasoningEngine:
         if not primary.satisfied:
             return primary
         compound_audit = enforce_compound_criterion_audit(journal, primary)
-        if (
-            not compound_audit.satisfied
-            and compound_audit.evaluator == "compound_criterion_audit"
-            and compound_audit.reason == "复合验收项没有逐项完成审计。"
-        ):
-            retry_prompt = build_verifier_prompt(
-                journal,
-                candidate_text,
-                verification_policies=verification_policies,
-            )
-            retry_prompt += (
-                "\n\nVERIFIER FORMAT REPAIR: The previous verifier returned satisfied=true but "
-                "omitted mandatory component_results for one or more compound criteria. Re-audit the candidate "
-                "from the evidence. For every compound non-action criterion, enumerate each named component in "
-                "component_results and judge it independently. If any component lacks evidence, set the top-level "
-                "and criterion satisfied fields to false and name that component in missing. Do not ask the task "
-                "executor for work merely to repair verifier JSON."
-            )
-            primary = await self._run_verifier(
-                retry_prompt,
-                evaluator="llm_compound_retry",
-            )
-            if not primary.satisfied:
-                return primary
-            compound_audit = enforce_compound_criterion_audit(journal, primary)
         if not compound_audit.satisfied:
             return compound_audit
-        primary = compound_audit
-        if self.config.adversarial_verification_enabled and journal.contract.high_value:
-            arithmetic = await self._run_verifier(
-                build_verifier_prompt(
-                    journal,
-                    candidate_text,
-                    arithmetic=True,
-                    verification_policies=verification_policies,
-                ),
-                evaluator="arithmetic_llm",
-            )
-            if not arithmetic.satisfied:
-                return arithmetic
-            adversarial = await self._run_verifier(
-                build_verifier_prompt(
-                    journal,
-                    candidate_text,
-                    adversarial=True,
-                    verification_policies=verification_policies,
-                ),
-                evaluator="adversarial_llm",
-            )
-            if not adversarial.satisfied:
-                return adversarial
-            primary.evaluator = "llm+arithmetic_llm+adversarial_llm"
-        return primary
+        return compound_audit
 
     async def _run_verifier(self, prompt: str, *, evaluator: str) -> VerificationResult:
         try:
@@ -1659,25 +1436,7 @@ class ReasoningEngine:
                 malformed=True,
             )
         result = parse_verification_result(content, evaluator=evaluator)
-        if not result.malformed:
-            return result
-        try:
-            repaired = await self._request_verifier_content(
-                system_prompt=PromptLoader.render("agent/prompts/verifier_system.tpl"),
-                user_prompt=PromptLoader.render(
-                    "agent/prompts/verifier_format_repair.tpl",
-                    verifier_prompt=prompt,
-                    malformed_output=content[:8_000],
-                ),
-            )
-        except Exception as exc:
-            logger.warning(
-                "completion_verifier_format_repair_failed evaluator=%s error=%s",
-                evaluator,
-                str(exc),
-            )
-            return result
-        return parse_verification_result(repaired, evaluator=f"{evaluator}_format_retry")
+        return result
 
     async def _request_verifier_content(
         self,
@@ -1718,14 +1477,14 @@ class ReasoningEngine:
 
     @asynccontextmanager
     async def _execution_budget(self) -> AsyncGenerator[None, None]:
-        """Bound normal work so the reserved final-answer window remains available."""
+        """Bound every model operation by the one total run deadline."""
         deadline_at = self._execution_deadline_at.get()
         if deadline_at is None:
             yield
             return
         remaining = deadline_at - time.monotonic()
         if remaining <= 0:
-            raise TimeoutError("soft execution deadline reached")
+            raise TimeoutError("execution deadline reached")
         async with asyncio.timeout(remaining):
             yield
 
@@ -1746,9 +1505,41 @@ class ReasoningEngine:
             ):
                 yield chunk
 
-    async def _await_with_execution_budget(self, awaitable: Awaitable[Any]) -> Any:
-        async with self._execution_budget():
-            return await awaitable
+    async def _execute_tool_with_timeout(
+        self,
+        tool_call: dict[str, Any],
+        preview: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Return a normal tool result even when execution reaches a deadline."""
+        timeout_seconds = self.config.tool_timeout_seconds
+        deadline_at = self._execution_deadline_at.get()
+        if deadline_at is not None:
+            remaining = max(0.0, deadline_at - time.monotonic())
+            timeout_seconds = min(timeout_seconds, remaining)
+        if timeout_seconds <= 0:
+            return _tool_timeout_result(preview, timeout_seconds=0.0)
+        try:
+            async with asyncio.timeout(timeout_seconds):
+                return await self._execute_tool(tool_call)
+        except TimeoutError:
+            logger.warning(
+                "reasoning_tool_timeout %s",
+                fmt_kv(
+                    tool=preview.get("name"),
+                    tool_call_id=preview.get("tool_call_id"),
+                    timeout_seconds=round(timeout_seconds, 3),
+                ),
+            )
+            return _tool_timeout_result(preview, timeout_seconds=timeout_seconds)
+        except Exception as exc:
+            logger.exception(
+                "reasoning_tool_execution_failed %s",
+                fmt_kv(
+                    tool=preview.get("name"),
+                    tool_call_id=preview.get("tool_call_id"),
+                ),
+            )
+            return _tool_execution_error_result(preview, exc)
 
     async def _planner_step(
         self,
@@ -1871,97 +1662,6 @@ class ReasoningEngine:
             logger.warning("reasoning_engine_continuation_empty")
         yield {"type": "continuation_result", "text": full_text}
 
-    async def _graceful_finalize(
-        self,
-        journal: TaskJournal,
-        *,
-        reason: str,
-    ) -> str:
-        """Converge from retained evidence without reopening tool exploration."""
-        prompt = PromptLoader.render(
-            "agent/prompts/graceful_finalize.tpl",
-            reason=reason,
-            task_state_json=json.dumps(
-                journal.finalization_payload(),
-                ensure_ascii=False,
-                indent=2,
-            ),
-        )
-        content = ""
-        response_complete = False
-        try:
-            async with asyncio.timeout(self.config.graceful_finalize_timeout_seconds):
-                self._run_usage["llm_calls"] += 1
-                async for chunk in self.llm.chat(
-                    [{"role": "system", "content": prompt}],
-                    tools=None,
-                    stream=True,
-                ):
-                    self._record_chunk_usage(chunk)
-                    choices = chunk.get("choices") or []
-                    if not choices:
-                        continue
-                    choice = choices[0] or {}
-                    finish_reason = str(choice.get("finish_reason") or "")
-                    if finish_reason == "stop":
-                        response_complete = True
-                    delta = choice.get("delta") if isinstance(choice.get("delta"), dict) else {}
-                    message = (
-                        choice.get("message") if isinstance(choice.get("message"), dict) else {}
-                    )
-                    content += str(delta.get("content") or message.get("content") or "")
-        except Exception as exc:
-            logger.warning(
-                "graceful_finalize_failed %s",
-                fmt_kv(task_run_id=journal.task_run_id, error_class=type(exc).__name__),
-            )
-        if content.strip() and response_complete:
-            journal.record_candidate(
-                content,
-                iteration=journal.metrics.iterations,
-                verification=journal.verification,
-            )
-            return content.strip()
-        if content.strip():
-            logger.warning(
-                "graceful_finalize_partial_discarded %s",
-                fmt_kv(task_run_id=journal.task_run_id, chars=len(content)),
-            )
-        return _build_best_candidate_fallback(journal, "")
-
-    async def _synthesize_without_tools(
-        self,
-        chat_messages: list[dict[str, Any]],
-    ) -> AsyncGenerator[dict[str, Any], None]:
-        guardrail_prompt = (
-            "Summarize current findings for the user now. "
-            "Do not call any tools. "
-            "If data is insufficient, clearly state what is known and what remains unknown."
-        )
-        synthesis_messages = list(chat_messages) + [{"role": "system", "content": guardrail_prompt}]
-        assistant_chunks: list[str] = []
-        full_content = ""
-        chunk_count = 0
-        self._run_usage["llm_calls"] += 1
-        async for chunk in self.llm.chat(synthesis_messages, tools=None, stream=True):
-            self._record_chunk_usage(chunk)
-            chunk_count += 1
-            choices = chunk.get("choices") or []
-            if not choices:
-                continue
-            delta = (choices[0] or {}).get("delta", {})
-            content = delta.get("content", "")
-            if content:
-                full_content += content
-                assistant_chunks.append(content)
-                yield {"type": "text", "content": content}
-        yield {
-            "type": "synthesis_result",
-            "assistant_chunks": assistant_chunks,
-            "assistant_text": full_content,
-            "chunk_count": chunk_count,
-        }
-
     def _preview_tool_start(self, tool_call: dict[str, Any]) -> dict[str, Any]:
         if self.tool_executor is not None:
             return self.tool_executor.preview_tool_start(tool_call)
@@ -2000,6 +1700,77 @@ _XML_PARAMETER_RE = re.compile(
     re.DOTALL,
 )
 _TRAILING_TOOL_CALL_RE = re.compile(r"\s*</tool_call>\s*$")
+
+
+def _tool_timeout_result(
+    preview: dict[str, Any],
+    *,
+    timeout_seconds: float,
+) -> dict[str, Any]:
+    return {
+        "tool_call_id": str(preview.get("tool_call_id") or ""),
+        "name": str(preview.get("name") or ""),
+        "arguments": preview.get("arguments") or {},
+        "result": {
+            "success": False,
+            "data": None,
+            "error": {
+                "code": "tool_timeout",
+                "category": "timeout",
+                "message": "Tool execution did not return before its deadline.",
+                "phase": "execution",
+                "timeout_seconds": round(timeout_seconds, 3),
+            },
+        },
+        "error_class": "timeout_error",
+        "batch_boundary_after": False,
+        "planning_meta": {},
+    }
+
+
+def _tool_cancelled_result(preview: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "tool_call_id": str(preview.get("tool_call_id") or ""),
+        "name": str(preview.get("name") or ""),
+        "arguments": preview.get("arguments") or {},
+        "result": {
+            "success": False,
+            "data": None,
+            "error": {
+                "code": "tool_cancelled",
+                "category": "cancelled",
+                "message": "Tool execution was cancelled before it started.",
+                "phase": "dispatch",
+            },
+        },
+        "error_class": "cancelled",
+        "batch_boundary_after": False,
+        "planning_meta": {},
+    }
+
+
+def _tool_execution_error_result(
+    preview: dict[str, Any],
+    exc: Exception,
+) -> dict[str, Any]:
+    return {
+        "tool_call_id": str(preview.get("tool_call_id") or ""),
+        "name": str(preview.get("name") or ""),
+        "arguments": preview.get("arguments") or {},
+        "result": {
+            "success": False,
+            "data": None,
+            "error": {
+                "code": "tool_execution_error",
+                "category": "execution_error",
+                "message": str(exc) or type(exc).__name__,
+                "phase": "execution",
+            },
+        },
+        "error_class": "tool_execution_error",
+        "batch_boundary_after": False,
+        "planning_meta": {},
+    }
 
 
 def _requires_confirmation(item: dict[str, Any]) -> bool:
@@ -2396,21 +2167,6 @@ def _build_observation_progress_note(
     return ""
 
 
-def _first_failed_criterion_description(journal: TaskJournal) -> str:
-    verification = journal.verification
-    if verification is None:
-        return ""
-    criteria_by_id = {item.id: item.description for item in journal.contract.acceptance_criteria}
-    for result in verification.criterion_results:
-        if bool(result.get("satisfied")):
-            continue
-        criterion_id = str(result.get("id") or "").strip()
-        description = " ".join(criteria_by_id.get(criterion_id, "").split())
-        if description:
-            return description[:100]
-    return ""
-
-
 def _build_verification_progress_note(
     journal: TaskJournal,
     *,
@@ -2429,55 +2185,7 @@ def _build_verification_progress_note(
             if chinese
             else "The review passed and the key claims are supported. I’m preparing the final report."
         )
-    verification = journal.verification
-    needs_evidence = bool(verification and _verification_requires_new_evidence(verification))
-    if needs_evidence:
-        return (
-            "复核发现还有部分事实或结论缺少直接证据。我会继续补查，暂时不把草稿当成结论。"
-            if chinese
-            else "The review found facts or conclusions without direct evidence. I’ll gather more evidence before concluding."
-        )
-    verification_reason = str(verification.reason if verification else "").lower()
-    evidence_alignment_tokens = (
-        "numeric",
-        "number",
-        "calculation",
-        "recomput",
-        "unsupported",
-        "direct evidence",
-        "evidence",
-        "数字",
-        "计算",
-        "复算",
-        "推导",
-        "证据",
-        "支撑",
-        "依据",
-    )
-    if any(token in verification_reason for token in evidence_alignment_tokens):
-        return (
-            "复核时发现有些数字、推导或判断还不能从现有查询结果直接得到。我会修正计算或删去无法支持的表述，不做无关查询。"
-            if chinese
-            else "The review found numbers, inferences, or judgments that cannot be derived from the current results. I’ll correct or remove them without running unrelated checks."
-        )
-    failed_criterion = _first_failed_criterion_description(journal)
-    if failed_criterion:
-        return (
-            f"复核发现“{failed_criterion}”的结论和现有证据还没对齐。我会修正推导或删除无法支持的表述，不做无关查询。"
-            if chinese
-            else f"The conclusion for “{failed_criterion}” does not align with the current evidence. I’ll correct or remove unsupported inferences without running unrelated checks."
-        )
-    if verification and verification.contradictions:
-        return (
-            "复核发现部分结论对现有证据的解读不一致。我会修正推导或删除无法支持的表述，不做无关查询。"
-            if chinese
-            else "The review found that some conclusions do not align with the existing evidence. I’ll correct or remove unsupported inferences without running unrelated checks."
-        )
-    return (
-        "证据已经够了，但这版表达还不完整。我会重新整理成一份可以独立阅读的完整报告。"
-        if chinese
-        else "The evidence is sufficient, but this draft is incomplete. I’ll rewrite it as a self-contained report."
-    )
+    raise ValueError("verification progress supports only pending or satisfied states")
 
 
 def _build_checkpoint_summary(journal: TaskJournal, decision: dict[str, Any]) -> str:
@@ -2540,29 +2248,46 @@ def _build_terminal_summary(journal: TaskJournal, status: str) -> str:
     return f"{heading}\n\n{len(journal.evidence)} tool evidence records were retained.{suffix}"
 
 
-def _best_effort_hard_blocked(journal: TaskJournal) -> bool:
-    """Keep protocol/authority gates hard while semantic quality degrades gracefully."""
-    if journal.status in {
-        "blocked",
-        "awaiting_authority",
-        "awaiting_confirmation",
-        "cancelled",
-        "error",
-    }:
-        return True
-    precheck = deterministic_completion_precheck(journal)
-    if not precheck.satisfied and precheck.evaluator == "deterministic_action_evidence":
-        return True
-    verification = journal.verification
-    return bool(
-        verification is not None
-        and verification.repair_type == "blocked"
-        and not verification.malformed
+def _build_request_goal(
+    messages: list[dict[str, Any]],
+) -> TaskContract:
+    """Keep the original request as the single semantic source of truth."""
+    objective = latest_user_text(messages).strip()
+    criteria = (
+        [
+            AcceptanceCriterion(
+                id="goal",
+                description=objective,
+                required=True,
+                requires_tool_evidence=False,
+                required_tool_outcome="any",
+                source_excerpt=objective,
+            )
+        ]
+        if objective
+        else []
+    )
+    return TaskContract(
+        objective=objective,
+        acceptance_criteria=criteria,
+        complex=False,
     )
 
 
+def _terminal_semantics(legacy_status: str, journal_status: str) -> tuple[str, str]:
+    if journal_status == "completed" and legacy_status == "completed":
+        return "finished", "success"
+    if legacy_status == "cancelled" or journal_status == "cancelled":
+        return "cancelled", "partial"
+    if legacy_status == "error" or journal_status == "error":
+        return "error", "unknown"
+    if journal_status in {"awaiting_authority", "awaiting_confirmation", "blocked"}:
+        return "awaiting_input", "blocked"
+    return "finished", "partial"
+
+
 def _build_best_candidate_fallback(journal: TaskJournal, candidate_text: str) -> str:
-    """Return retained work when the final synthesis provider call itself fails."""
+    """Return retained work without presenting an incomplete run as completed."""
     candidate = (
         journal.best_candidate.text
         if journal.best_candidate is not None and journal.best_candidate.text.strip()
@@ -2599,103 +2324,23 @@ def _build_best_candidate_fallback(journal: TaskJournal, candidate_text: str) ->
     verification = journal.verification
     missing = list(verification.missing[:8]) if verification else []
     if not missing:
-        return candidate
+        missing = _remaining_work(journal)[:8]
     chinese = _prefers_chinese(journal)
-    label = "\n\n尚未确认：\n" if chinese else "\n\nNot yet confirmed:\n"
-    return candidate + label + "\n".join(f"- {item}" for item in missing)
-
-
-def _build_verification_feedback(verification: VerificationResult) -> str:
-    gaps = verification.missing or [
-        verification.reason or "Acceptance criteria are not yet covered."
-    ]
-    contradictions = verification.contradictions
-    action_instruction = (
-        "This is an explicit action-evidence gap. Dispatch the exact fenced payload requested by the user once "
-        "through the relevant tool and retain that tool result. Do not replace it with a smaller probe, a rewritten "
-        "payload, or separate tests of its individual parts. After the requested dispatch returns, continue the "
-        "remaining acceptance criteria; an expected failure from that exact action is evidence, not a reason to "
-        "repeat it.\n"
-        if verification.evaluator == "deterministic_action_evidence"
-        else ""
-    )
-    return (
-        "Completion verification failed. Resolve the specific defect before submitting another candidate.\n"
-        f"Repair type: {verification.repair_type}. Follow it exactly: rewrite means use existing evidence; "
-        "new_evidence means collect only the missing source facts; blocked means stop and report the external "
-        "condition.\n"
-        f"{action_instruction}"
-        "First distinguish a missing fact from a wording, calculation, or inclusion-rule defect. If a missing "
-        "item requires facts not already present in the evidence journal, call tools and collect evidence that "
-        "directly addresses it. If the evidence is already sufficient, do not run an unrelated query merely to "
-        "show activity: remove the unsupported derived claim, correct the calculation, or state the evidenced "
-        "facts separately. Tool evidence must actually measure or inspect a claim rather than merely restating "
-        "the desired conclusion. If a claim cannot be established, remove it or label it uncertain instead of "
-        "inventing a value. The next candidate must restate "
-        "the complete self-contained answer; failed drafts are hidden from the user, so never refer to an original "
-        "or previous report.\n"
-        f"Missing: {json.dumps(gaps, ensure_ascii=False)}\n"
-        f"Contradictions: {json.dumps(contradictions, ensure_ascii=False)}"
-    )
-
-
-def _build_verification_checkpoint_summary(
-    verification: VerificationResult,
-    journal: TaskJournal,
-) -> str:
-    chinese = _prefers_chinese(journal)
-    missing = verification.missing or [
-        verification.reason
-        or ("验收条件尚未完全满足" if chinese else "Some acceptance criteria are still unresolved.")
-    ]
     if chinese:
-        return (
-            "我重新核对了一遍，发现这版回答还有几处证据不够扎实，所以先不把它作为最终结论。\n\n"
-            "还需要确认：\n"
-            + "\n".join(f"- {item}" for item in missing[:10])
-            + "\n\n前面已经完成的查询和结果都保留着。后续继续时，我会直接从这些缺口补查，不需要重头开始。"
+        result = (
+            "阶段性结果（未通过完成审计，不能视为最终结论）\n\n"
+            + candidate
         )
-    return (
-        "I reviewed the draft again and found a few conclusions that are not supported well enough yet, so I’m holding back the final answer.\n\n"
-        "Still to confirm:\n"
-        + "\n".join(f"- {item}" for item in missing[:10])
-        + "\n\nThe completed queries and results are preserved. A later run can continue from these gaps without starting over."
+        if missing:
+            result += "\n\n尚未确认：\n" + "\n".join(f"- {item}" for item in missing)
+        return result
+    result = (
+        "Partial result (completion audit did not pass; do not treat this as final)\n\n"
+        + candidate
     )
-
-
-def _candidate_self_containment_precheck(
-    journal: TaskJournal,
-    candidate_text: str,
-) -> VerificationResult | None:
-    if not journal.contract.complex or journal.metrics.verification_attempts <= 1:
-        return None
-    delta_reference = re.search(
-        r"(?:\ball other (?:findings|sections|details).{0,40}\bremain\b|"
-        r"\b(?:original|previous|prior) (?:audit|report|answer|draft)\b|"
-        r"(?:其余|其他).{0,16}(?:不变|保持|沿用)|(?:上一版|前一版|原报告|原审计))",
-        candidate_text,
-        re.I | re.S,
-    )
-    if delta_reference is None:
-        delta_reference = re.search(
-            r"(?:(?:您的|你的).{0,18}(?:复核|审核|审查|审阅|结论|报告|反馈)"
-            r".{0,20}(?:准确|正确|全面|指出|提到)|"
-            r"\b(?:your|the)\s+(?:review|feedback|correction|audit)\b"
-            r".{0,30}\b(?:correct|accurate|right|noted|pointed out)\b)",
-            candidate_text,
-            re.I | re.S,
-        )
-    if delta_reference is None:
-        return None
-    return VerificationResult(
-        satisfied=False,
-        reason="候选答案引用了未展示的失败稿，不是自包含的最终答案。",
-        missing=[
-            "Restate a complete self-contained final answer and cover every acceptance criterion."
-        ],
-        repair_type="rewrite",
-        evaluator="deterministic_candidate",
-    )
+    if missing:
+        result += "\n\nNot yet confirmed:\n" + "\n".join(f"- {item}" for item in missing)
+    return result
 
 
 def _extract_completion_verification_policies(system_prompt: str | None) -> list[str]:
@@ -2723,27 +2368,6 @@ def _extract_completion_verification_policies(system_prompt: str | None) -> list
         if len(policies) >= 8:
             break
     return policies
-
-
-def _verification_requires_new_evidence(verification: VerificationResult) -> bool:
-    """Follow the verifier's structured semantic repair decision."""
-    return verification.repair_type == "new_evidence"
-
-
-def _build_private_revision_context(candidate_text: str, feedback: str) -> str:
-    return (
-        "INTERNAL REVISION CONTEXT — this is not a user message and neither block below was shown to the user.\n"
-        "Rewrite the rejected draft into a complete, self-contained replacement. Do not thank, agree with, "
-        "or reply to the verifier. Do not describe edits or refer to a previous draft. Do not call tools unless "
-        "the verification feedback explicitly says new source evidence is missing. Apply every correction, then "
-        "output the full final answer covering the original task.\n\n"
-        "<rejected_draft>\n"
-        f"{candidate_text}\n"
-        "</rejected_draft>\n\n"
-        "<verification_feedback>\n"
-        f"{feedback}\n"
-        "</verification_feedback>"
-    )
 
 
 def _extract_xml_tool_calls(

@@ -1,27 +1,37 @@
 # Long-task Reliability
 
-The hard part of a long or complex task is not whether a model can produce one good answer. It is whether the system keeps the goal across many tool calls, handles failures, verifies evidence, and stops only when the work is actually complete.
+Praxis keeps the long-task path deliberately small. The original user request is the semantic source of truth; the runtime should help the model execute it reliably, not create a second LLM-authored specification that can drift from it.
 
-Praxis strengthens these tasks in several ways.
+## Runtime flow
 
-## Task constraints
+1. The executor receives the original request and available tools.
+2. Each tool call produces a paired `tool_start` and `tool_result`. Results are retained as evidence, including failures and timeouts.
+3. Recoverable execution failures may use bounded retries. Repeated failure, cancellation, confirmation requirements, and deadlines stop the run with a checkpoint.
+4. The executor produces one candidate answer.
+5. A task that actually called a tool receives one completion audit against the original request, collected evidence, and candidate answer. Merely having tools available does not require a call or an audit. The audit cannot call tools or send repair instructions back into the executor.
+6. The runtime emits an explicit run state and task outcome.
 
-Complex requests are organized into executable goals and completion criteria. Later steps stay aligned with those constraints instead of completing only the easiest part after the conversation grows long.
+This keeps planning and investigation inside one execution loop. It avoids classifier, verifier-repair, and finalizer loops that add model calls without adding new evidence.
 
-## Evidence-driven work
+## Evidence and tool closure
 
-Agent conclusions should be grounded in tool results, live database state, or knowledge-base material. Preserved evidence supports coverage checks and final verification instead of relying only on the model's claim that the task is complete.
+Material claims in a database task should be traceable to the request or returned tool evidence. The runtime records successful and failed calls so the model can adjust without repeating the same strategy.
 
-## Failure recovery
+Every emitted `tool_start` must terminate with a `tool_result`. A tool deadline or executor exception is therefore represented as a structured failed result instead of leaving the UI and journal waiting indefinitely. `AGENT_MAX_ELAPSED_SECONDS` sets one total run deadline; `AGENT_TOOL_TIMEOUT_SECONDS` bounds each individual call.
 
-Temporary rate limits, connection failures, and no-progress loops need different responses. Recoverable failures can use backoff and retry; repeated lack of progress should stop consuming resources and expose the problem; retries must never bypass confirmation for high-risk actions.
+## Completion semantics
 
-## Context management
+Run progress and task success are separate dimensions:
 
-As a session approaches the model's context limit, Praxis compacts older material while trying to retain the goal, key facts, open items, and recent interaction. The context window and compaction threshold are configurable, but changes should be verified with long-task Eval.
+| Field | Values | Meaning |
+| --- | --- | --- |
+| `run_status` | `finished`, `awaiting_input`, `cancelled`, `error` | Why execution stopped |
+| `task_outcome` | `success`, `partial`, `blocked`, `unknown` | Whether the user request was actually achieved |
 
-## Parallel work and verification
+`completed` remains as a compatibility field and is `true` only when `task_outcome` is `success`. A timeout, exhausted retry budget, failed audit, or cancelled run must never be presented as completed. When useful work exists, Praxis returns it as a clearly labelled partial result with the unresolved gaps and a resumable checkpoint.
 
-Independent read-only investigations can run in parallel to reduce elapsed time. Stateful or high-risk actions remain ordered. Final verification focuses on completion criteria and evidence gaps, not answer length.
+## Context and parallel work
 
-These mechanisms improve the success rate but cannot eliminate variation from the model, provider, or live database. Use the same [Eval suite](evaluation.md) repeatedly for release regression and model selection.
+As a session approaches the model context limit, Praxis compacts older material while retaining the goal, evidence, failures, and recent interaction. Independent read-only calls may run in parallel; stateful or high-risk actions remain ordered and can require confirmation.
+
+These deterministic mechanics belong in regular tests. End-to-end task quality, stability, latency, tool-call count, and token use belong in the repeated [Eval suite](evaluation.md).
