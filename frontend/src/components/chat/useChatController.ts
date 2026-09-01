@@ -1081,15 +1081,9 @@ export function useChatController({
             return
           }
           if (eventType === "verification") {
-            const d = raw?.data && typeof raw.data === "object"
-              ? (raw.data as Record<string, unknown>)
-              : (raw && typeof raw === "object" ? raw : {})
-            const satisfied = Boolean(d.satisfied)
             setRuntimeStatus({
               phase: "reflect",
-              text: satisfied
-                ? "Acceptance criteria verified. Preparing final response..."
-                : "Advisory quality review recorded. Preparing final response...",
+              text: "Advisory quality review recorded. Preparing final response...",
             })
             return
           }

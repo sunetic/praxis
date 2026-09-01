@@ -93,7 +93,7 @@ class EngineConfig:
     context_window_tokens: int = 128_000
     failure_episode_enabled: bool = True
     task_contract_enabled: bool = False
-    completion_verifier_enabled: bool = True
+    completion_verifier_enabled: bool = False
     persistent_journal_enabled: bool = True
     parallel_read_only_enabled: bool = True
     max_transient_retries: int = 3
@@ -1064,53 +1064,14 @@ class ReasoningEngine:
                                 yield _event(
                                     type_="assistant_progress",
                                     phase=phase,
-                                    data={"text": verification_note, "stage": "verified"},
+                                    data={"text": verification_note, "stage": "audited"},
                                     meta={
                                         "iteration": iteration,
                                         "run_id": run_id,
                                         "task_run_id": journal.task_run_id,
                                     },
                                 )
-                            completion_mode = "verified"
-                        else:
-                            completion_mode = "audited"
-
-                    unresolved_failures = journal.unresolved_failure_episodes()
-                    if unresolved_failures:
-                        finalized_text = _build_best_candidate_fallback(
-                            journal,
-                            candidate_text,
-                        )
-                        completion_mode = "partial"
-                        journal.status = "checkpointed"
-                        final_status = "incomplete"
-                        yield _checkpoint_event(
-                            journal=journal,
-                            phase=phase,
-                            iteration=iteration,
-                            run_id=run_id,
-                            reason_code="unresolved_tool_failure",
-                            reason="存在尚未恢复的工具执行失败；当前结果仅作为阶段性结果保留。",
-                        )
-                        emitted_text += finalized_text
-                        yield _event(
-                            type_="assistant",
-                            phase=ReasoningPhase.RESPONDING,
-                            data={
-                                "text": finalized_text,
-                                "incomplete": True,
-                                "best_effort": True,
-                            },
-                            meta={
-                                "iteration": iteration,
-                                "run_id": run_id,
-                                "task_run_id": journal.task_run_id,
-                                "reason_code": "unresolved_tool_failure",
-                            },
-                        )
-                        chat_messages.append({"role": "assistant", "content": finalized_text})
-                        phase = ReasoningPhase.RESPONDING
-                        break
+                        completion_mode = "audited"
 
                     transition_err = _check_transition(phase, ReasoningPhase.RESPONDING)
                     if transition_err:
@@ -1125,7 +1086,7 @@ class ReasoningEngine:
                             "iteration": iteration,
                             "run_id": run_id,
                             "task_run_id": journal.task_run_id,
-                            "verified": audit_status == "passed",
+                            "audit_status": audit_status,
                         },
                     )
                     chat_messages.append({"role": "assistant", "content": candidate_text})

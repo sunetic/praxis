@@ -107,7 +107,7 @@ class Settings(BaseSettings):
 
     agent_failure_episode_enabled: bool = True
     agent_task_contract_enabled: bool = False
-    agent_completion_verifier_enabled: bool = True
+    agent_completion_verifier_enabled: bool = False
     agent_persistent_journal_enabled: bool = True
     agent_parallel_read_only_enabled: bool = True
     agent_max_transient_retries: int = 3

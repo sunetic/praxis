@@ -673,7 +673,11 @@ async def test_tool_task_runs_one_advisory_completion_audit_on_a_gap() -> None:
     )
     engine = _make_engine(
         llm=llm,
-        config=EngineConfig(max_iterations=8, task_contract_enabled=True),
+        config=EngineConfig(
+            max_iterations=8,
+            task_contract_enabled=True,
+            completion_verifier_enabled=True,
+        ),
         executor=executor,
         task_contract_builder=StaticTaskContractBuilder(
             complex=True,
@@ -742,7 +746,11 @@ async def test_verifier_semantic_rejection_does_not_restart_execution() -> None:
     )
     engine = _make_engine(
         llm=llm,
-        config=EngineConfig(max_iterations=6, task_contract_enabled=True),
+        config=EngineConfig(
+            max_iterations=6,
+            task_contract_enabled=True,
+            completion_verifier_enabled=True,
+        ),
         executor=executor,
         task_contract_builder=StaticTaskContractBuilder(
             complex=True,
@@ -843,7 +851,11 @@ async def test_failed_completion_audit_is_advisory_and_hidden_from_answer() -> N
     )
     engine = _make_engine(
         llm=llm,
-        config=EngineConfig(max_iterations=5, task_contract_enabled=True),
+        config=EngineConfig(
+            max_iterations=5,
+            task_contract_enabled=True,
+            completion_verifier_enabled=True,
+        ),
         task_contract_builder=StaticTaskContractBuilder(
             complex=True,
             criteria=[
@@ -889,7 +901,11 @@ async def test_malformed_verifier_is_advisory_after_one_audit() -> None:
     )
     engine = _make_engine(
         llm=llm,
-        config=EngineConfig(max_iterations=8, task_contract_enabled=True),
+        config=EngineConfig(
+            max_iterations=8,
+            task_contract_enabled=True,
+            completion_verifier_enabled=True,
+        ),
         task_contract_builder=StaticTaskContractBuilder(
             complex=True,
             criteria=[AcceptanceCriterion(id="ac-1", description="给出有证据的分析")],
@@ -1011,7 +1027,10 @@ async def test_tool_task_runs_exactly_one_successful_completion_audit() -> None:
     )
     engine = _make_engine(
         llm=llm,
-        config=EngineConfig(task_contract_enabled=False),
+        config=EngineConfig(
+            task_contract_enabled=False,
+            completion_verifier_enabled=True,
+        ),
         executor=executor,
     )
 
@@ -1027,6 +1046,7 @@ async def test_tool_task_runs_exactly_one_successful_completion_audit() -> None:
     assert events[-1]["data"]["run_status"] == "finished"
     assert events[-1]["data"]["task_outcome"] == "success"
     assert events[-1]["data"]["completed"] is True
+    assert events[-1]["data"]["completion_mode"] == "audited"
     assert events[-1]["data"]["audit_status"] == "passed"
 
 
@@ -1117,7 +1137,7 @@ async def test_resumed_task_reuses_persisted_contract_without_reclassification()
 
 
 @pytest.mark.anyio
-async def test_simple_task_cannot_claim_completion_with_unresolved_failure() -> None:
+async def test_historical_tool_failure_does_not_override_delivered_answer() -> None:
     async def executor(name: str, args: dict[str, Any]) -> dict[str, Any]:
         del name, args
         return {
@@ -1155,12 +1175,14 @@ async def test_simple_task_cannot_claim_completion_with_unresolved_failure() -> 
     visible = "".join(
         event["data"].get("text", "") for event in events if event["type"] == "assistant"
     )
-    verifications = [event["data"] for event in events if event["type"] == "verification"]
+    final_state = [event["data"] for event in events if event["type"] == "task_state"][-1]
     assert "查询已经成功完成" in visible
-    assert "尚未确认" in visible
-    assert verifications
-    assert all(item["evaluator"] == "failure_episode_audit" for item in verifications)
-    assert events[-1]["data"]["completed"] is False
+    assert "尚未确认" not in visible
+    assert not [event for event in events if event["type"] == "verification"]
+    assert final_state["failure_episodes"][0]["status"] == "open"
+    assert events[-1]["data"]["completed"] is True
+    assert events[-1]["data"]["task_outcome"] == "success"
+    assert events[-1]["data"]["completion_mode"] == "direct"
 
 
 def test_skill_verification_policies_are_extracted_as_opaque_extensions() -> None:
@@ -1793,7 +1815,10 @@ async def test_resume_correction_is_included_in_completion_verification() -> Non
             ],
         ]
     )
-    engine = _make_engine(llm=llm, config=EngineConfig(max_iterations=2))
+    engine = _make_engine(
+        llm=llm,
+        config=EngineConfig(max_iterations=2, completion_verifier_enabled=True),
+    )
     task_state = {
         "version": 1,
         "task_run_id": "resume-correction",
