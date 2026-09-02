@@ -1,4 +1,5 @@
 from app.core.config import PROJECT_ROOT, Settings, _normalize_sqlite_url, _resolve_project_path
+from app.db.database import _ensure_sqlite_parent_directory
 
 
 def test_normalize_sqlite_url_resolves_relative_path_from_project_root():
@@ -22,3 +23,11 @@ def test_deprecated_agent_settings_do_not_break_config_loading():
 
     assert not hasattr(settings, "agent_soft_finalize_seconds")
     assert not hasattr(settings, "agent_max_verification_retries")
+
+
+def test_sqlite_parent_directory_is_created_for_clean_install(tmp_path):
+    database_path = tmp_path / "missing" / "nested" / "praxis.db"
+
+    _ensure_sqlite_parent_directory(f"sqlite:///{database_path}")
+
+    assert database_path.parent.is_dir()

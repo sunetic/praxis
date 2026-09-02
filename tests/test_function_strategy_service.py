@@ -210,7 +210,7 @@ def test_verification_harness_rejects_swallowed_db_exceptions():
         dependency_manifest={},
     )
     assert failed["passed"] is False
-    assert any("不能吞异常" in detail for detail in failed["diagnostics"])
+    assert any("must not swallow exceptions" in detail for detail in failed["diagnostics"])
 
 
 def test_verification_harness_allows_db_exceptions_to_be_reraised():
@@ -243,7 +243,7 @@ def test_verification_harness_rejects_undeclared_scheduler_history_params():
         dependency_manifest={},
     )
     assert failed["passed"] is False
-    assert any("未声明参数" in detail for detail in failed["diagnostics"])
+    assert any("contains undeclared parameters" in detail for detail in failed["diagnostics"])
 
 
 def test_verification_harness_accepts_structured_scheduler_history_contract():

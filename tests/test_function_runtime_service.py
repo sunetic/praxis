@@ -672,7 +672,9 @@ def test_runtime_db_capability_rejects_system_role_value(session_factory, monkey
         )
     )
 
-    with pytest.raises(RuntimeDatasourceAccessError, match="db.query.role 包含未声明值: system"):
+    with pytest.raises(
+        RuntimeDatasourceAccessError, match="db.query.role contains undeclared value: system"
+    ):
         capability.query("select 1", role="system")
     assert captured == {}
 
@@ -700,9 +702,15 @@ def test_runtime_platform_capability_blocks_mutation_in_plan_mode(session_factor
     probe_db.close()
     platform = _RuntimePlatformCapability(control_db_url=control_db_url, execution_mode="plan")
 
-    with pytest.raises(RuntimePlatformAccessError, match="plan 模式禁止控制面写操作"):
+    with pytest.raises(
+        RuntimePlatformAccessError,
+        match="Control plane write operations are forbidden in plan mode",
+    ):
         platform.crud(object_type="datasource", action="create", payload={})
-    with pytest.raises(RuntimePlatformAccessError, match="plan 模式禁止控制面 operate 操作"):
+    with pytest.raises(
+        RuntimePlatformAccessError,
+        match="Control plane operate actions are forbidden in plan mode",
+    ):
         platform.operate(object_type="function", action="release", object_id=1, payload={})
 
 
@@ -714,7 +722,7 @@ def test_runtime_platform_capability_rejects_undeclared_scheduler_payload_fields
 
     with pytest.raises(
         RuntimePlatformAccessError,
-        match="platform.crud\\[scheduler.create\\]\\.payload 包含未声明字段: function_id",
+        match="platform.crud\\[scheduler.create\\]\\.payload contains undeclared fields: function_id",
     ):
         platform.crud(
             object_type="scheduler",
@@ -768,7 +776,7 @@ def test_runtime_platform_list_rejects_invalid_filter_enum(session_factory):
 
     with pytest.raises(
         RuntimePlatformAccessError,
-        match="platform.list\\[datasource\\]\\.filters.status 包含未声明值: archived",
+        match="platform.list\\[datasource\\]\\.filters.status contains undeclared value: archived",
     ):
         platform.list("datasource", filters={"status": "archived"})
 

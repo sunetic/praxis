@@ -6,7 +6,7 @@ import pytest
 from app.services.platform.skill_selector import select_skills_for_context
 from app.skills.store import SkillStore
 
-BUILTIN_DIR = Path(__file__).resolve().parents[1] / "data" / "skills"
+BUILTIN_DIR = Path(__file__).resolve().parents[1] / "app" / "builtin_skills"
 
 MYSQL_SKILLS = {
     "mysql-connection-diagnosis",
@@ -27,9 +27,12 @@ ALL_DB_SKILLS = MYSQL_SKILLS | PG_SKILLS
 
 @pytest.fixture()
 def skill_store(tmp_path: Path) -> SkillStore:
-    target = tmp_path / "skills"
-    shutil.copytree(BUILTIN_DIR, target)
-    return SkillStore(skills_dir=str(target))
+    builtin_target = tmp_path / "builtin_skills"
+    shutil.copytree(BUILTIN_DIR, builtin_target)
+    return SkillStore(
+        skills_dir=str(tmp_path / "skills"),
+        builtin_skills_dir=str(builtin_target),
+    )
 
 
 async def _select(store: SkillStore, prompt: str) -> set[str]:

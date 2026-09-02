@@ -468,17 +468,6 @@ class DBConnectionPool:
         for key in list(self._pools.keys()):
             await self._close_pool(key)
 
-    def __del__(self):
-        """Cleanup on garbage collection."""
-        try:
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                asyncio.ensure_future(self.close_all())
-            else:
-                loop.run_until_complete(self.close_all())
-        except Exception:
-            pass
-
 
 # Global connection pool instance
 _DB_POOL_GROUP_DEFAULT = "default"
@@ -493,3 +482,11 @@ def get_db_pool(group: str = _DB_POOL_GROUP_DEFAULT) -> DBConnectionPool:
         pool = DBConnectionPool()
         _db_pools[normalized_group] = pool
     return pool
+
+
+async def close_db_pools() -> None:
+    """Close and unregister every process-wide datasource connection pool."""
+    pools = list(_db_pools.values())
+    _db_pools.clear()
+    for pool in pools:
+        await pool.close_all()

@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from app.core.config import get_settings
 from app.core.logging import fmt_kv, get_logger
-from app.db.database import SessionLocal
+from app.db import database as db_module
 from app.models import models
 from app.services.channel_delivery import (
     ChannelDeliveryError,
@@ -88,7 +88,7 @@ class ObjectToolService:
     def __init__(
         self,
         *,
-        session_factory: sessionmaker[Session] | Any = SessionLocal,
+        session_factory: sessionmaker[Session] | Any | None = None,
         page_lifecycle: PageLifecycleService | None = None,
         function_lifecycle: FunctionLifecycleService | None = None,
         schedule_lifecycle: ScheduleLifecycleService | None = None,
@@ -103,6 +103,9 @@ class ObjectToolService:
         self._function_strategy = function_strategy or FunctionStrategyDecider()
         self._function_verifier = function_verifier or FunctionVerificationHarness()
         self._channel_delivery = channel_delivery or ChannelDeliveryService()
+
+    def _resolve_session_factory(self) -> sessionmaker[Session] | Any:
+        return self._session_factory or db_module.SessionLocal
 
     async def crud(
         self,
@@ -172,7 +175,7 @@ class ObjectToolService:
         payload: dict[str, Any],
         runner: Any,
     ) -> dict[str, Any]:
-        db = self._session_factory()
+        db = self._resolve_session_factory()()
         object_id_text = str(object_id) if object_id is not None else "unknown"
         trace_id = str(payload.get("trace_id") or uuid.uuid4())
         logger.info(
@@ -840,7 +843,7 @@ class ObjectToolService:
                     "release": self._serialize_model(release),
                 }
             if action == "invoke":
-                runtime = FunctionRuntimeService(session_factory=self._session_factory)
+                runtime = FunctionRuntimeService(session_factory=self._resolve_session_factory())
                 try:
                     trace_id = str(payload.get("trace_id") or uuid.uuid4())
                     result = await runtime.invoke(
@@ -886,8 +889,10 @@ class ObjectToolService:
             if action == "run-now":
                 trace_id = str(payload.get("trace_id") or uuid.uuid4())
                 worker = SchedulerWorker(
-                    session_factory=self._session_factory,
-                    runtime_service=FunctionRuntimeService(session_factory=self._session_factory),
+                    session_factory=self._resolve_session_factory(),
+                    runtime_service=FunctionRuntimeService(
+                        session_factory=self._resolve_session_factory()
+                    ),
                 )
                 try:
                     run_id = await worker.run_now(schedule.id, trace_id=trace_id)

@@ -3,8 +3,15 @@ from pathlib import Path
 from app.skills.store import SkillStore, SkillValidationError
 
 
+def _isolated_store(skills_dir: Path) -> SkillStore:
+    return SkillStore(
+        skills_dir=str(skills_dir),
+        builtin_skills_dir=str(skills_dir / ".empty-builtin-skills"),
+    )
+
+
 def test_skill_store_crud_flow(tmp_path: Path):
-    store = SkillStore(skills_dir=str(tmp_path))
+    store = _isolated_store(tmp_path)
     created = store.create(
         name="ob-slow-query",
         version="1.0.0",
@@ -39,7 +46,7 @@ def test_skill_store_crud_flow(tmp_path: Path):
 
 
 def test_skill_store_update_moves_file_by_database(tmp_path: Path):
-    store = SkillStore(skills_dir=str(tmp_path))
+    store = _isolated_store(tmp_path)
     created = store.create(
         name="generic-sql-helper",
         version="1.0.0",
@@ -63,7 +70,7 @@ def test_skill_store_rejects_invalid_front_matter(tmp_path: Path):
     bad_file = tmp_path / "bad.md"
     bad_file.write_text("invalid markdown content", encoding="utf-8")
 
-    store = SkillStore(skills_dir=str(tmp_path))
+    store = _isolated_store(tmp_path)
     loaded = store.load()
     assert loaded == []
     assert store.errors
@@ -74,14 +81,14 @@ def test_skill_store_ignores_readme_markdown(tmp_path: Path):
     (tmp_path / "oceanbase").mkdir()
     (tmp_path / "oceanbase" / "README.md").write_text("# db index", encoding="utf-8")
 
-    store = SkillStore(skills_dir=str(tmp_path))
+    store = _isolated_store(tmp_path)
     loaded = store.load()
     assert loaded == []
     assert store.errors == []
 
 
 def test_skill_store_rejects_duplicate_create(tmp_path: Path):
-    store = SkillStore(skills_dir=str(tmp_path))
+    store = _isolated_store(tmp_path)
     store.create(
         name="ob-lock-analysis",
         version="1.0.0",
@@ -105,7 +112,7 @@ def test_skill_store_rejects_duplicate_create(tmp_path: Path):
 
 
 def test_skill_store_supports_non_ascii_name(tmp_path: Path):
-    store = SkillStore(skills_dir=str(tmp_path))
+    store = _isolated_store(tmp_path)
     created = store.create(
         name="慢查询诊断",
         version="1.0.0",
@@ -134,7 +141,7 @@ prompt
 """,
         encoding="utf-8",
     )
-    store = SkillStore(skills_dir=str(tmp_path))
+    store = _isolated_store(tmp_path)
     loaded = store.load()
     assert loaded == []
     assert store.errors
@@ -156,7 +163,7 @@ built in prompt
         encoding="utf-8",
     )
 
-    store = SkillStore(skills_dir=str(tmp_path))
+    store = _isolated_store(tmp_path)
     loaded = store.load()
     assert len(loaded) == 1
     assert loaded[0].source == "built_in"

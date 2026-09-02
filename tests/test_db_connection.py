@@ -3,7 +3,7 @@ import asyncio
 import pytest
 
 import app.db.connection as connection_module
-from app.db.connection import DBConnectionPool, get_db_pool
+from app.db.connection import DBConnectionPool, close_db_pools, get_db_pool
 
 
 @pytest.fixture
@@ -173,3 +173,26 @@ def test_get_db_pool_returns_distinct_instances_per_group(monkeypatch):
 
     assert default_pool is same_default_pool
     assert live_pool is not default_pool
+
+
+@pytest.mark.anyio
+async def test_close_db_pools_closes_and_unregisters_all_groups(monkeypatch):
+    closed: list[str] = []
+
+    class TrackedPool:
+        def __init__(self, name: str):
+            self.name = name
+
+        async def close_all(self):
+            closed.append(self.name)
+
+    pools = {
+        "default": TrackedPool("default"),
+        "sql_analysis_live": TrackedPool("sql_analysis_live"),
+    }
+    monkeypatch.setattr(connection_module, "_db_pools", pools)
+
+    await close_db_pools()
+
+    assert closed == ["default", "sql_analysis_live"]
+    assert pools == {}

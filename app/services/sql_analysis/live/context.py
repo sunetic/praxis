@@ -21,7 +21,7 @@ _UNAVAILABLE_DIMENSIONS = [
     {
         "key": "executions",
         "label": "Execution Count",
-        "reason": "Current stage only reads OB realtime views directly; no historical sampling layer is available.",
+        "reason": "Current stage only reads live database statistics; no historical sampling layer is available.",
     },
     {
         "key": "trend",
@@ -60,6 +60,7 @@ def _build_live_llm_context(context: dict[str, Any]) -> dict[str, Any]:
     facts["objects"] = list((facts.get("objects") or [])[:12])
     facts["current_plans"] = list((facts.get("current_plans") or [])[:5])
     llm_context = {
+        "database_type": context.get("database_type"),
         "datasource_id": context.get("datasource_id"),
         "sql_id": context.get("sql_id"),
         "start_time_us": context.get("start_time_us"),
@@ -175,6 +176,7 @@ async def build_live_sql_context(
     }
 
     return {
+        "database_type": datasource.db_type,
         "datasource_id": datasource.id,
         "sql_id": sql_id,
         "start_time_us": start_time_us,
@@ -208,7 +210,8 @@ async def explain_live_sql_with_ai(
         tenant_id=tenant_id,
     )
     system_prompt = (
-        "You are an OceanBase 4.x SQL realtime diagnostics assistant.\n"
+        "You are a database SQL live-diagnostics assistant.\n"
+        "Use the database_type field to interpret database-specific facts and plan output.\n"
         "You only explain facts based on the given realtime context; do not fabricate historical trends, execution counts, or regression conclusions.\n"
         "Return JSON with fixed object fields: summary, risk_points, investigation_steps, optimization_directions.\n"
         "Requirements:\n"

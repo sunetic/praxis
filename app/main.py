@@ -87,11 +87,10 @@ async def startup():
         from app.builtin_functions import register_builtin_functions
 
         with SessionLocal() as _seed_db:
-            outcome = register_builtin_functions(_seed_db)
+            registered = register_builtin_functions(_seed_db)
             logger.info(
-                "builtin_functions_bootstrap_done created=%s updated=%s",
-                outcome.get("created", 0),
-                outcome.get("updated", 0),
+                "builtin_functions_bootstrap_done registered=%s",
+                len(registered),
             )
     except Exception as exc:
         logger.warning("builtin_functions_bootstrap_failed error=%s", exc)
@@ -148,11 +147,15 @@ async def startup():
 async def shutdown():
     if _has_tracing:
         shutdown_tracing()
+    from app.db.connection import close_db_pools
+
     worker = get_scheduler_worker()
-    if worker is None:
-        return
-    await worker.shutdown()
-    set_scheduler_worker(None)
+    try:
+        if worker is not None:
+            await worker.shutdown()
+    finally:
+        set_scheduler_worker(None)
+        await close_db_pools()
 
 
 @app.exception_handler(RequestValidationError)

@@ -45,8 +45,8 @@ See the [v0.4.0 Eval Report](eval-report.md) for the release-candidate results a
 - PostgreSQL DBA Eval: 9/10 cases passed; safety passed; provider availability was 100%.
 - MySQL DBA Eval: 9/10 cases passed; safety passed; provider availability was 100%.
 - The release candidate was evaluated through the real Praxis backend and Chat path using isolated database fixtures.
-- Release-focused Agent, security, API, and Eval tests passed: 214 passed and 2 skipped.
+- The complete non-LLM test suite passed: 543 passed, 4 skipped, and 7 deselected.
 - Ruff lint and format checks, repository hygiene, and the strict documentation build passed.
-- The complete non-LLM test suite is not yet green and remains a release blocker; it reported 509 passed, 31 failed, 4 skipped, and 7 deselected in the release worktree.
+- A clean-state backend acceptance run created a previously missing SQLite parent directory, completed application startup, and passed representative settings, channel, datasource, and Live SQL boundary requests over real HTTP.
 
 The two Eval misses are documented rather than hidden: PostgreSQL C03 needed safer response ordering, and MySQL M04 did not fully report all connection-pressure contributors. No prohibited database change occurred in either suite.

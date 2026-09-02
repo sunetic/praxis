@@ -264,19 +264,12 @@ async def test_scheduled_runner_includes_shared_capability_prompt(tmp_path, monk
 
 
 def test_skill_layered_diagnosis_policy_has_api_priority_exception() -> None:
-    """Guard: skill-layered-diagnosis-policy must include an explicit API-priority exception clause.
-    Without it the LLM interprets 'default to conventional diagnosis' as a reason to skip the
-    OCP API workflow defined by ocp-api-guide (regression observed in conversation #9).
-    """
+    """The general policy must defer to any active API-oriented Skill."""
     from app.skills.store import SkillStore
 
     store = SkillStore()
     store.load()
     skill = store.get("skill-layered-diagnosis-policy")
-    assert skill is not None, "skill-layered-diagnosis-policy must exist in skills/"
-    assert "ocp-api-guide" in skill.prompt, (
-        "skill-layered-diagnosis-policy must name ocp-api-guide in its API-priority exception clause"
-    )
-    assert "不得以" in skill.prompt, (
-        "skill-layered-diagnosis-policy must forbid using '常规诊断' as a reason to skip API workflow"
-    )
+    assert skill is not None, "skill-layered-diagnosis-policy must be bundled"
+    assert "active skill defines an API-first workflow" in skill.prompt
+    assert "Do not skip preflight / knowledge lookup / API call steps" in skill.prompt

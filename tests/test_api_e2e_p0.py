@@ -968,7 +968,9 @@ def test_p0_datasource_test_and_agent_reference(api_client, monkeypatch: pytest.
     client, _ = api_client
 
     class _FakePool:
-        async def test_connection(self, host, port, user, password, database):  # noqa: ARG002
+        async def test_connection(  # noqa: ARG002
+            self, host, port, user, password, database, db_type="mysql"
+        ):
             return True, "ok"
 
     monkeypatch.setattr("app.db.connection.get_db_pool", lambda: _FakePool())
@@ -1033,111 +1035,38 @@ def test_p0_live_sql_analysis_endpoints(api_client, monkeypatch: pytest.MonkeyPa
                         {
                             "tenant_id": 1002,
                             "sql_id": "live-top-1",
+                            "db_name": "app_db",
+                            "user_name": None,
                             "sql_text": "select * from t_top",
                             "latest_last_active_time": "2026-03-28 09:00:00.000000",
-                            "plan_count": 2,
+                            "plan_count": None,
                         }
                     ],
                     "row_count": 1,
                 }
-            if (
-                "from oceanbase.gv$ob_sql_audit" in normalized_sql
-                and "group by tenant_id, sql_id limit 1" in normalized_sql
-            ):
+            if "sql_analysis_live:sql_detail_mysql" in normalized_sql:
                 return {
                     "columns": [],
                     "rows": [
                         {
-                            "tenant_id": 1002,
+                            "tenant_id": None,
+                            "sql_id": "live-top-1",
                             "db_name": "app_db",
-                            "user_name": "root",
+                            "user_name": None,
                             "sql_text": "select * from t_top",
                             "executions": 12,
                             "avg_elapsed_time_us": 10000,
                             "avg_execute_time_us": 7000,
                             "max_elapsed_time_us": 30000,
                             "latest_request_time_us": 100,
-                            "plan_count": 2,
+                            "plan_count": None,
                         }
                     ],
                     "row_count": 1,
                 }
-            if (
-                "from oceanbase.gv$ob_sql_audit" in normalized_sql
-                and "group by tenant_id, sql_id, plan_id" in normalized_sql
-            ):
-                return {
-                    "columns": [],
-                    "rows": [
-                        {
-                            "tenant_id": 1002,
-                            "sql_id": "live-top-1",
-                            "plan_id": 10001,
-                            "plan_hash": 999,
-                            "executions": 8,
-                            "avg_exe_usec": 120,
-                            "elapsed_time": 1200,
-                            "execute_time": 1000,
-                            "table_scan": 1,
-                            "last_active_time": "2026-03-28 09:00:00.000000",
-                            "query_sql": "select * from t_top",
-                        },
-                        {
-                            "tenant_id": 1002,
-                            "sql_id": "live-top-1",
-                            "plan_id": 10002,
-                            "plan_hash": 1000,
-                            "executions": 4,
-                            "avg_exe_usec": 180,
-                            "elapsed_time": 1600,
-                            "execute_time": 1300,
-                            "table_scan": 0,
-                            "last_active_time": "2026-03-28 08:00:00.000000",
-                            "query_sql": "select * from t_top",
-                        },
-                    ],
-                    "row_count": 2,
-                }
-            if "from oceanbase.gv$ob_plan_cache_plan_stat" in normalized_sql:
-                return {
-                    "columns": [],
-                    "rows": [
-                        {
-                            "tenant_id": 1002,
-                            "sql_id": "live-top-1",
-                            "plan_id": 10001,
-                            "plan_hash": 999,
-                            "executions": 0,
-                            "avg_exe_usec": 120,
-                            "elapsed_time": 1200,
-                            "execute_time": 1000,
-                            "table_scan": 1,
-                            "last_active_time": "2026-03-28 09:00:00.000000",
-                            "query_sql": "select * from t_top",
-                        }
-                    ],
-                    "row_count": 1,
-                }
-            if "explain select * from t_top" in normalized_sql:
-                return {
-                    "columns": [],
-                    "rows": [
-                        {
-                            "id": 1,
-                            "select_type": "SIMPLE",
-                            "table": "t_top",
-                            "rows": 10,
-                            "Extra": "Full scan",
-                        }
-                    ],
-                    "row_count": 1,
-                }
-            if "from oceanbase.gv$ob_plan_cache_plan_explain" in normalized_sql:
+            if "from performance_schema.events_statements_history" in normalized_sql:
                 return {"columns": [], "rows": [], "row_count": 0}
             raise AssertionError(f"unexpected sql: {sql}")
-
-        async def execute_explain(self, datasource, sql, role="user", database=None):  # noqa: ARG002
-            return await self.execute_query(datasource, f"EXPLAIN {sql}", role=role)
 
     class _FakeLiveSqlExplainLLM:
         async def chat(self, *args, **kwargs):  # noqa: ARG002
@@ -1147,10 +1076,14 @@ def test_p0_live_sql_analysis_endpoints(api_client, monkeypatch: pytest.MonkeyPa
                         "message": {
                             "content": json.dumps(
                                 {
-                                    "summary": "当前为实时视角，执行计划出现表扫描，建议先核对索引路径与过滤条件。",
-                                    "risk_points": ["表扫描可能导致读取放大"],
-                                    "investigation_steps": ["检查过滤列是否已有可用索引"],
-                                    "optimization_directions": ["优先评估索引覆盖与谓词可索引性"],
+                                    "summary": "This is a live view with insufficient historical evidence.",
+                                    "risk_points": ["Plan history is unavailable"],
+                                    "investigation_steps": [
+                                        "Inspect the current query and indexes"
+                                    ],
+                                    "optimization_directions": [
+                                        "Validate index coverage with production evidence"
+                                    ],
                                 },
                                 ensure_ascii=False,
                             )
@@ -1168,9 +1101,11 @@ def test_p0_live_sql_analysis_endpoints(api_client, monkeypatch: pytest.MonkeyPa
         "/api/v1/datasources",
         json={
             **_datasource_payload("live-sqla-sys", cluster_key="cluster-live"),
-            "tenant_role": "sys",
-            "user": "root@test#sys",
-            "database": "oceanbase",
+            "port": 3306,
+            "db_type": "mysql",
+            "tenant_role": "user",
+            "user": "root",
+            "database": "mysql",
         },
     )
     assert created_sys.status_code == 201, created_sys.text
@@ -1180,8 +1115,10 @@ def test_p0_live_sql_analysis_endpoints(api_client, monkeypatch: pytest.MonkeyPa
         "/api/v1/datasources",
         json={
             **_datasource_payload("live-sqla-user", cluster_key="cluster-live"),
+            "port": 3306,
+            "db_type": "mysql",
             "tenant_role": "user",
-            "user": "root@test#wx",
+            "user": "app",
             "database": "app_db",
         },
     )
@@ -1202,10 +1139,10 @@ def test_p0_live_sql_analysis_endpoints(api_client, monkeypatch: pytest.MonkeyPa
     discovery = client.get("/api/v1/sql-analysis/live/discovery", params=base_params)
     assert discovery.status_code == 200, discovery.text
     assert discovery.json()["items"][0]["sql_id"] == "live-top-1"
-    assert discovery.json()["items"][0]["plan_count"] == 2
+    assert discovery.json()["items"][0]["plan_count"] is None
     assert discovery.json()["items"][0]["sql_text"] == "select * from t_top"
     assert discovery.json()["items"][0]["db_name"] == "app_db"
-    assert discovery.json()["items"][0]["user_name"] == "root"
+    assert discovery.json()["items"][0]["user_name"] is None
     assert discovery.json()["items"][0]["source_datasource_id"] == source_datasource_id
     assert (
         discovery.json()["items"][0]["preferred_execution_datasource_id"] == preferred_datasource_id
@@ -1217,15 +1154,16 @@ def test_p0_live_sql_analysis_endpoints(api_client, monkeypatch: pytest.MonkeyPa
     )
     assert context.status_code == 200, context.text
     context_payload = context.json()
-    assert context_payload["window_plan_total"] == 2
-    assert context_payload["current_plan_id"] == 10001
-    assert context_payload["facts"]["current_plan"]["plan_id"] == 10001
+    assert context_payload["window_plan_total"] == 0
+    assert context_payload["current_plan_id"] is None
+    assert context_payload["facts"]["current_plan"]["plan_id"] is None
     assert {item["key"] for item in context_payload["signals"]} >= {
-        "table_scan_risk",
+        "plan_cache_missing",
+        "plan_explain_unavailable",
         "history_unavailable",
     }
     assert context_payload["facts"]["unavailable_dimensions"][0]["key"] == "executions"
-    assert context_payload["plan_explain"]["source"] == "explain_sql"
+    assert context_payload["plan_explain"]["source"] == "unavailable"
 
     explanation = client.post(
         "/api/v1/sql-analysis/live/explain-with-ai",
@@ -1233,11 +1171,28 @@ def test_p0_live_sql_analysis_endpoints(api_client, monkeypatch: pytest.MonkeyPa
     )
     assert explanation.status_code == 200, explanation.text
     explanation_payload = explanation.json()
-    assert "实时视角" in explanation_payload["summary"]
-    assert explanation_payload["risk_points"] == ["表扫描可能导致读取放大"]
+    assert "live view" in explanation_payload["summary"]
+    assert explanation_payload["risk_points"] == ["Plan history is unavailable"]
     assert (
-        explanation_payload["context"]["facts"]["current_plan"]["explain_source"] == "explain_sql"
+        explanation_payload["context"]["facts"]["current_plan"]["explain_source"] == "unavailable"
     )
+
+
+def test_p0_live_sql_rejects_unsupported_database(api_client):
+    client, _ = api_client
+    datasource = _create_datasource(client, "live-sqla-unsupported")
+
+    response = client.get(
+        "/api/v1/sql-analysis/live/db-names",
+        params={
+            "datasource_id": datasource["id"],
+            "start_time_us": 60_000_000,
+            "end_time_us": 120_000_000,
+        },
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "SQL analysis is not supported for db_type 'oceanbase'"
 
 
 # ---------------------------------------------------------------------------

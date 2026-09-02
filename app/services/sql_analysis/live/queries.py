@@ -59,7 +59,6 @@ def _get_driver(datasource: models.DataSource) -> ModuleType:
     import importlib
 
     _driver_modules: dict[str, str] = {
-        "oceanbase": "app.services.sql_analysis.live.queries_ob",
         "mysql": "app.services.sql_analysis.live.queries_mysql",
         "postgresql": "app.services.sql_analysis.live.queries_pg",
     }

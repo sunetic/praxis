@@ -1,7 +1,8 @@
+from pathlib import Path
 from typing import Any
 
 from sqlalchemy import create_engine, event, inspect, text
-from sqlalchemy.engine import Inspector
+from sqlalchemy.engine import Inspector, make_url
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
 from app.core.config import get_settings
@@ -10,6 +11,16 @@ from app.core.logging import fmt_kv, get_logger
 settings = get_settings()
 logger = get_logger("app.db")
 
+
+def _ensure_sqlite_parent_directory(database_url: str) -> None:
+    """Create the parent directory required by a file-backed SQLite URL."""
+    url = make_url(database_url)
+    if not url.drivername.startswith("sqlite") or not url.database or url.database == ":memory:":
+        return
+    Path(url.database).expanduser().resolve().parent.mkdir(parents=True, exist_ok=True)
+
+
+_ensure_sqlite_parent_directory(settings.database_url)
 _is_sqlite = "sqlite" in settings.database_url
 engine = create_engine(
     settings.database_url,

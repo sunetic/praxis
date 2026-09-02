@@ -386,7 +386,7 @@ def test_function_create_enters_with_temporary_name_then_first_build_generates_m
     db = session_factory()
     try:
         created = functions_api.create_function({}, db=db)
-        assert created["name"].startswith("未命名 Function")
+        assert created["name"].startswith("Untitled Function")
         assert created["description"] is None
 
         built = functions_api.build_function(
@@ -436,7 +436,10 @@ def test_function_chat_build_with_coding_engine_mode(
         )
         assert response["status"] == "done"
         assert response["data"]["build_run"]["phase"] == "apply"
-        assert response["assistant_message"] == "Function 草稿已更新，请在测试面板验证业务结果。"
+        assert (
+            response["assistant_message"]
+            == "Function draft updated. Please verify business results in the test panel."
+        )
         assert "from_engine" in str(response["data"]["function"]["draft_code"] or "")
     finally:
         db.close()
@@ -497,7 +500,7 @@ def test_function_chat_build_with_coding_engine_mode_reports_no_change(
             )
         )
         assert response["status"] == "done"
-        assert "未检测到 `main.py` 实际变更" in str(response["assistant_message"] or "")
+        assert "No changes detected to `main.py`" in str(response["assistant_message"] or "")
         assert response["data"]["function"]["description"] == "original description"
         events = response["data"]["build_run"]["events"]
         assert events
@@ -528,7 +531,7 @@ def test_function_chat_build_with_invalid_generated_code_returns_verification_fa
         )
         assert response["status"] == "failed"
         assert response["data"]["build_run"]["status"] == "failed"
-        assert "未通过契约校验" in str(response["assistant_message"] or "")
+        assert "failed contract verification" in str(response["assistant_message"] or "")
         assert "db.query" in str(response["assistant_message"] or "")
         assert str(response["data"]["function"]["draft_code"] or "") == ""
         workspace_main = Path("/tmp/praxis-test-fake/functions") / str(function["id"]) / "main.py"
@@ -723,7 +726,10 @@ def test_function_build_chat_invoke_hides_runtime_mode_terms_from_user_message(
             )
         )
         assert preview_response["status"] == "success"
-        assert preview_response["assistant_message"] == "已完成历史清理预演，命中 1 条记录。"
+        assert (
+            preview_response["assistant_message"]
+            == "History cleanup dry-run completed, matched 1 records."
+        )
         assert "execution_mode" not in (preview_response.get("data") or {})
         assert "runtime_path" not in (preview_response.get("data") or {})
         assert "write_mode" not in (preview_response.get("data") or {})
@@ -748,7 +754,10 @@ def test_function_build_chat_invoke_hides_runtime_mode_terms_from_user_message(
             )
         )
         assert blocked_response["status"] == "failed"
-        assert "当前测试执行仅支持预演" in str(blocked_response["assistant_message"] or "")
+        assert (
+            "current test execution only supports dry-run"
+            in str(blocked_response["assistant_message"] or "").lower()
+        )
         assert "execution_mode" not in str(blocked_response["assistant_message"] or "")
     finally:
         db.close()

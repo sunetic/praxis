@@ -169,7 +169,7 @@ def test_summarize_engine_output_line_normalizes_command_output():
     from app.services.external_cli_adapter import _summarize_engine_output_line
 
     summary = _summarize_engine_output_line("⠋ Running pytest tests/test_build_workflow.py")
-    assert summary == "执行命令: pytest tests/test_build_workflow.py"
+    assert summary == "Running command: pytest tests/test_build_workflow.py"
 
 
 def test_external_cli_timeout_reports_last_engine_summary(

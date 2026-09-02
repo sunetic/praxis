@@ -17,7 +17,7 @@ _DEFAULT_BUILTIN_SKILLS_DIR = str(BUILTIN_SKILLS_DIR)
 
 
 VALID_VERSION_PATTERN = re.compile(r"^\d+\.\d+\.\d+$")
-VALID_DATABASE = {"mysql", "postgresql", "general"}
+VALID_DATABASE = {"oceanbase", "mysql", "postgresql", "general"}
 VALID_SOURCE = {"built_in", "custom"}
 CUSTOM_SKILLS_DIR = "custom"
 REFERENCE_SEPARATOR = "<!-- skill:reference -->"
@@ -79,7 +79,9 @@ def _validate_skill_fields(
     if len(description.strip()) < 8:
         raise SkillValidationError("Skill description must be at least 8 characters")
     if database not in VALID_DATABASE:
-        raise SkillValidationError("Skill database must be one of: general, mysql, postgresql")
+        raise SkillValidationError(
+            "Skill database must be one of: general, mysql, oceanbase, postgresql"
+        )
     if not isinstance(always_apply, bool):
         raise SkillValidationError("Skill always_apply must be boolean")
     if not prompt.strip():

@@ -1,6 +1,5 @@
 """Tests for the Knowledge Packs API (manifest, install, uninstall, protection)."""
 
-import asyncio
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
@@ -347,7 +346,8 @@ class TestListPacksVersionInfo:
 
 
 class TestDiscoverVersions:
-    def test_parses_ls_remote_output(self):
+    @pytest.mark.asyncio
+    async def test_parses_ls_remote_output(self):
         from app.services.knowledge.pack_installer import _discover_versions
 
         ls_output = (
@@ -369,9 +369,7 @@ class TestDiscoverVersions:
             return FakeProc()
 
         with patch("asyncio.create_subprocess_exec", side_effect=fake_exec):
-            result = asyncio.get_event_loop().run_until_complete(
-                _discover_versions("https://example.com/repo.git", r"^[0-9]+\.[0-9]+$")
-            )
+            result = await _discover_versions("https://example.com/repo.git", r"^[0-9]+\.[0-9]+$")
 
         assert len(result) == 3
         assert result[0]["label"] == "8.4"
@@ -381,20 +379,20 @@ class TestDiscoverVersions:
         assert result[1]["commit"] == "tag999"
         assert result[2]["label"] == "5.7"
 
-    def test_returns_empty_on_timeout(self):
+    @pytest.mark.asyncio
+    async def test_returns_empty_on_timeout(self):
         from app.services.knowledge.pack_installer import _discover_versions
 
         async def fake_exec(*args, **kwargs):
             raise OSError("network unreachable")
 
         with patch("asyncio.create_subprocess_exec", side_effect=fake_exec):
-            result = asyncio.get_event_loop().run_until_complete(
-                _discover_versions("https://example.com/repo.git", r"^[0-9]+\.[0-9]+$")
-            )
+            result = await _discover_versions("https://example.com/repo.git", r"^[0-9]+\.[0-9]+$")
 
         assert result == []
 
-    def test_returns_empty_on_nonzero_exit(self):
+    @pytest.mark.asyncio
+    async def test_returns_empty_on_nonzero_exit(self):
         from app.services.knowledge.pack_installer import _discover_versions
 
         async def fake_exec(*args, **kwargs):
@@ -407,9 +405,7 @@ class TestDiscoverVersions:
             return FakeProc()
 
         with patch("asyncio.create_subprocess_exec", side_effect=fake_exec):
-            result = asyncio.get_event_loop().run_until_complete(
-                _discover_versions("https://example.com/repo.git", r"^[0-9]+\.[0-9]+$")
-            )
+            result = await _discover_versions("https://example.com/repo.git", r"^[0-9]+\.[0-9]+$")
 
         assert result == []
 

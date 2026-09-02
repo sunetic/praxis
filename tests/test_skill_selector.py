@@ -16,14 +16,17 @@ from app.services.platform.skill_selector import (
 )
 from app.skills.store import SkillStore
 
-BUILTIN_DIR = Path(__file__).resolve().parents[1] / "data" / "skills"
+BUILTIN_DIR = Path(__file__).resolve().parents[1] / "app" / "builtin_skills"
 
 
 @pytest.fixture()
 def skill_store(tmp_path: Path) -> SkillStore:
-    target = tmp_path / "skills"
-    shutil.copytree(BUILTIN_DIR, target)
-    return SkillStore(skills_dir=str(target))
+    builtin_target = tmp_path / "builtin_skills"
+    shutil.copytree(BUILTIN_DIR, builtin_target)
+    return SkillStore(
+        skills_dir=str(tmp_path / "skills"),
+        builtin_skills_dir=str(builtin_target),
+    )
 
 
 def _make_llm_factory(add=None, remove=None, reason="mock"):
@@ -53,7 +56,7 @@ def _make_error_llm_factory():
     class MockLLM:
         async def chat(self, messages, tools=None, stream=False):
             raise RuntimeError("LLM unavailable")
-            yield  # noqa: unreachable — make it an async generator
+            yield  # Keep this an async generator.
 
     return lambda: MockLLM()
 
@@ -210,7 +213,10 @@ async def test_llm_error_falls_back_to_current(skill_store):
 
 @pytest.mark.anyio
 async def test_empty_store_returns_no_skills(tmp_path):
-    store = SkillStore(skills_dir=str(tmp_path))
+    store = SkillStore(
+        skills_dir=str(tmp_path / "skills"),
+        builtin_skills_dir=str(tmp_path / "builtin_skills"),
+    )
     result = await select_skills_for_context(
         prompt="test",
         skill_store_instance=store,
