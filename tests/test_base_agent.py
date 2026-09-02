@@ -979,9 +979,7 @@ async def test_tool_exception_closes_started_call_and_returns_partial() -> None:
         raise RuntimeError("database connection dropped")
 
     llm = FakeLLM(
-        responses=[
-            _tool_call_chunk("execute_sql", '{"sql":"SELECT 1"}', call_id="tc-error")
-        ]
+        responses=[_tool_call_chunk("execute_sql", '{"sql":"SELECT 1"}', call_id="tc-error")]
     )
     engine = _make_engine(
         llm=llm,

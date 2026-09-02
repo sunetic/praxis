@@ -2293,17 +2293,11 @@ def _build_best_candidate_fallback(journal: TaskJournal, candidate_text: str) ->
         missing = _remaining_work(journal)[:8]
     chinese = _prefers_chinese(journal)
     if chinese:
-        result = (
-            "阶段性结果（本次执行未完整结束，不能视为最终结论）\n\n"
-            + candidate
-        )
+        result = "阶段性结果（本次执行未完整结束，不能视为最终结论）\n\n" + candidate
         if missing:
             result += "\n\n尚未确认：\n" + "\n".join(f"- {item}" for item in missing)
         return result
-    result = (
-        "Partial result (this run did not finish; do not treat it as final)\n\n"
-        + candidate
-    )
+    result = "Partial result (this run did not finish; do not treat it as final)\n\n" + candidate
     if missing:
         result += "\n\nNot yet confirmed:\n" + "\n".join(f"- {item}" for item in missing)
     return result
