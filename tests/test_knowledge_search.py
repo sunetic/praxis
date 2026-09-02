@@ -400,7 +400,23 @@ class TestQueryCoverage:
         assert complete_coverage["coverage_complete"] is True
 
     @pytest.mark.asyncio
-    async def test_failed_search_does_not_count_as_coverage(self, kb_dir: Path) -> None:
+    async def test_failed_search_does_not_count_as_coverage(
+        self,
+        kb_dir: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        def failed_search(*args, **kwargs):
+            return subprocess.CompletedProcess(
+                args=args[0],
+                returncode=2,
+                stdout="",
+                stderr="invalid search pattern",
+            )
+
+        monkeypatch.setattr(
+            "app.services.knowledge.search_tools.subprocess.run",
+            failed_search,
+        )
         target = SearchTarget(kb_id=1, source_type="filesystem", root=kb_dir)
         executor = KnowledgeToolExecutor([target], build_query_plan("index error"))
 
