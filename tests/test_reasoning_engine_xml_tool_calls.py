@@ -2,7 +2,31 @@
 
 import json
 
-from app.services.agent.reasoning_engine import _extract_xml_tool_calls
+from app.services.agent.reasoning_engine import (
+    _extract_xml_tool_calls,
+    _VisibleAssistantStream,
+)
+
+
+def test_visible_stream_emits_plain_text_incrementally():
+    stream = _VisibleAssistantStream()
+    assert stream.push("Hello ") == "Hello"
+    assert stream.push("world") == " world"
+    assert stream.finish("Hello world") == ""
+
+
+def test_visible_stream_withholds_split_xml_tool_call_marker():
+    stream = _VisibleAssistantStream()
+    assert stream.push("Let me check.\n<func") == "Let me check."
+    assert stream.push("tion=execute_sql><parameter=sql>SELECT 1</parameter>") == ""
+    assert stream.finish("Let me check.") == ""
+
+
+def test_visible_stream_releases_literal_marker_when_no_tool_call_was_parsed():
+    stream = _VisibleAssistantStream()
+    assert stream.push("Explain <func") == "Explain"
+    assert stream.push("tion= as text") == ""
+    assert stream.finish("Explain <function= as text") == " <function= as text"
 
 
 def test_extract_single_xml_tool_call():

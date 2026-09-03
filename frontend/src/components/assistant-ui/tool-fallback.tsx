@@ -94,13 +94,15 @@ const statusIconMap: Record<ToolStatus, React.ElementType> = {
 function ToolFallbackTrigger({
   toolName,
   status,
+  result,
   className,
   ...props
 }: React.ComponentProps<typeof CollapsibleTrigger> & {
   toolName: string;
   status?: ToolCallMessagePartStatus;
+  result?: unknown;
 }) {
-  const { t } = useShellI18n();
+  const { locale, t } = useShellI18n();
   const statusType = status?.type ?? "complete";
   const isRunning = statusType === "running";
   const isCancelled =
@@ -108,6 +110,7 @@ function ToolFallbackTrigger({
 
   const Icon = statusIconMap[statusType];
   const label = isCancelled ? t("tool.cancelled") : t("tool.used");
+  const resultSummary = getToolResultSummary(result, locale);
 
   return (
     <CollapsibleTrigger
@@ -144,6 +147,16 @@ function ToolFallbackTrigger({
           </span>
         )}
       </span>
+      {resultSummary ? (
+        <span
+          className={cn(
+            "max-w-[48%] truncate text-xs text-muted-foreground",
+            resultSummary.isError && "text-destructive",
+          )}
+        >
+          {resultSummary.text}
+        </span>
+      ) : null}
       <ChevronDownIcon
         data-slot="tool-fallback-trigger-chevron"
         className={cn(
@@ -212,28 +225,8 @@ function ToolFallbackResult({
 }: React.ComponentProps<"div"> & {
   result?: unknown;
 }) {
-  const { locale, t } = useShellI18n();
+  const { t } = useShellI18n();
   if (result === undefined) return null;
-
-  const resultRecord = result && typeof result === "object" ? result as Record<string, unknown> : null;
-  const data = resultRecord?.data && typeof resultRecord.data === "object"
-    ? resultRecord.data as Record<string, unknown>
-    : null;
-  const rowCount = typeof data?.row_count === "number"
-    ? data.row_count
-    : Array.isArray(data?.rows) ? data.rows.length : null;
-  const successSummary = resultRecord?.success === true && rowCount !== null
-    ? locale === "zh-CN"
-      ? `执行成功，返回 ${rowCount} 条记录`
-      : `Succeeded, returned ${rowCount} ${rowCount === 1 ? "row" : "rows"}`
-    : null;
-  const errorRecord = resultRecord?.error && typeof resultRecord.error === "object"
-    ? resultRecord.error as Record<string, unknown>
-    : null;
-  const errorMessage = typeof errorRecord?.message === "string" ? errorRecord.message : null;
-  const errorSummary = resultRecord?.success === false && errorMessage
-    ? locale === "zh-CN" ? `执行失败：${errorMessage}` : `Execution failed: ${errorMessage}`
-    : null;
 
   return (
     <div
@@ -244,14 +237,48 @@ function ToolFallbackResult({
       )}
       {...props}
     >
-      {successSummary ? <p className="aui-tool-fallback-result-summary font-medium">{successSummary}</p> : null}
-      {errorSummary ? <p className="aui-tool-fallback-result-summary font-medium text-destructive">{errorSummary}</p> : null}
       <p className="aui-tool-fallback-result-header font-semibold">{t("tool.result")}</p>
       <pre className="aui-tool-fallback-result-content whitespace-pre-wrap">
         {typeof result === "string" ? result : JSON.stringify(result, null, 2)}
       </pre>
     </div>
   );
+}
+
+function getToolResultSummary(
+  result: unknown,
+  locale: string,
+): { text: string; isError: boolean } | null {
+  const resultRecord = result && typeof result === "object"
+    ? result as Record<string, unknown>
+    : null;
+  const data = resultRecord?.data && typeof resultRecord.data === "object"
+    ? resultRecord.data as Record<string, unknown>
+    : null;
+  const rowCount = typeof data?.row_count === "number"
+    ? data.row_count
+    : Array.isArray(data?.rows) ? data.rows.length : null;
+  if (resultRecord?.success === true && rowCount !== null) {
+    return {
+      text: locale === "zh-CN"
+        ? `执行成功，返回 ${rowCount} 条记录`
+        : `Succeeded, returned ${rowCount} ${rowCount === 1 ? "row" : "rows"}`,
+      isError: false,
+    };
+  }
+  const errorRecord = resultRecord?.error && typeof resultRecord.error === "object"
+    ? resultRecord.error as Record<string, unknown>
+    : null;
+  const errorMessage = typeof errorRecord?.message === "string" ? errorRecord.message : null;
+  if (resultRecord?.success === false && errorMessage) {
+    return {
+      text: locale === "zh-CN"
+        ? `执行失败：${errorMessage}`
+        : `Execution failed: ${errorMessage}`,
+      isError: true,
+    };
+  }
+  return null;
 }
 
 function ToolFallbackError({
@@ -299,13 +326,19 @@ const ToolFallbackImpl: ToolCallMessagePartComponent = ({
 }) => {
   const isCancelled =
     status?.type === "incomplete" && status.reason === "cancelled";
+  const requiresAttention =
+    status?.type === "requires-action" ||
+    (status?.type === "incomplete" && status.reason !== "cancelled");
+  const [userOpen, setUserOpen] = useState(false);
+  const open = requiresAttention || userOpen;
 
   return (
     <ToolFallbackRoot
-      defaultOpen
+      open={open}
+      onOpenChange={setUserOpen}
       className={cn(isCancelled && "border-muted-foreground/30 bg-muted/30")}
     >
-      <ToolFallbackTrigger toolName={toolName} status={status} />
+      <ToolFallbackTrigger toolName={toolName} status={status} result={result} />
       <ToolFallbackContent>
         <ToolFallbackError status={status} />
         <ToolFallbackArgs

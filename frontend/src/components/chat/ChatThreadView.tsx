@@ -313,7 +313,7 @@ function ChatThreadViewSession({
         <div className="min-h-0 flex-1 overflow-hidden">
           <Thread
             suggestions={normalizedSuggestions}
-            isWaiting={streaming && streamingParts.length === 0}
+            statusText={streaming ? runtimeStatus?.text : undefined}
             placeholder={placeholder}
             readOnly={readOnly}
             footerContent={
@@ -322,15 +322,6 @@ function ChatThreadViewSession({
                     <ContextCompressionBanner notice={contextCompressionNotice} />
                   ) : null}
                   <ContextUsageIndicator status={visibleContextStatus} />
-                  {streaming && runtimeStatus ? (
-                    <div
-                      data-testid="chat-runtime-progress"
-                      className="flex items-start gap-2 rounded-lg border border-border/70 bg-muted/60 px-3 py-2 text-sm text-muted-foreground"
-                    >
-                      <Loader2 className="mt-0.5 size-3.5 shrink-0 animate-spin text-primary" />
-                      <p className="leading-5">{runtimeStatus.text}</p>
-                    </div>
-                  ) : null}
                   {enableBatchActions && currentBatchPendingActions.length > 0 ? (
                     <div className="flex items-center justify-between gap-3 rounded-lg border border-border bg-card px-3 py-2">
                       <div className="min-w-0">

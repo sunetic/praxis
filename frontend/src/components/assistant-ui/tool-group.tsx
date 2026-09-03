@@ -17,6 +17,7 @@ import {
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
 import { cn } from "@/lib/utils";
+import { useShellI18n } from "@/i18n/shellI18n";
 
 const ANIMATION_DURATION = 200;
 
@@ -103,7 +104,8 @@ function ToolGroupTrigger({
   count: number;
   active?: boolean;
 }) {
-  const label = `${count} tool ${count === 1 ? "call" : "calls"}`;
+  const { t } = useShellI18n();
+  const label = `${count} ${t(count === 1 ? "tool.group.one" : "tool.group.many")}`;
 
   return (
     <CollapsibleTrigger

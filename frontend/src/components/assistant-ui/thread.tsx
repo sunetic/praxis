@@ -12,6 +12,11 @@ import {
   ReasoningTrigger,
 } from "@/components/assistant-ui/reasoning";
 import { ToolFallback } from "@/components/assistant-ui/tool-fallback";
+import {
+  ToolGroupContent,
+  ToolGroupRoot,
+  ToolGroupTrigger,
+} from "@/components/assistant-ui/tool-group";
 import { TooltipIconButton } from "@/components/assistant-ui/tooltip-icon-button";
 import { Button } from "@/components/ui/button";
 import {
@@ -46,10 +51,10 @@ export type ThreadSuggestion = {
   prompt: string;
 };
 
-export const Thread: FC<{ suggestions?: ThreadSuggestion[]; footerContent?: ReactNode; isWaiting?: boolean; placeholder?: string; readOnly?: boolean }> = ({
+export const Thread: FC<{ suggestions?: ThreadSuggestion[]; footerContent?: ReactNode; statusText?: string; placeholder?: string; readOnly?: boolean }> = ({
   suggestions = [],
   footerContent,
-  isWaiting = false,
+  statusText,
   placeholder,
   readOnly = false,
 }) => {
@@ -79,7 +84,7 @@ export const Thread: FC<{ suggestions?: ThreadSuggestion[]; footerContent?: Reac
               {() => <ThreadMessage />}
             </ThreadPrimitive.Messages>
             <AuiIf condition={(s) => s.thread.isRunning}>
-              {isWaiting && <ThreadThinkingIndicator />}
+              {statusText ? <ThreadThinkingIndicator label={statusText} /> : null}
             </AuiIf>
           </div>
 
@@ -178,6 +183,7 @@ const Composer: FC<{ placeholder?: string }> = ({ placeholder }) => {
         >
           <ComposerAttachments />
           <ComposerPrimitive.Input
+            name="message"
             placeholder={placeholder || t("thread.input.placeholder")}
             className="aui-composer-input max-h-40 min-h-[2.5rem] w-full resize-none bg-transparent px-2 py-1.5 text-sm text-foreground outline-none placeholder:text-muted-foreground/70"
             rows={1}
@@ -254,7 +260,7 @@ const AssistantMessage: FC = () => {
           groupBy={(part) => {
             if (part.type === "reasoning")
               return ["group-chainOfThought", "group-reasoning"];
-            if (part.type === "tool-call") return null;
+            if (part.type === "tool-call") return ["group-tools"];
             return null;
           }}
         >
@@ -271,6 +277,18 @@ const AssistantMessage: FC = () => {
                       <ReasoningText>{children}</ReasoningText>
                     </ReasoningContent>
                   </ReasoningRoot>
+                );
+              }
+              case "group-tools": {
+                if (part.indices.length === 1) return children;
+                const running = part.status.type === "running";
+                return (
+                  <div className="max-w-[560px]">
+                    <ToolGroupRoot variant="muted">
+                      <ToolGroupTrigger count={part.indices.length} active={running} />
+                      <ToolGroupContent>{children}</ToolGroupContent>
+                    </ToolGroupRoot>
+                  </div>
                 );
               }
               case "text":
@@ -387,12 +405,19 @@ const UserActionBar: FC = () => {
   );
 };
 
-const ThreadThinkingIndicator: FC = () => {
+const ThreadThinkingIndicator: FC<{ label: string }> = ({ label }) => {
   return (
-    <div className="flex items-center gap-1.5 px-0.5 text-muted-foreground">
-      <span className="size-1.5 rounded-full bg-current animate-bounce [animation-delay:0ms]" />
-      <span className="size-1.5 rounded-full bg-current animate-bounce [animation-delay:150ms]" />
-      <span className="size-1.5 rounded-full bg-current animate-bounce [animation-delay:300ms]" />
+    <div
+      role="status"
+      data-testid="chat-runtime-status"
+      className="flex min-h-5 items-center gap-2 px-0.5 text-xs text-muted-foreground"
+    >
+      <span aria-hidden className="flex items-center gap-1">
+        <span className="size-1 rounded-full bg-current animate-bounce [animation-delay:0ms]" />
+        <span className="size-1 rounded-full bg-current animate-bounce [animation-delay:150ms]" />
+        <span className="size-1 rounded-full bg-current animate-bounce [animation-delay:300ms]" />
+      </span>
+      <span>{label}</span>
     </div>
   );
 };
@@ -406,6 +431,7 @@ const EditComposer: FC = () => {
     >
       <ComposerPrimitive.Root className="ms-auto flex w-full max-w-[90%] flex-col rounded-xl bg-muted">
         <ComposerPrimitive.Input
+          name="message-edit"
           className="min-h-14 w-full resize-none bg-transparent p-4 text-foreground text-sm outline-none"
           autoFocus
         />

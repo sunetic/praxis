@@ -309,7 +309,9 @@ describe("ChatPage workspace boundary and handoff", () => {
       "由于当前数据源缺少 OCP 集群关联信息，无法直接调用 OCP API 获取监控数据。"
     )
     expect(leading).toBeInTheDocument()
-    expect(await screen.findByText(/工具调用：execute_sql/)).toBeInTheDocument()
+    const toolLabel = await screen.findByText(/工具调用：execute_sql/)
+    expect(toolLabel).toBeInTheDocument()
+    expect(toolLabel.closest("button")).toHaveAttribute("aria-expanded", "false")
     expect(
       await screen.findByText("不过我可以尝试通过数据库查询来获取 CPU 负载信息。")
     ).toBeInTheDocument()
@@ -321,6 +323,59 @@ describe("ChatPage workspace boundary and handoff", () => {
     expect(text.indexOf("工具调用：execute_sql")).toBeLessThan(
       text.indexOf("不过我可以尝试通过数据库查询来获取 CPU 负载信息。")
     )
+  })
+
+  it("groups consecutive tool calls into a collapsed summary", async () => {
+    messagesApi.list.mockResolvedValueOnce([
+      {
+        id: 11,
+        conversation_id: 1,
+        role: "user",
+        content: "检查两个指标",
+        created_at: "2026-03-14T00:00:01.000000",
+      },
+      {
+        id: 12,
+        conversation_id: 1,
+        role: "assistant",
+        content: "检查完成。",
+        content_parts: [
+          { type: "tool_use", id: "tool-1", name: "execute_sql", input: { sql: "SELECT 1" }, result: { success: true } },
+          { type: "tool_use", id: "tool-2", name: "execute_sql", input: { sql: "SELECT 2" }, result: { success: true } },
+          { type: "text", text: "检查完成。" },
+        ],
+        created_at: "2026-03-14T00:00:04.000000",
+      },
+    ])
+
+    render(
+      <MemoryRouter>
+        <ChatPage />
+      </MemoryRouter>
+    )
+
+    const group = await screen.findByRole("button", { name: /2 个工具调用/ })
+    expect(group).toHaveAttribute("aria-expanded", "false")
+    expect(screen.getByText("检查完成。")).toBeInTheDocument()
+  })
+
+  it("shows request analysis as an inline message status", async () => {
+    chatApi.stream.mockImplementationOnce(() => new Promise<Response>(() => undefined))
+
+    const { container } = render(
+      <MemoryRouter>
+        <ChatPage />
+      </MemoryRouter>
+    )
+
+    const input = await screen.findByPlaceholderText("输入问题...")
+    await userEvent.type(input, "检查连接")
+    await userEvent.keyboard("{Enter}")
+
+    const status = await screen.findByTestId("chat-runtime-status")
+    expect(status).toHaveTextContent("Analyzing request...")
+    expect(status.closest('[data-slot="aui_message-group"]')).not.toBeNull()
+    expect(container.querySelector('[data-testid="chat-runtime-progress"]')).toBeNull()
   })
 
   it("does not duplicate persisted progress and tool parts with matching history events", async () => {

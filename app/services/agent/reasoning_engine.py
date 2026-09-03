@@ -548,7 +548,24 @@ class ReasoningEngine:
                     require_tool_call=False,
                 ):
                     if planner_event["type"] == "text":
-                        planner_chunks.append(planner_event["content"])
+                        planner_text = str(planner_event["content"] or "")
+                        if planner_text:
+                            planner_chunks.append(planner_text)
+                            emitted_text += planner_text
+                            yield _event(
+                                type_="assistant",
+                                phase=ReasoningPhase.RESPONDING,
+                                data={
+                                    "text": planner_text,
+                                    "iteration": iteration,
+                                },
+                                meta={
+                                    "iteration": iteration,
+                                    "run_id": run_id,
+                                    "task_run_id": journal.task_run_id,
+                                    "stream_delta": True,
+                                },
+                            )
                     elif planner_event["type"] == "plan_result":
                         plan = planner_event
 
@@ -637,7 +654,8 @@ class ReasoningEngine:
                             plan["tool_calls"].items(), key=lambda item: item[0]
                         )
                     ]
-                    if not initial_progress_emitted:
+                    has_model_narration = bool("".join(planner_chunks).strip())
+                    if not initial_progress_emitted and not has_model_narration:
                         initial_progress_note = _build_initial_progress_note(journal)
                         emitted_progress_notes.add(initial_progress_note)
                         initial_progress_emitted = True
@@ -651,11 +669,15 @@ class ReasoningEngine:
                                 "task_run_id": journal.task_run_id,
                             },
                         )
-                    progress_note = _build_plan_progress_note(
-                        journal,
-                        ordered_calls,
-                        iteration=iteration,
-                        model_narration=plan.get("assistant_text"),
+                    progress_note = (
+                        None
+                        if has_model_narration
+                        else _build_plan_progress_note(
+                            journal,
+                            ordered_calls,
+                            iteration=iteration,
+                            model_narration=None,
+                        )
                     )
                     if progress_note and progress_note not in emitted_progress_notes:
                         emitted_progress_notes.add(progress_note)
@@ -964,7 +986,27 @@ class ReasoningEngine:
                             chat_messages,
                             candidate_text,
                         ):
-                            if continuation_event["type"] == "continuation_result":
+                            if continuation_event["type"] == "text":
+                                continuation_chunk = str(continuation_event["content"] or "")
+                                if continuation_chunk:
+                                    planner_chunks.append(continuation_chunk)
+                                    emitted_text += continuation_chunk
+                                    yield _event(
+                                        type_="assistant",
+                                        phase=ReasoningPhase.RESPONDING,
+                                        data={
+                                            "text": continuation_chunk,
+                                            "iteration": iteration,
+                                        },
+                                        meta={
+                                            "iteration": iteration,
+                                            "run_id": run_id,
+                                            "task_run_id": journal.task_run_id,
+                                            "stream_delta": True,
+                                            "continuation": True,
+                                        },
+                                    )
+                            elif continuation_event["type"] == "continuation_result":
                                 continuation_text = continuation_event["text"]
                         if continuation_text:
                             candidate_text += continuation_text
@@ -973,6 +1015,19 @@ class ReasoningEngine:
                                 "\n\n(Output may have been truncated due to model length limit)"
                             )
                             candidate_text += truncation_notice
+                            planner_chunks.append(truncation_notice)
+                            emitted_text += truncation_notice
+                            yield _event(
+                                type_="assistant",
+                                phase=ReasoningPhase.RESPONDING,
+                                data={"text": truncation_notice, "iteration": iteration},
+                                meta={
+                                    "iteration": iteration,
+                                    "run_id": run_id,
+                                    "task_run_id": journal.task_run_id,
+                                    "stream_delta": True,
+                                },
+                            )
 
                     journal.record_candidate(candidate_text, iteration=iteration)
 
@@ -1077,18 +1132,24 @@ class ReasoningEngine:
                     if transition_err:
                         raise RuntimeError(transition_err)
                     phase = ReasoningPhase.RESPONDING
-                    emitted_text += candidate_text
-                    yield _event(
-                        type_="assistant",
-                        phase=phase,
-                        data={"text": candidate_text, "iteration": iteration},
-                        meta={
-                            "iteration": iteration,
-                            "run_id": run_id,
-                            "task_run_id": journal.task_run_id,
-                            "audit_status": audit_status,
-                        },
-                    )
+                    streamed_candidate = "".join(planner_chunks)
+                    if candidate_text.startswith(streamed_candidate):
+                        remaining_text = candidate_text[len(streamed_candidate) :]
+                    else:
+                        remaining_text = candidate_text
+                    if remaining_text:
+                        emitted_text += remaining_text
+                        yield _event(
+                            type_="assistant",
+                            phase=phase,
+                            data={"text": remaining_text, "iteration": iteration},
+                            meta={
+                                "iteration": iteration,
+                                "run_id": run_id,
+                                "task_run_id": journal.task_run_id,
+                                "audit_status": audit_status,
+                            },
+                        )
                     chat_messages.append({"role": "assistant", "content": candidate_text})
                     journal.status = "completed"
                     final_status = "completed"
@@ -1514,6 +1575,7 @@ class ReasoningEngine:
         tool_calls_data: dict[int, dict[str, Any]] = {}
         chunk_count = 0
         finish_reason: str | None = None
+        visible_stream = _VisibleAssistantStream()
 
         kwargs: dict[str, Any] = {}
         if self.config.reasoning_config:
@@ -1543,8 +1605,10 @@ class ReasoningEngine:
             content = delta.get("content", "")
             if content and not tool_calls:
                 full_content += content
-                assistant_chunks.append(content)
-                yield {"type": "text", "content": content}
+                visible_content = visible_stream.push(content)
+                if visible_content:
+                    assistant_chunks.append(visible_content)
+                    yield {"type": "text", "content": visible_content}
 
             if tool_calls:
                 for tc in tool_calls:
@@ -1575,7 +1639,11 @@ class ReasoningEngine:
                 for i, tc in enumerate(xml_calls):
                     tool_calls_data[len(tool_calls_data) + i] = tc
                 full_content = cleaned_text
-                assistant_chunks = [cleaned_text] if cleaned_text else []
+
+        final_visible_content = visible_stream.finish(full_content)
+        if final_visible_content:
+            assistant_chunks.append(final_visible_content)
+            yield {"type": "text", "content": final_visible_content}
 
         yield {
             "type": "plan_result",
@@ -1661,6 +1729,56 @@ _XML_PARAMETER_RE = re.compile(
     re.DOTALL,
 )
 _TRAILING_TOOL_CALL_RE = re.compile(r"\s*</tool_call>\s*$")
+
+
+class _VisibleAssistantStream:
+    """Incrementally expose assistant prose while withholding XML tool markup."""
+
+    _MARKER = "<function="
+
+    def __init__(self) -> None:
+        self._buffer = ""
+        self._emitted = ""
+        self._suppressing = False
+
+    def push(self, chunk: str) -> str:
+        if not chunk:
+            return ""
+        self._buffer += chunk
+        if self._suppressing:
+            return ""
+
+        marker_index = self._buffer.find(self._MARKER)
+        if marker_index >= 0:
+            visible = self._buffer[:marker_index].rstrip()
+            self._buffer = self._buffer[len(visible) :]
+            self._suppressing = True
+            self._emitted += visible
+            return visible
+
+        held_length = 0
+        max_prefix = min(len(self._buffer), len(self._MARKER) - 1)
+        for prefix_length in range(max_prefix, 0, -1):
+            if self._buffer.endswith(self._MARKER[:prefix_length]):
+                held_length = prefix_length
+                break
+
+        split_at = len(self._buffer) - held_length
+        candidate = self._buffer[:split_at]
+        visible = candidate.rstrip()
+        self._buffer = self._buffer[len(visible) :]
+        self._emitted += visible
+        return visible
+
+    def finish(self, final_text: str) -> str:
+        if final_text.startswith(self._emitted):
+            visible = final_text[len(self._emitted) :]
+        else:
+            visible = final_text
+        self._buffer = ""
+        self._emitted += visible
+        self._suppressing = False
+        return visible
 
 
 def _tool_timeout_result(

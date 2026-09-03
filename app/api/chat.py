@@ -607,6 +607,7 @@ async def chat_stream(
         _cancelled = False
         terminal_event_persisted = False
         latest_task_state: dict[str, Any] | None = None
+        assistant_event_buffer = ""
         next_part_seq = 1
 
         def _is_cancelled() -> bool:
@@ -711,6 +712,20 @@ async def chat_stream(
                 ]
             )
 
+        async def _persist_assistant_event_buffer() -> bool:
+            """Persist one event per contiguous text segment, not per model token."""
+            nonlocal assistant_event_buffer
+            if not assistant_event_buffer:
+                return False
+            buffered_text = assistant_event_buffer
+            assistant_event_buffer = ""
+            await _persist_runtime_event(
+                "assistant",
+                "responding",
+                {"text": buffered_text, "stream_delta": True},
+            )
+            return True
+
         try:
             preview_status, compression_required = context_manager.preview(
                 db,
@@ -800,9 +815,13 @@ async def chat_stream(
                 event_data = event.get("data") if isinstance(event.get("data"), dict) else {}
                 event_meta = event.get("meta") or {}
 
+                if event_type != "assistant" and await _persist_assistant_event_buffer():
+                    await _persist_turn_snapshot()
+
                 if event_type == "assistant_progress":
                     progress_text = str(event_data.get("text") or "").strip()
-                    if progress_text:
+                    progress_stage = str(event_data.get("stage") or "working")
+                    if progress_text and progress_stage in {"planning", "acting"}:
                         last = pending_parts[-1] if pending_parts else None
                         if not (
                             last
@@ -813,7 +832,7 @@ async def chat_stream(
                                 {
                                     "type": "progress",
                                     "text": progress_text,
-                                    "stage": str(event_data.get("stage") or "working"),
+                                    "stage": progress_stage,
                                 }
                             )
                             await _persist_turn_snapshot()
@@ -890,7 +909,7 @@ async def chat_stream(
                     raw_piece = event_data.get("text", "")
                     if raw_piece:
                         assistant_content += raw_piece
-                        await _persist_turn_snapshot()
+                        assistant_event_buffer += raw_piece
                 elif event_type == "tool_result":
                     event_result = event_data.get("result") or {}
                     event_result_data = event_result.get("data") or {}
@@ -1166,7 +1185,6 @@ async def chat_stream(
                 if mapped_type in {
                     "thinking",
                     "plan",
-                    "assistant",
                     "assistant_progress",
                     "step_start",
                     "step_result",
@@ -1193,6 +1211,7 @@ async def chat_stream(
                 if request is not None and await request.is_disconnected():
                     _cancelled = True
                     logger.info("client_disconnected %s", fmt_kv(conversation_id=conversation_id))
+                    await _persist_assistant_event_buffer()
                     await _persist_turn_snapshot()
                     resumable_state = dict(latest_task_state or {})
                     if resumable_state:
@@ -1232,6 +1251,7 @@ async def chat_stream(
             if resumable_state:
                 resumable_state["status"] = "checkpointed"
             try:
+                await asyncio.shield(_persist_assistant_event_buffer())
                 await asyncio.shield(_persist_turn_snapshot())
                 await asyncio.shield(
                     _persist_runtime_event(
@@ -1298,6 +1318,7 @@ async def chat_stream(
                     "error_class": "runtime_error",
                 },
             )
+            await _persist_assistant_event_buffer()
             await _persist_turn_snapshot()
             await _persist_runtime_event(
                 "done",
@@ -1314,6 +1335,7 @@ async def chat_stream(
             terminal_event_persisted = True
         finally:
             try:
+                await asyncio.shield(_persist_assistant_event_buffer())
                 await asyncio.shield(_persist_turn_snapshot())
                 if not terminal_event_persisted:
                     await asyncio.shield(

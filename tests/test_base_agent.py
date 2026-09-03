@@ -393,7 +393,14 @@ def test_build_retry_hint_includes_planning_objective_summary() -> None:
 
 @pytest.mark.anyio
 async def test_simple_text_response() -> None:
-    llm = FakeLLM(responses=[[_text_chunk("Hello world!")]])
+    llm = FakeLLM(
+        responses=[
+            [
+                _text_chunk("Hello ", finish_reason=None),
+                _text_chunk("world!"),
+            ]
+        ]
+    )
     engine = _make_engine(llm=llm, config=EngineConfig(max_iterations=5))
 
     events = await _collect(
@@ -409,7 +416,8 @@ async def test_simple_text_response() -> None:
     assert events[-1]["type"] == "done"
 
     text_events = [event for event in events if event["type"] == "assistant"]
-    assert text_events[0]["data"]["text"] == "Hello world!"
+    assert [event["data"]["text"] for event in text_events] == ["Hello", " world!"]
+    assert "".join(event["data"]["text"] for event in text_events) == "Hello world!"
 
 
 @pytest.mark.anyio
@@ -814,18 +822,19 @@ async def test_tool_task_emits_task_plan_then_model_transition_before_tool() -> 
         tools=[{"type": "function", "function": {"name": "call_praxis_service"}}],
     )
 
-    progress_indexes = [
-        index for index, event in enumerate(events) if event["type"] == "assistant_progress"
-    ]
+    narration_index = next(
+        index
+        for index, event in enumerate(events)
+        if event["type"] == "assistant" and event["data"]["text"] == narration
+    )
     tool_start_index = next(
         index for index, event in enumerate(events) if event["type"] == "tool_start"
     )
-    progress_notes = [events[index]["data"]["text"] for index in progress_indexes]
-    assert progress_notes[0] == (
-        "我先确认实际范围和可用信息，再用最直接的查询取得证据，然后给你简洁结论。"
+    assert narration_index < tool_start_index
+    assert not any(
+        event["type"] == "assistant_progress" and event["data"]["text"] == narration
+        for event in events
     )
-    assert progress_notes[1] == narration
-    assert progress_indexes[0] < progress_indexes[1] < tool_start_index
     system_prompts = [message["content"] for message in llm.calls[0] if message["role"] == "system"]
     assert any("Visible action narration" in prompt for prompt in system_prompts)
     assert any(

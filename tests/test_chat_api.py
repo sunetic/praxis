@@ -1757,8 +1757,14 @@ async def test_chat_stream_persists_assistant_segments_around_tool_events(
                 "type": "assistant",
                 "phase": "responding",
                 "data": {
-                    "text": "由于当前数据源缺少 OCP 集群关联信息，无法直接调用 OCP API 获取监控数据。"
+                    "text": "由于当前数据源缺少 OCP 集群关联信息，"
                 },
+                "meta": {},
+            },
+            {
+                "type": "assistant",
+                "phase": "responding",
+                "data": {"text": "无法直接调用 OCP API 获取监控数据。"},
                 "meta": {},
             },
             {

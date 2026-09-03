@@ -1039,18 +1039,19 @@ export function useChatController({
             const progressText = String(d.text || normalized.summary || "").trim()
             const stage = String(d.stage || "working")
             if (progressText) {
-              setRuntimeStatus({
-                phase: stage === "planning" || stage === "acting" ? "plan" : "reflect",
-                text: progressText,
-              })
-              const lastPart = streamingPartsRef.current[streamingPartsRef.current.length - 1]
-              if (!(lastPart?.type === "progress" && lastPart.text === progressText)) {
-                streamingPartsRef.current.push({
-                  type: "progress",
-                  text: progressText,
-                  stage,
-                })
-                flushStreamingParts()
+              if (stage === "planning" || stage === "acting") {
+                setRuntimeStatus(null)
+                const lastPart = streamingPartsRef.current[streamingPartsRef.current.length - 1]
+                if (!(lastPart?.type === "progress" && lastPart.text === progressText)) {
+                  streamingPartsRef.current.push({
+                    type: "progress",
+                    text: progressText,
+                    stage,
+                  })
+                  flushStreamingParts()
+                }
+              } else {
+                setRuntimeStatus({ phase: "reflect", text: progressText })
               }
             }
             return
@@ -1168,10 +1169,14 @@ export function useChatController({
             const nextDatasourceId = contextDelta && typeof contextDelta.datasource_id === "number" ? contextDelta.datasource_id : null
             if (nextDatasourceId) onDatasourceContextChanged?.(nextDatasourceId)
 
-            setRuntimeStatus({
-              phase: stepKind === "workflow" ? "plan" : "tool",
-              text: stepMessage || (stepName ? `Executing ${stepName}...` : "Executing step..."),
-            })
+            setRuntimeStatus(
+              stepKind === "tool" || stepKind === "action"
+                ? null
+                : {
+                    phase: "plan",
+                    text: stepMessage || (stepName ? `Executing ${stepName}...` : "Executing step..."),
+                  }
+            )
             if (stepKind !== "tool" && stepKind !== "action") return
 
             const existingIdx = streamingPartsRef.current.findIndex(

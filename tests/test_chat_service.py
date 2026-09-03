@@ -192,7 +192,7 @@ async def test_chat_service_iteration_limit_returns_explicit_error():
 
 
 @pytest.mark.anyio
-async def test_chat_service_does_not_emit_planner_text_during_tool_iteration():
+async def test_chat_service_streams_planner_narration_during_tool_iteration():
     content_chunk = {
         "choices": [
             {
@@ -225,7 +225,16 @@ async def test_chat_service_does_not_emit_planner_text_during_tool_iteration():
         for event in events
         if event.get("type") == "assistant"
     )
-    assert "I will call tool now" not in assistant_text
+    narration_index = next(
+        index
+        for index, event in enumerate(events)
+        if event.get("type") == "assistant"
+        and (event.get("data") or {}).get("text") == "I will call tool now"
+    )
+    tool_index = next(
+        index for index, event in enumerate(events) if event.get("type") == "tool_start"
+    )
+    assert narration_index < tool_index
     assert "unknown_tool" in assistant_text
     assert any(
         event.get("type") == "assistant" and (event.get("data") or {}).get("incomplete") is True

@@ -194,6 +194,8 @@ const ZH_CN_COPY = {
   "tool.used": "工具调用：",
   "tool.cancelled": "已取消工具：",
   "tool.result": "结果：",
+  "tool.group.one": "个工具调用",
+  "tool.group.many": "个工具调用",
 
   "chat.batch.countOne": "1 条待确认变更",
   "chat.batch.countMany": "条待确认变更",
@@ -1237,6 +1239,8 @@ const EN_US_COPY: Record<ShellCopyKey, string> = {
   "tool.used": "Used tool: ",
   "tool.cancelled": "Cancelled tool: ",
   "tool.result": "Result:",
+  "tool.group.one": "tool call",
+  "tool.group.many": "tool calls",
 
   "chat.batch.countOne": "1 pending change",
   "chat.batch.countMany": "pending changes",
