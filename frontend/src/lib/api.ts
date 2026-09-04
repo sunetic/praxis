@@ -1060,6 +1060,7 @@ export type PlatformSettings = {
   external_cli_pre_flags?: string
   external_cli_post_flags?: string
   sql_allow_mutating?: boolean
+  ai_action_confirmation_bypass?: boolean
   ai_api_key_configured: boolean
   ai_model?: string
   ai_base_url?: string

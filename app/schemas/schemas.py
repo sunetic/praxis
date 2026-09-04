@@ -905,6 +905,7 @@ class PlatformSettingsUpdateRequest(BaseModel):
     external_cli_pre_flags: str | None = None
     external_cli_post_flags: str | None = None
     sql_allow_mutating: bool | None = None
+    ai_action_confirmation_bypass: bool | None = None
     context_window_tokens: int | None = Field(default=None, ge=8_192, le=2_000_000)
     context_compression_threshold_percent: int | None = Field(default=None, ge=50, le=95)
 
@@ -925,6 +926,7 @@ class PlatformSettingsResponse(BaseModel):
     external_cli_pre_flags: str = ""
     external_cli_post_flags: str = ""
     sql_allow_mutating: bool = False
+    ai_action_confirmation_bypass: bool = False
     ai_api_key_configured: bool = False
     ai_model: str | None = None
     ai_base_url: str | None = None

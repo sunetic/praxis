@@ -47,6 +47,14 @@ def test_patch_settings_normalizes_external_cli_command(tmp_path: Path, monkeypa
         assert defaults.status_code == 200, defaults.text
         assert defaults.json()["context_window_tokens"] == 128_000
         assert defaults.json()["context_compression_threshold_percent"] == 75
+        assert defaults.json()["ai_action_confirmation_bypass"] is False
+
+        bypass_update = client.patch(
+            "/api/v1/settings",
+            json={"ai_action_confirmation_bypass": True},
+        )
+        assert bypass_update.status_code == 200, bypass_update.text
+        assert bypass_update.json()["ai_action_confirmation_bypass"] is True
 
         context_update = client.patch(
             "/api/v1/settings",

@@ -14,6 +14,7 @@ DEFAULT_PLATFORM_SETTINGS: dict[str, Any] = {
     "external_cli_pre_flags": "",
     "external_cli_post_flags": "",
     "sql_allow_mutating": False,
+    "ai_action_confirmation_bypass": False,
     "context_window_tokens": 128_000,
     "context_compression_threshold_percent": 75,
 }

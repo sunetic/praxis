@@ -23,6 +23,8 @@ describe("SettingsPage build engine", () => {
       external_cli_command: "claude",
       ai_api_key_configured: true,
       ai_model: "gpt-test",
+      sql_allow_mutating: true,
+      ai_action_confirmation_bypass: false,
       context_window_tokens: 128000,
       context_compression_threshold_percent: 75,
     })
@@ -90,7 +92,6 @@ describe("SettingsPage build engine", () => {
   })
 
   it("blocks saving an unsafe context threshold", async () => {
-    const user = userEvent.setup()
     render(<SettingsPage />)
     const thresholdInput = await screen.findByLabelText("自动压缩阈值")
 
@@ -137,5 +138,35 @@ describe("SettingsPage build engine", () => {
     await waitFor(() => expect(settingsApi.patch).toHaveBeenCalledWith(expect.objectContaining({
       ai_api_key: "sk-replacement",
     })))
+  })
+
+  it("enables AI action confirmation bypass from the safety tab", async () => {
+    const user = userEvent.setup()
+    render(<SettingsPage />)
+
+    await user.click(screen.getByRole("tab", { name: "安全" }))
+    const bypass = await screen.findByRole("switch", { name: "Bypass 模式（跳过确认）" })
+    expect(bypass).not.toBeChecked()
+    expect(screen.getByText("变更需确认")).toBeInTheDocument()
+
+    await user.click(bypass)
+
+    await waitFor(() => expect(settingsApi.patch).toHaveBeenCalledWith({
+      ai_action_confirmation_bypass: true,
+    }))
+    expect(screen.getByText("自动执行变更")).toBeInTheDocument()
+  })
+
+  it("restores the bypass switch when saving fails", async () => {
+    settingsApi.patch.mockRejectedValueOnce(new Error("save failed"))
+    const user = userEvent.setup()
+    render(<SettingsPage />)
+
+    await user.click(screen.getByRole("tab", { name: "安全" }))
+    const bypass = await screen.findByRole("switch", { name: "Bypass 模式（跳过确认）" })
+    await user.click(bypass)
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("保存失败，设置已恢复。请重试。")
+    expect(bypass).not.toBeChecked()
   })
 })

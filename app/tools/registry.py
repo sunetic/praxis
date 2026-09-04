@@ -120,9 +120,10 @@ class ExecuteSQLTool(BaseTool):
     name = "execute_sql"
     description = (
         "Execute SQL and return the results. "
-        "For mutating SQL (INSERT/UPDATE/DELETE/DDL), a confirmation card is shown to the user "
-        "and the tool returns success=false with code='pending_confirmation' — meaning the SQL has NOT been "
-        "executed yet and is awaiting user approval. "
+        "Mutating SQL (INSERT/UPDATE/DELETE/DDL) is subject to the platform's write and confirmation policies. "
+        "By default, a confirmation card is shown and the tool returns success=false with "
+        "code='pending_confirmation' — meaning the SQL has NOT been executed yet and is awaiting user approval. "
+        "When the administrator enables confirmation bypass, validated write operations execute immediately. "
         "IMPORTANT: when you receive pending_confirmation, do NOT claim the SQL succeeded or verify results. "
         "Briefly acknowledge that the confirmation dialog has been shown and wait for the user to confirm or cancel. "
         "It is recommended to provide the intent field with a brief, user-readable description of the query purpose."
@@ -179,7 +180,7 @@ class ExecuteSQLTool(BaseTool):
             if is_mutating:
                 from app.services.platform.settings_store import get_setting
 
-                allow_mutating = get_setting(db, "sql_allow_mutating")
+                allow_mutating = bool(get_setting(db, "sql_allow_mutating"))
                 if not allow_mutating:
                     logger.info(
                         "tool_execute_blocked_safety_mode %s",
@@ -195,19 +196,7 @@ class ExecuteSQLTool(BaseTool):
                         },
                     )
 
-                conversation_id = params.get("conversation_id")
                 batch_id = str(params.get("request_id") or "").strip()
-                if not isinstance(conversation_id, int):
-                    return ToolResult(
-                        success=False,
-                        error={
-                            "code": "confirmation_context_missing",
-                            "category": "guardrail_error",
-                            "message": "Mutating SQL requires conversation context for confirmation.",
-                            "retry_hint": "Retry from chat conversation flow with confirmation card support.",
-                        },
-                    )
-
                 tenant_fingerprint = await probe_tenant_fingerprint(
                     pool,
                     routed.datasource,
@@ -230,6 +219,42 @@ class ExecuteSQLTool(BaseTool):
                     resolved_role=routed.resolved_role,
                     tenant_fingerprint=tenant_fingerprint,
                 )
+                confirmation_bypassed = bool(get_setting(db, "ai_action_confirmation_bypass"))
+                if confirmation_bypassed:
+                    logger.warning(
+                        "tool_execute_confirmation_bypassed %s",
+                        fmt_kv(
+                            tool=self.name,
+                            datasource_id=datasource_id,
+                            resolved_datasource_id=routed.datasource.id,
+                            role=routed.resolved_role,
+                            execution_fingerprint=execution_fingerprint,
+                        ),
+                    )
+                    return await self._execute_routed_sql(
+                        pool=pool,
+                        routed=routed,
+                        sql=sql,
+                        datasource_id=datasource_id,
+                        requested_role=role,
+                        bypass_metadata={
+                            "confirmation_bypassed": True,
+                            "execution_fingerprint": execution_fingerprint,
+                            "tenant_fingerprint": tenant_fingerprint,
+                        },
+                    )
+
+                conversation_id = params.get("conversation_id")
+                if not isinstance(conversation_id, int):
+                    return ToolResult(
+                        success=False,
+                        error={
+                            "code": "confirmation_context_missing",
+                            "category": "guardrail_error",
+                            "message": "Mutating SQL requires conversation context for confirmation.",
+                            "retry_hint": "Retry from chat conversation flow with confirmation card support.",
+                        },
+                    )
                 existing_actions = (
                     db.query(models.PendingAction)
                     .filter(
@@ -335,23 +360,13 @@ class ExecuteSQLTool(BaseTool):
                     },
                 )
 
-            result = await pool.execute_query(routed.datasource, sql, role=routed.resolved_role)
-            result["resolved_datasource_id"] = routed.datasource.id
-            result["resolved_role"] = routed.resolved_role
-            result["route_reason"] = routed.reason
-            result["cluster_key"] = routed.datasource.cluster_key
-
-            logger.info(
-                "tool_execute_success %s",
-                fmt_kv(
-                    tool=self.name,
-                    datasource_id=datasource_id,
-                    resolved_datasource_id=routed.datasource.id,
-                    role=routed.resolved_role,
-                    row_count=result.get("row_count"),
-                ),
+            return await self._execute_routed_sql(
+                pool=pool,
+                routed=routed,
+                sql=sql,
+                datasource_id=datasource_id,
+                requested_role=role,
             )
-            return ToolResult(success=True, data=result)
         except Exception as e:
             logger.exception(
                 "tool_execute_error %s error=%s",
@@ -363,6 +378,42 @@ class ExecuteSQLTool(BaseTool):
             )
         finally:
             db.close()
+
+    async def _execute_routed_sql(
+        self,
+        *,
+        pool: Any,
+        routed: Any,
+        sql: str,
+        datasource_id: int,
+        requested_role: str,
+        bypass_metadata: dict[str, Any] | None = None,
+    ) -> ToolResult:
+        result = await pool.execute_query(
+            routed.datasource,
+            sql,
+            role=routed.resolved_role,
+        )
+        result["resolved_datasource_id"] = routed.datasource.id
+        result["resolved_role"] = routed.resolved_role
+        result["route_reason"] = routed.reason
+        result["cluster_key"] = routed.datasource.cluster_key
+        if bypass_metadata:
+            result.update(bypass_metadata)
+
+        logger.info(
+            "tool_execute_success %s",
+            fmt_kv(
+                tool=self.name,
+                datasource_id=datasource_id,
+                resolved_datasource_id=routed.datasource.id,
+                role=routed.resolved_role,
+                requested_role=requested_role,
+                confirmation_bypassed=bool(bypass_metadata),
+                row_count=result.get("row_count"),
+            ),
+        )
+        return ToolResult(success=True, data=result)
 
 
 class ExplainSQLTool(BaseTool):
