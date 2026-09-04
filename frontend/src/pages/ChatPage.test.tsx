@@ -207,6 +207,141 @@ describe("ChatPage workspace boundary and handoff", () => {
     expect(screen.queryByTestId("build-preview-pane")).not.toBeInTheDocument()
   })
 
+  it("renders approval inside the tool message and pauses the composer", async () => {
+    const user = userEvent.setup()
+    chatApi.confirmPendingAction.mockResolvedValue({
+      success: false,
+      status: "failed",
+      should_resume: true,
+    })
+    const pendingResult = {
+      success: false,
+      data: {
+        requires_confirmation: true,
+        action_type: "execute_sql",
+        action_token: "token-1",
+      },
+      error: {
+        code: "pending_confirmation",
+        message: "SQL has not been executed yet.",
+      },
+    }
+    messagesApi.list.mockResolvedValue([
+      {
+        id: 11,
+        conversation_id: 1,
+        role: "assistant",
+        content: "请确认这次写操作。",
+        content_parts: [
+          { type: "text", text: "请确认这次写操作。" },
+          {
+            type: "tool_use",
+            id: "tool-1",
+            name: "execute_sql",
+            input: { sql: "UPDATE demo_users SET age = age + 1 WHERE id = 1" },
+            result: pendingResult,
+            pending_action_token: "token-1",
+            pending_action_status: "pending",
+          },
+        ],
+        created_at: "2026-03-14T00:00:01Z",
+      },
+    ])
+    chatApi.listPendingActions.mockResolvedValue([
+      {
+        token: "token-1",
+        action_type: "execute_sql",
+        status: "pending",
+        intent: "更新测试用户年龄",
+        sql_preview: "UPDATE demo_users SET age = age + 1 WHERE id = 1",
+        cluster_key: "local-mysql-8.4",
+        resolved_role: "user",
+      },
+    ])
+
+    render(
+      <MemoryRouter>
+        <ChatPage />
+      </MemoryRouter>
+    )
+
+    const confirmButton = await screen.findByRole("button", { name: "确认执行" })
+    expect(confirmButton.closest('[data-slot="tool-approval"]')).not.toBeNull()
+    expect(screen.getByText("更新测试用户年龄")).toBeInTheDocument()
+    expect(screen.getByText("确认前对话会暂停")).toBeInTheDocument()
+    expect(screen.queryByPlaceholderText("输入问题...")).not.toBeInTheDocument()
+    expect(screen.queryByText("1 条待确认变更")).not.toBeInTheDocument()
+
+    await user.click(confirmButton)
+    await waitFor(() => {
+      expect(chatApi.confirmPendingAction).toHaveBeenCalledWith(1, "token-1")
+    })
+    await waitFor(() => {
+      expect(chatApi.stream).toHaveBeenCalledWith(
+        1,
+        "",
+        expect.objectContaining({ resumeActionToken: "token-1" })
+      )
+    })
+    expect(messagesApi.create).not.toHaveBeenCalled()
+  })
+
+  it("reconciles a stale pending message with its final execution event", async () => {
+    messagesApi.list.mockResolvedValue([
+      {
+        id: 12,
+        conversation_id: 1,
+        role: "assistant",
+        content: "请确认建表操作。",
+        content_parts: [
+          { type: "text", text: "请确认建表操作。" },
+          {
+            type: "tool_use",
+            id: "tool-1",
+            name: "execute_sql",
+            input: { sql: "CREATE TABLE demo_probe (id INT PRIMARY KEY)" },
+            result: {
+              success: false,
+              data: { requires_confirmation: true, action_token: "token-1" },
+              error: { code: "pending_confirmation", message: "Awaiting confirmation." },
+            },
+            pending_action_token: "token-1",
+            pending_action_status: "confirmed",
+          },
+        ],
+        created_at: "2026-03-14T00:00:01Z",
+      },
+    ])
+    chatApi.listEvents.mockResolvedValue([
+      {
+        id: 401,
+        conversation_id: 1,
+        event_type: "step_result",
+        created_at: "2026-03-14T00:00:02Z",
+        payload: {
+          step_id: "tool-1",
+          name: "execute_sql",
+          confirmed_action_token: "token-1",
+          result: {
+            success: true,
+            data: { columns: [], rows: [], row_count: 0 },
+            error: null,
+          },
+        },
+      },
+    ])
+
+    render(
+      <MemoryRouter>
+        <ChatPage />
+      </MemoryRouter>
+    )
+
+    expect(await screen.findByText("执行成功，返回 0 条记录")).toBeInTheDocument()
+    expect(screen.queryByText(/执行失败/)).not.toBeInTheDocument()
+    expect(screen.getByPlaceholderText("输入问题...")).toBeInTheDocument()
+  })
+
   it("keeps the main chat column shrinkable for long content", async () => {
     const { container } = render(
       <MemoryRouter>

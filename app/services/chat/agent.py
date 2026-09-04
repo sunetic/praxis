@@ -86,6 +86,7 @@ class ChatCoreAgent:
         compression_threshold_tokens: int | None = None,
         is_cancelled: Callable[[], bool] | None = None,
         task_state: dict[str, Any] | None = None,
+        resumed_execution: dict[str, Any] | None = None,
     ) -> AsyncGenerator[dict[str, Any], None]:
         chat_with_tools = self._chat_service.chat_with_tools
         chat_signature = inspect.signature(chat_with_tools)
@@ -106,6 +107,8 @@ class ChatCoreAgent:
             kwargs["is_cancelled"] = is_cancelled
         if "task_state" in chat_signature.parameters:
             kwargs["task_state"] = task_state
+        if "resumed_execution" in chat_signature.parameters:
+            kwargs["resumed_execution"] = resumed_execution
         async for event in chat_with_tools(messages, **kwargs):
             yield event
 

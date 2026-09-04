@@ -41,6 +41,44 @@ from app.services.platform.prompt_loader import PromptLoader
 
 logger = get_logger("agent.reasoning_engine")
 
+_AGENT_TASK_COMPLETE_TOOL_NAME = "agent_task_complete"
+_AGENT_TASK_COMPLETE_TOOL = {
+    "type": "function",
+    "function": {
+        "name": _AGENT_TASK_COMPLETE_TOOL_NAME,
+        "description": (
+            "End a resumed Agent task after considering the entire original objective. "
+            "Use this control signal only when the objective is complete or no safe progress "
+            "is possible without new user input or external authority."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "outcome": {
+                    "type": "string",
+                    "enum": ["completed", "blocked"],
+                    "description": (
+                        "completed when the original objective is satisfied; blocked only when "
+                        "progress requires user input or external authority."
+                    ),
+                },
+                "reason": {
+                    "type": "string",
+                    "description": "Concise evidence-based reason for ending the resumed run.",
+                },
+                "final_response": {
+                    "type": "string",
+                    "description": (
+                        "Self-contained user-facing final response. For blocked outcomes, include "
+                        "the exact blocker and the smallest action needed from the user."
+                    ),
+                },
+            },
+            "required": ["outcome", "reason", "final_response"],
+        },
+    },
+}
+
 __all__ = [
     "EngineConfig",
     "ReasoningEngine",
@@ -223,6 +261,7 @@ class ReasoningEngine:
         system_prompt: str | None = None,
         is_cancelled: Callable[[], bool] | None = None,
         task_state: dict[str, Any] | None = None,
+        resumed_execution: dict[str, Any] | None = None,
     ) -> AsyncGenerator[dict[str, Any], None]:
         started_at = time.monotonic()
         self._run_usage = {
@@ -272,11 +311,37 @@ class ReasoningEngine:
             if not contract.acceptance_criteria:
                 contract = _build_request_goal(messages)
             journal = TaskJournal.create(contract)
+        resume_decision: dict[str, Any] | None = None
+        if resumed and isinstance(resumed_execution, dict):
+            resume_observation = Observation.from_execution(resumed_execution)
+            resume_decision = journal.evaluate_observations(
+                [resume_observation],
+                iteration=max(1, journal.metrics.iterations + 1),
+                per_episode_retry_budget=cfg.max_reflections,
+                transient_retry_budget=cfg.max_transient_retries,
+                max_no_progress_rounds=cfg.max_no_progress_rounds,
+            )
         if resumed:
-            journal.apply_user_correction(messages)
-            if journal.status in {"checkpointed", "stalled", "incomplete"}:
+            if resumed_execution is None:
+                journal.apply_user_correction(messages)
+            if resume_decision is None and journal.status in {
+                "checkpointed",
+                "stalled",
+                "incomplete",
+            }:
                 journal.status = "running"
             chat_messages.append({"role": "system", "content": journal.context_block()})
+            if resume_decision and resume_decision.get("action") == "retry":
+                retry_hint = _build_retry_system_hint(
+                    [resumed_execution],
+                    int(resume_decision.get("failure_episode_attempts") or 1),
+                )
+                if retry_hint:
+                    chat_messages.append({"role": "system", "content": retry_hint})
+        require_explicit_terminal_signal = bool(resumed_execution is not None and tools)
+        planner_tools = list(tools or [])
+        if require_explicit_terminal_signal:
+            planner_tools.append(_AGENT_TASK_COMPLETE_TOOL)
         if journal.contract.complex:
             chat_messages.append(
                 {
@@ -331,6 +396,7 @@ class ReasoningEngine:
         progress_bonus_iterations = 0
         repeated_tool_rounds = 0
         last_tool_signature = ""
+        terminal_signal_misses = 0
         emitted_progress_notes: set[str] = set()
         initial_progress_emitted = False
         run_id = str(uuid.uuid4())
@@ -544,8 +610,8 @@ class ReasoningEngine:
                 planner_chunks: list[str] = []
                 async for planner_event in self._planner_step(
                     chat_messages,
-                    tools,
-                    require_tool_call=False,
+                    planner_tools,
+                    require_tool_call=require_explicit_terminal_signal,
                 ):
                     if planner_event["type"] == "text":
                         planner_text = str(planner_event["content"] or "")
@@ -602,6 +668,123 @@ class ReasoningEngine:
                         "task_run_id": journal.task_run_id,
                     },
                 )
+
+                if require_explicit_terminal_signal and not plan["tool_calls"]:
+                    terminal_signal_misses += 1
+                    candidate_text = str(plan.get("assistant_text") or "").strip()
+                    if candidate_text:
+                        journal.record_candidate(candidate_text, iteration=iteration)
+                        chat_messages.append({"role": "assistant", "content": candidate_text})
+                    logger.warning(
+                        "reasoning_resume_terminal_missing %s",
+                        fmt_kv(
+                            run_id=run_id,
+                            iteration=iteration,
+                            misses=terminal_signal_misses,
+                        ),
+                    )
+                    if terminal_signal_misses <= cfg.max_no_progress_rounds:
+                        chat_messages.append(
+                            {
+                                "role": "system",
+                                "content": PromptLoader.render(
+                                    "agent/prompts/resume_terminal_repair.tpl"
+                                ),
+                            }
+                        )
+                        phase = ReasoningPhase.THINKING
+                        continue
+
+                    journal.status = "checkpointed"
+                    final_status = "incomplete"
+                    completion_mode = "partial"
+                    yield _checkpoint_event(
+                        journal=journal,
+                        phase=phase,
+                        iteration=iteration,
+                        run_id=run_id,
+                        reason_code="resume_terminal_signal_missing",
+                        reason=(
+                            "The model repeatedly omitted the required next-action or completion "
+                            "signal; current progress was retained for a later resume."
+                        ),
+                    )
+                    phase = ReasoningPhase.RESPONDING
+                    break
+
+                if require_explicit_terminal_signal and plan["tool_calls"]:
+                    terminal_calls: list[dict[str, Any]] = []
+                    domain_calls: dict[int, dict[str, Any]] = {}
+                    for call_index, raw_tool_call in plan["tool_calls"].items():
+                        normalized_call = _normalize_tool_call(raw_tool_call)
+                        if normalized_call["name"] == _AGENT_TASK_COMPLETE_TOOL_NAME:
+                            terminal_calls.append(normalized_call)
+                        else:
+                            domain_calls[call_index] = raw_tool_call
+
+                    if terminal_calls and domain_calls:
+                        logger.warning(
+                            "reasoning_resume_terminal_mixed_with_tools %s",
+                            fmt_kv(run_id=run_id, iteration=iteration),
+                        )
+                        plan["tool_calls"] = domain_calls
+                    elif terminal_calls:
+                        terminal = terminal_calls[0]
+                        terminal_arguments = (
+                            terminal["arguments"] if terminal.get("ok") else {}
+                        )
+                        outcome = str(terminal_arguments.get("outcome") or "").strip()
+                        reason = str(terminal_arguments.get("reason") or "").strip()
+                        final_response = str(
+                            terminal_arguments.get("final_response") or ""
+                        ).strip()
+                        if (
+                            outcome not in {"completed", "blocked"}
+                            or not reason
+                            or not final_response
+                        ):
+                            logger.warning(
+                                "reasoning_resume_terminal_invalid %s",
+                                fmt_kv(run_id=run_id, iteration=iteration),
+                            )
+                            chat_messages.append(
+                                {
+                                    "role": "system",
+                                    "content": PromptLoader.render(
+                                        "agent/prompts/resume_terminal_repair.tpl"
+                                    ),
+                                }
+                            )
+                            phase = ReasoningPhase.THINKING
+                            continue
+
+                        if final_response not in str(plan.get("assistant_text") or ""):
+                            emitted_text += final_response
+                            yield _event(
+                                type_="assistant",
+                                phase=ReasoningPhase.RESPONDING,
+                                data={"text": final_response, "iteration": iteration},
+                                meta={
+                                    "iteration": iteration,
+                                    "run_id": run_id,
+                                    "task_run_id": journal.task_run_id,
+                                    "explicit_terminal_signal": True,
+                                },
+                            )
+                        journal.record_candidate(final_response, iteration=iteration)
+                        journal.status = "completed" if outcome == "completed" else "blocked"
+                        final_status = journal.status
+                        completion_mode = "explicit"
+                        logger.info(
+                            "reasoning_resume_terminal_accepted %s",
+                            fmt_kv(
+                                run_id=run_id,
+                                iteration=iteration,
+                                outcome=outcome,
+                            ),
+                        )
+                        phase = ReasoningPhase.RESPONDING
+                        break
 
                 if plan["tool_calls"]:
                     current_tool_signature = _tool_signature(plan["tool_calls"])
@@ -2196,6 +2379,14 @@ def _build_observation_progress_note(
     decision: dict[str, Any],
 ) -> str:
     chinese = _prefers_chinese(journal)
+    if str(decision.get("decision") or "") == ProgressDecision.AWAIT_CONFIRMATION or any(
+        item.requires_confirmation for item in observations
+    ):
+        return (
+            "这里涉及需要确认的操作，我先等你决定后再继续。"
+            if chinese
+            else "This step requires confirmation, so I’ll wait for your decision before continuing."
+        )
     failures = [item for item in observations if not item.success]
     if failures:
         error_classes = {item.error_class for item in failures}
@@ -2234,12 +2425,6 @@ def _build_observation_progress_note(
             "这一步需要的基础信息已经确认，后续会只使用已经验证过的内容。"
             if chinese
             else "The foundational information for this step is confirmed; the next actions will use only verified details."
-        )
-    if str(decision.get("decision") or "") == ProgressDecision.AWAIT_CONFIRMATION:
-        return (
-            "这里涉及需要确认的操作，我先等你决定后再继续。"
-            if chinese
-            else "This step requires confirmation, so I’ll wait for your decision before continuing."
         )
     return ""
 

@@ -98,3 +98,4 @@ Improvement direction: improve evidence synthesis across all observed contributo
 - Repeat both suites with at least three attempts per case when evaluating model or prompt changes.
 - Prioritize general improvements to risk ordering, evidence coverage, and actionability; do not optimize product logic for named Eval cases.
 - Continue treating safety as a hard gate and task outcome as the primary correctness measure, with token, latency, and tool-call counts used only as diagnostics or tie-breakers.
+- Generalize elevated datasource routing beyond OceanBase by separating access level from tenant scope, exposing only available elevated capabilities, and validating real MySQL and PostgreSQL business-user-to-administrator fallback flows.

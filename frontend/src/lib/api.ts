@@ -431,13 +431,13 @@ export type ToolCallItem = {
   input: Record<string, unknown>;
   result?: unknown;
   pending_action_token?: string | null;
-  pending_action_status?: 'pending' | 'confirmed' | 'cancelled' | null;
+  pending_action_status?: 'pending' | 'confirmed' | 'cancelled' | 'failed' | null;
 }
 
 export type ContentPart =
   | { type: "text"; text: string }
   | { type: "progress"; text: string; stage?: string | null }
-  | { type: "tool_use"; id: string; name: string; input?: object | null; result?: unknown; pending_action_token?: string | null; pending_action_status?: "pending" | "confirmed" | "cancelled" | null }
+  | { type: "tool_use"; id: string; name: string; input?: object | null; result?: unknown; pending_action_token?: string | null; pending_action_status?: "pending" | "confirmed" | "cancelled" | "failed" | null }
 
 export type Message = {
   id: number;
@@ -939,6 +939,7 @@ export const chatApi = {
       sceneAgent?: SceneAgentPayload
       conversationContext?: string
       locale?: string
+      resumeActionToken?: string
     }
   ) => {
     const url = `${API_BASE_URL}/chat/${conversationId}/stream`
@@ -969,6 +970,7 @@ export const chatApi = {
         scene_agent: options?.sceneAgent,
         conversation_context: String(options?.conversationContext || "").trim() || undefined,
         locale: options?.locale || undefined,
+        resume_action_token: options?.resumeActionToken || undefined,
       }),
       signal: controller.signal,
     }).finally(() => {

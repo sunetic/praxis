@@ -122,6 +122,32 @@ def test_progress_notes_explain_known_execution_errors(
     assert "参数" in plan_note or "数据结构" in plan_note
 
 
+def test_pending_confirmation_progress_is_not_described_as_failure() -> None:
+    journal = TaskJournal.create(TaskContract(objective="执行一项需要确认的写操作"))
+    observation = Observation.from_execution(
+        {
+            "name": "execute_sql",
+            "tool_call_id": "tc-pending",
+            "arguments": {"sql": "CREATE TEMPORARY TABLE probe (id INT)"},
+            "result": {
+                "success": False,
+                "data": {"requires_confirmation": True, "action_token": "token-1"},
+                "error": {"code": "pending_confirmation", "message": "Awaiting confirmation."},
+            },
+            "error_class": "guardrail_error",
+        }
+    )
+
+    note = _build_observation_progress_note(
+        journal,
+        [observation],
+        {"decision": "await_confirmation"},
+    )
+
+    assert "等你决定" in note
+    assert "没有成功" not in note
+
+
 @pytest.fixture
 def anyio_backend() -> str:
     return "asyncio"
@@ -1141,6 +1167,173 @@ async def test_resumed_task_reuses_persisted_contract_without_reclassification()
     assert state["contract"]["objective"] == "Persisted objective"
     assert state["contract"]["acceptance_criteria"][0]["description"] == "Persisted outcome"
     assert events[-1]["data"]["completed"] is True
+
+
+@pytest.mark.anyio
+async def test_confirmed_action_failure_resumes_agent_with_evidence_and_tools() -> None:
+    saved = TaskJournal.create(
+        TaskContract(
+            objective="Apply the requested database change and verify the result.",
+            acceptance_criteria=[
+                AcceptanceCriterion(
+                    id="ac-1",
+                    description="The requested database outcome is verified.",
+                )
+            ],
+        )
+    ).to_dict()
+    saved["status"] = "awaiting_confirmation"
+    resumed_execution = {
+        "tool_call_id": "confirmed-action-token",
+        "name": "execute_sql",
+        "arguments": {"sql": "CREATE TABLE sample (id INT PRIMARY KEY)"},
+        "result": {
+            "success": False,
+            "error": {
+                "code": "sql_execution_error",
+                "message": "The requested resource already exists.",
+            },
+        },
+        "error_class": "execution_error",
+    }
+    executed_sql: list[str] = []
+
+    async def executor(name: str, args: dict[str, Any]) -> dict[str, Any]:
+        assert name == "execute_sql"
+        sql = str(args.get("sql") or "")
+        executed_sql.append(sql)
+        return {
+            "success": True,
+            "data": {"columns": ["Create Table"], "rows": [{"Create Table": "..."}]},
+        }
+
+    llm = FakeLLM(
+        responses=[
+            _tool_call_chunk(
+                "execute_sql",
+                '{"sql":"SHOW CREATE TABLE sample"}',
+                call_id="tc-inspect-existing",
+            ),
+            _tool_call_chunk(
+                "agent_task_complete",
+                json.dumps(
+                    {
+                        "outcome": "completed",
+                        "reason": "The existing object was inspected successfully.",
+                        "final_response": (
+                            "The existing object was inspected and the requested outcome verified."
+                        ),
+                    }
+                ),
+                call_id="tc-task-complete",
+            ),
+        ]
+    )
+    engine = _make_engine(
+        llm=llm,
+        config=EngineConfig(max_iterations=4, completion_verifier_enabled=False),
+        executor=executor,
+    )
+
+    events = await _collect(
+        engine,
+        messages=[
+            {
+                "role": "user",
+                "content": "Apply the requested database change and verify the result.",
+            }
+        ],
+        tools=[{"type": "function", "function": {"name": "execute_sql"}}],
+        task_state=saved,
+        resumed_execution=resumed_execution,
+    )
+
+    first_resume_context = "\n".join(
+        str(message.get("content") or "") for message in llm.calls[0]
+    )
+    final_state = [event["data"] for event in events if event["type"] == "task_state"][-1]
+    assert "The requested resource already exists." in first_resume_context
+    assert "Do NOT repeat the exact same failed tool call" in first_resume_context
+    assert executed_sql == ["SHOW CREATE TABLE sample"]
+    assert final_state["metrics"]["resumptions"] == 1
+    assert final_state["metrics"]["tool_failures"] == 1
+    assert final_state["evidence"][0]["ref"] == "confirmed-action-token"
+    assert events[-1]["data"]["completed"] is True
+    assert events[-1]["data"]["completion_mode"] == "explicit"
+
+
+@pytest.mark.anyio
+async def test_resumed_action_does_not_accept_narrated_future_work_as_completion() -> None:
+    saved = TaskJournal.create(
+        TaskContract(objective="Finish all remaining tool-backed work and verify it.")
+    ).to_dict()
+    saved["status"] = "awaiting_confirmation"
+    resumed_execution = {
+        "tool_call_id": "confirmed-write",
+        "name": "execute_sql",
+        "arguments": {"sql": "INSERT INTO sample VALUES (1)"},
+        "result": {"success": True, "data": {"row_count": 1}},
+        "error_class": "none",
+    }
+    executed_sql: list[str] = []
+
+    async def executor(name: str, args: dict[str, Any]) -> dict[str, Any]:
+        assert name == "execute_sql"
+        executed_sql.append(str(args.get("sql") or ""))
+        return {"success": True, "data": {"rows": [{"remaining": 0}], "row_count": 1}}
+
+    llm = FakeLLM(
+        responses=[
+            [_text_chunk("I will now inspect the remaining work and continue.")],
+            _tool_call_chunk(
+                "execute_sql",
+                '{"sql":"SELECT COUNT(*) AS remaining FROM sample"}',
+                call_id="tc-verify-remaining",
+            ),
+            _tool_call_chunk(
+                "agent_task_complete",
+                json.dumps(
+                    {
+                        "outcome": "completed",
+                        "reason": "The remaining work was checked with tool evidence.",
+                        "final_response": "All requested work is complete and verified.",
+                    }
+                ),
+                call_id="tc-finish-resumed-task",
+            ),
+        ]
+    )
+    engine = _make_engine(
+        llm=llm,
+        config=EngineConfig(max_iterations=5, completion_verifier_enabled=False),
+        executor=executor,
+    )
+
+    events = await _collect(
+        engine,
+        messages=[
+            {
+                "role": "user",
+                "content": "Finish all remaining tool-backed work and verify it.",
+            }
+        ],
+        tools=[{"type": "function", "function": {"name": "execute_sql"}}],
+        task_state=saved,
+        resumed_execution=resumed_execution,
+    )
+
+    visible_text = "".join(
+        event["data"].get("text", "")
+        for event in events
+        if event["type"] == "assistant"
+    )
+    assert executed_sql == ["SELECT COUNT(*) AS remaining FROM sample"]
+    assert llm.call_count == 3
+    assert all(call.get("tool_choice") == "required" for call in llm.call_kwargs)
+    assert "I will now inspect" in visible_text
+    assert "All requested work is complete and verified." in visible_text
+    assert events[-1]["data"]["completed"] is True
+    assert events[-1]["data"]["completion_mode"] == "explicit"
 
 
 @pytest.mark.anyio

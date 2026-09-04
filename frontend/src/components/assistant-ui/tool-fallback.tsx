@@ -1,6 +1,6 @@
 "use client";
 
-import { memo, useCallback, useRef, useState } from "react";
+import { memo, useCallback, useContext, useRef, useState } from "react";
 import {
   AlertCircleIcon,
   CheckIcon,
@@ -18,7 +18,10 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
+import { Button } from "@/components/ui/button";
+import { PendingActionContext } from "@/components/assistant-ui/pending-action-context";
 import { cn } from "@/lib/utils";
+import type { PendingAction } from "@/lib/api";
 import { useShellI18n } from "@/i18n/shellI18n";
 
 const ANIMATION_DURATION = 200;
@@ -95,12 +98,14 @@ function ToolFallbackTrigger({
   toolName,
   status,
   result,
+  pendingAction,
   className,
   ...props
 }: React.ComponentProps<typeof CollapsibleTrigger> & {
   toolName: string;
   status?: ToolCallMessagePartStatus;
   result?: unknown;
+  pendingAction?: PendingAction;
 }) {
   const { locale, t } = useShellI18n();
   const statusType = status?.type ?? "complete";
@@ -108,9 +113,13 @@ function ToolFallbackTrigger({
   const isCancelled =
     status?.type === "incomplete" && status.reason === "cancelled";
 
-  const Icon = statusIconMap[statusType];
-  const label = isCancelled ? t("tool.cancelled") : t("tool.used");
-  const resultSummary = getToolResultSummary(result, locale);
+  const Icon = pendingAction ? AlertCircleIcon : statusIconMap[statusType];
+  const label = pendingAction
+    ? t("tool.approval.required")
+    : isCancelled
+      ? t("tool.cancelled")
+      : t("tool.used");
+  const resultSummary = pendingAction ? null : getToolResultSummary(result, locale);
 
   return (
     <CollapsibleTrigger
@@ -126,6 +135,7 @@ function ToolFallbackTrigger({
         className={cn(
           "aui-tool-fallback-trigger-icon size-4 shrink-0",
           isCancelled && "text-muted-foreground",
+          pendingAction && "text-amber-600 dark:text-amber-400",
           isRunning && "animate-spin",
         )}
       />
@@ -136,14 +146,14 @@ function ToolFallbackTrigger({
           isCancelled && "text-muted-foreground line-through",
         )}
       >
-        <span>{label}{toolName}</span>
+        <span>{label}{pendingAction ? "" : toolName}</span>
         {isRunning && (
           <span
             aria-hidden
             data-slot="tool-fallback-trigger-shimmer"
             className="aui-tool-fallback-trigger-shimmer shimmer pointer-events-none absolute inset-0 motion-reduce:animate-none"
           >
-            {label}{toolName}
+            {label}{pendingAction ? "" : toolName}
           </span>
         )}
       </span>
@@ -258,6 +268,12 @@ function getToolResultSummary(
   const rowCount = typeof data?.row_count === "number"
     ? data.row_count
     : Array.isArray(data?.rows) ? data.rows.length : null;
+  if (data?.cancelled === true || data?.cancelled_action_token) {
+    return {
+      text: locale === "zh-CN" ? "已由用户取消" : "Cancelled by user",
+      isError: false,
+    };
+  }
   if (resultRecord?.success === true && rowCount !== null) {
     return {
       text: locale === "zh-CN"
@@ -279,6 +295,73 @@ function getToolResultSummary(
     };
   }
   return null;
+}
+
+function getPendingActionToken(result: unknown): string | null {
+  if (!result || typeof result !== "object") return null;
+  const data = (result as Record<string, unknown>).data;
+  if (!data || typeof data !== "object") return null;
+  const token = (data as Record<string, unknown>).action_token;
+  return typeof token === "string" && token.trim() ? token : null;
+}
+
+function PendingActionApproval({
+  action,
+  processing,
+  disabled,
+  onConfirm,
+  onCancel,
+}: {
+  action: PendingAction;
+  processing: boolean;
+  disabled: boolean;
+  onConfirm: () => void;
+  onCancel: () => void;
+}) {
+  const { t } = useShellI18n();
+  const description = action.intent || action.source_text || t("tool.approval.description");
+  const preview = action.sql_preview || action.preview;
+  const target = [action.cluster_key, action.resolved_role]
+    .filter((value): value is string => Boolean(value))
+    .join(" · ");
+
+  return (
+    <div data-slot="tool-approval" className="space-y-3 px-4 pb-1">
+      <div className="space-y-1">
+        <p className="text-sm font-medium text-foreground">{description}</p>
+        {target ? (
+          <p className="text-xs text-muted-foreground">
+            {t("tool.approval.target")}{target}
+          </p>
+        ) : null}
+      </div>
+      {preview ? (
+        <pre className="max-h-36 overflow-auto rounded-md bg-muted px-3 py-2 text-xs leading-relaxed text-foreground whitespace-pre-wrap">
+          {preview}
+        </pre>
+      ) : null}
+      <div className="flex items-center gap-2">
+        <Button
+          size="sm"
+          className="h-8 px-3 text-xs"
+          disabled={disabled}
+          onClick={onConfirm}
+        >
+          {processing ? <LoaderIcon className="size-3.5 animate-spin" /> : t("tool.approval.confirm")}
+        </Button>
+        <Button
+          size="sm"
+          variant="outline"
+          className="h-8 px-3 text-xs"
+          disabled={disabled}
+          onClick={onCancel}
+        >
+          {t("tool.approval.cancel")}
+        </Button>
+        <span className="text-xs text-muted-foreground">{t("tool.approval.paused")}</span>
+      </div>
+    </div>
+  );
 }
 
 function ToolFallbackError({
@@ -324,9 +407,16 @@ const ToolFallbackImpl: ToolCallMessagePartComponent = ({
   result,
   status,
 }) => {
+  const pendingContext = useContext(PendingActionContext);
+  const actionToken = getPendingActionToken(result);
+  const pendingAction = actionToken
+    ? pendingContext?.actionsByToken.get(actionToken)
+    : undefined;
+  const processing = Boolean(actionToken && pendingContext?.processingToken === actionToken);
   const isCancelled =
     status?.type === "incomplete" && status.reason === "cancelled";
   const requiresAttention =
+    Boolean(pendingAction) ||
     status?.type === "requires-action" ||
     (status?.type === "incomplete" && status.reason !== "cancelled");
   const [userOpen, setUserOpen] = useState(false);
@@ -336,16 +426,36 @@ const ToolFallbackImpl: ToolCallMessagePartComponent = ({
     <ToolFallbackRoot
       open={open}
       onOpenChange={setUserOpen}
-      className={cn(isCancelled && "border-muted-foreground/30 bg-muted/30")}
+      className={cn(
+        isCancelled && "border-muted-foreground/30 bg-muted/30",
+        pendingAction && "border-amber-500/40 bg-amber-500/5",
+      )}
     >
-      <ToolFallbackTrigger toolName={toolName} status={status} result={result} />
+      <ToolFallbackTrigger
+        toolName={toolName}
+        status={status}
+        result={result}
+        pendingAction={pendingAction}
+      />
       <ToolFallbackContent>
-        <ToolFallbackError status={status} />
-        <ToolFallbackArgs
-          argsText={argsText}
-          className={cn(isCancelled && "opacity-60")}
-        />
-        {!isCancelled && <ToolFallbackResult result={result} />}
+        {pendingAction && actionToken && pendingContext ? (
+          <PendingActionApproval
+            action={pendingAction}
+            processing={processing}
+            disabled={Boolean(pendingContext.disabled || pendingContext.processingToken)}
+            onConfirm={() => void pendingContext.onConfirm(actionToken)}
+            onCancel={() => void pendingContext.onCancel(actionToken)}
+          />
+        ) : (
+          <>
+            <ToolFallbackError status={status} />
+            <ToolFallbackArgs
+              argsText={argsText}
+              className={cn(isCancelled && "opacity-60")}
+            />
+            {!isCancelled && <ToolFallbackResult result={result} />}
+          </>
+        )}
       </ToolFallbackContent>
     </ToolFallbackRoot>
   );

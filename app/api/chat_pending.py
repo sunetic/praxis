@@ -8,17 +8,14 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session, sessionmaker
 
-from app.api.chat_handoff import _truncate_handoff_text
-from app.core.logging import fmt_kv, get_logger
+from app.core.logging import get_logger
 from app.db.database import get_db
 from app.models import models
 from app.services.datasource.sql_guard import (
     build_execution_fingerprint,
     compare_tenant_fingerprint,
-    normalize_sql,
     probe_tenant_fingerprint,
 )
-from app.services.llm import get_llm_client
 from app.services.platform.object_tools import ObjectToolError, ObjectToolService
 
 router = APIRouter(prefix="/chat", tags=["Chat"])
@@ -135,176 +132,57 @@ def _find_message_with_pending_token(
     return None
 
 
+def _update_pending_message_tool_result(
+    db: Session,
+    *,
+    conversation_id: int,
+    token: str,
+    status: str,
+    result: dict[str, Any],
+) -> None:
+    """Persist the final tool outcome on the message that rendered the approval UI."""
+    msg_result = _find_message_with_pending_token(
+        db,
+        conversation_id=conversation_id,
+        token=token,
+    )
+    if not msg_result:
+        return
+
+    pending_msg, tool_index = msg_result
+    normalized_result = _normalize_json_payload(result)
+    if isinstance(pending_msg.content_parts, list):
+        updated_parts = list(pending_msg.content_parts)
+        updated_parts[tool_index] = {
+            **updated_parts[tool_index],
+            "pending_action_status": status,
+            "result": normalized_result,
+        }
+        pending_msg.content_parts = updated_parts
+        tool_use_parts = [
+            part
+            for part in updated_parts
+            if isinstance(part, dict) and part.get("type") == "tool_use"
+        ]
+        if tool_use_parts:
+            pending_msg.tool_calls = [
+                {key: value for key, value in part.items() if key != "type"}
+                for part in tool_use_parts
+            ]
+    else:
+        updated_tool_calls = list(pending_msg.tool_calls or [])
+        updated_tool_calls[tool_index] = {
+            **updated_tool_calls[tool_index],
+            "pending_action_status": status,
+            "result": normalized_result,
+        }
+        pending_msg.tool_calls = updated_tool_calls
+    db.add(pending_msg)
+
+
 def _build_object_tool_session_factory(db: Session) -> sessionmaker[Session]:
     bind = db.get_bind()
     return sessionmaker(bind=bind, autocommit=False, autoflush=False, expire_on_commit=False)
-
-
-def _build_confirmed_sql_result_summary(result: dict[str, Any]) -> dict[str, Any]:
-    columns = result.get("columns") if isinstance(result.get("columns"), list) else []
-    rows = result.get("rows") if isinstance(result.get("rows"), list) else []
-    sample_rows: list[dict[str, Any]] = []
-    for row in rows[:5]:
-        if not isinstance(row, dict):
-            continue
-        sample_rows.append(
-            {str(key): _truncate_handoff_text(value, limit=120) for key, value in row.items()}
-        )
-    return {
-        "row_count": int(result.get("row_count") or 0),
-        "columns": [str(column) for column in columns[:8]],
-        "sample_rows": sample_rows,
-    }
-
-
-def _build_confirmed_sql_resume_fallback(*, intent: str, sql: str, result: dict[str, Any]) -> str:
-    summary = _build_confirmed_sql_result_summary(result)
-    row_count = int(summary.get("row_count") or 0)
-    sample_rows = summary.get("sample_rows") if isinstance(summary.get("sample_rows"), list) else []
-    prefix = f"Executed as requested: {intent}." if intent else "Confirmed action executed."
-    if row_count <= 0:
-        return f"{prefix} SQL executed successfully, but no results were returned."
-    if sample_rows:
-        return f"{prefix} SQL executed successfully, returning {row_count} result(s). Sample: {json.dumps(sample_rows[0], ensure_ascii=False)}"
-    normalized_sql = normalize_sql(sql)
-    return f"{prefix} SQL executed successfully, returning {row_count} result(s). SQL: {normalized_sql}"
-
-
-async def _render_confirmed_sql_followup(
-    *,
-    db: Session,
-    conversation_id: int,
-    prompt_payload: dict[str, Any],
-    system_prompt: str,
-    fallback: str,
-    log_key: str,
-) -> str:
-    latest_user_message = (
-        db.query(models.Message)
-        .filter(
-            models.Message.conversation_id == conversation_id,
-            models.Message.role == "user",
-        )
-        .order_by(models.Message.created_at.desc(), models.Message.id.desc())
-        .first()
-    )
-    user_request = str(latest_user_message.content or "").strip() if latest_user_message else ""
-    llm_payload = {
-        "user_request": user_request,
-        **prompt_payload,
-    }
-    llm = get_llm_client()
-    try:
-        response = None
-        async for chunk in llm.chat(
-            [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": json.dumps(llm_payload, ensure_ascii=False)},
-            ],
-            tools=None,
-            stream=False,
-            temperature=0.2,
-        ):
-            response = chunk
-            break
-        if isinstance(response, dict):
-            choices = response.get("choices") or []
-            if choices and isinstance(choices[0], dict):
-                message = choices[0].get("message") or {}
-                content = str(message.get("content") or "").strip()
-                if content:
-                    return content
-    except Exception as exc:
-        logger.warning(
-            "%s %s error=%s",
-            log_key,
-            fmt_kv(conversation_id=conversation_id),
-            str(exc),
-        )
-    return fallback
-
-
-async def _build_confirmed_sql_resume_message(
-    *,
-    db: Session,
-    conversation_id: int,
-    intent: str,
-    sql: str,
-    result: dict[str, Any],
-) -> str:
-    fallback = _build_confirmed_sql_resume_fallback(intent=intent, sql=sql, result=result)
-    prompt_payload = {
-        "intent": intent,
-        "sql": normalize_sql(sql),
-        "result_summary": _build_confirmed_sql_result_summary(result),
-        "result_route_reason": str(result.get("route_reason") or ""),
-        "cluster_key": str(result.get("cluster_key") or ""),
-        "resolved_role": str(result.get("resolved_role") or ""),
-    }
-    system_prompt = (
-        "You are a helpful database assistant. "
-        "A previously pending SQL action has now been confirmed and executed. "
-        "Continue the conversation in plain text only. "
-        "Do not call tools. Do not ask for confirmation again. "
-        "Summarize the execution result directly for the user in 2-4 short sentences."
-    )
-    return await _render_confirmed_sql_followup(
-        db=db,
-        conversation_id=conversation_id,
-        prompt_payload=prompt_payload,
-        system_prompt=system_prompt,
-        fallback=fallback,
-        log_key="confirmed_sql_resume_message_failed",
-    )
-
-
-def _build_confirmed_sql_failure_resume_fallback(
-    *, intent: str, sql: str, error_message: str
-) -> str:
-    prefix = f"Executed as confirmed: {intent}." if intent else "Confirmed action executed."
-    normalized_sql = normalize_sql(sql)
-    return (
-        f"{prefix} However, execution failed: {error_message}. "
-        f"I will not resubmit the write operation; if you would like, I can analyze the cause of this error and suggest next steps for correction."
-        f" SQL: {normalized_sql}"
-    )
-
-
-async def _build_confirmed_sql_failure_resume_message(
-    *,
-    db: Session,
-    conversation_id: int,
-    intent: str,
-    sql: str,
-    error_message: str,
-    resolved_role: str,
-    cluster_key: str,
-) -> str:
-    fallback = _build_confirmed_sql_failure_resume_fallback(
-        intent=intent, sql=sql, error_message=error_message
-    )
-    prompt_payload = {
-        "intent": intent,
-        "sql": normalize_sql(sql),
-        "error_message": error_message,
-        "cluster_key": cluster_key,
-        "resolved_role": resolved_role,
-    }
-    system_prompt = (
-        "You are a helpful database assistant. "
-        "A previously pending SQL action was confirmed by the user, but execution failed. "
-        "Continue the conversation in plain text only. "
-        "Do not call tools. Do not ask for confirmation again. Do not claim success. "
-        "Briefly explain that execution failed, surface the key error, and suggest the next diagnostic direction in 2-4 short sentences."
-    )
-    return await _render_confirmed_sql_followup(
-        db=db,
-        conversation_id=conversation_id,
-        prompt_payload=prompt_payload,
-        system_prompt=system_prompt,
-        fallback=fallback,
-        log_key="confirmed_sql_failure_resume_message_failed",
-    )
 
 
 def _find_pending_action_result_event(
@@ -372,6 +250,19 @@ def cancel_pending_action(conversation_id: int, token: str, db: Session = Depend
     action.cancelled_at = now
     action.updated_at = now
     db.add(action)
+    cancelled_result: dict[str, Any] = {
+        "success": False,
+        "data": {
+            "requires_confirmation": False,
+            "action_token": token,
+            "cancelled_action_token": token,
+            "cancelled": True,
+        },
+        "error": {
+            "code": "action_cancelled",
+            "message": "Pending action cancelled by user.",
+        },
+    }
     if action.action_type == "execute_sql":
         pending_tool_event = _find_pending_tool_result_event(
             db,
@@ -383,14 +274,7 @@ def cancel_pending_action(conversation_id: int, token: str, db: Session = Depend
                 pending_tool_event.payload if isinstance(pending_tool_event.payload, dict) else {}
             )
             payload = dict(base_payload)
-            payload["result"] = {
-                "success": False,
-                "data": None,
-                "error": {
-                    "code": "action_cancelled",
-                    "message": "Pending action cancelled by user.",
-                },
-            }
+            payload["result"] = cancelled_result
             payload["error_class"] = "cancelled"
             payload["cancelled_action_token"] = token
             pending_tool_event.payload = _normalize_json_payload(payload)
@@ -446,6 +330,13 @@ def cancel_pending_action(conversation_id: int, token: str, db: Session = Depend
                     content="Pending action cancelled.",
                 )
             )
+    _update_pending_message_tool_result(
+        db,
+        conversation_id=conversation_id,
+        token=token,
+        status="cancelled",
+        result=cancelled_result,
+    )
     db.commit()
     return {"success": True, "token": token, "status": "cancelled"}
 
@@ -627,36 +518,27 @@ async def confirm_pending_action(conversation_id: int, token: str, db: Session =
                     content=assistant_message,
                 )
             )
-            msg_result = _find_message_with_pending_token(
-                db, conversation_id=conversation_id, token=token
+            _update_pending_message_tool_result(
+                db,
+                conversation_id=conversation_id,
+                token=token,
+                status="confirmed",
+                result={
+                    "success": True,
+                    "data": {
+                        "requires_confirmation": False,
+                        "action_type": "object_action",
+                        "action_token": token,
+                        "confirmed_action_token": token,
+                        "mode": mode,
+                        "object_type": object_type,
+                        "action": operation,
+                        "object_id": object_id,
+                        "result": result,
+                    },
+                    "error": None,
+                },
             )
-            if msg_result:
-                pending_msg, tc_idx = msg_result
-                if isinstance(pending_msg.content_parts, list):
-                    updated_parts = list(pending_msg.content_parts)
-                    updated_parts[tc_idx] = {
-                        **updated_parts[tc_idx],
-                        "pending_action_status": "confirmed",
-                    }
-                    pending_msg.content_parts = updated_parts
-                    # Keep legacy tool_calls in sync
-                    tool_use_parts = [
-                        p
-                        for p in updated_parts
-                        if isinstance(p, dict) and p.get("type") == "tool_use"
-                    ]
-                    if tool_use_parts:
-                        pending_msg.tool_calls = [
-                            {k: v for k, v in p.items() if k != "type"} for p in tool_use_parts
-                        ]
-                else:
-                    updated_tool_calls = list(pending_msg.tool_calls or [])
-                    updated_tool_calls[tc_idx] = {
-                        **updated_tool_calls[tc_idx],
-                        "pending_action_status": "confirmed",
-                    }
-                    pending_msg.tool_calls = updated_tool_calls
-                db.add(pending_msg)
             db.commit()
             return {
                 "success": True,
@@ -722,12 +604,47 @@ async def confirm_pending_action(conversation_id: int, token: str, db: Session =
                 event_payload["message"] = f"Object action execution failed: {str(exc)}"
                 pending_action_event.payload = _normalize_json_payload(event_payload)
                 db.add(pending_action_event)
+            _update_pending_message_tool_result(
+                db,
+                conversation_id=conversation_id,
+                token=token,
+                status="failed",
+                result={
+                    "success": False,
+                    "data": {
+                        "requires_confirmation": False,
+                        "action_type": "object_action",
+                        "action_token": token,
+                        "confirmed_action_token": token,
+                    },
+                    "error": error_payload,
+                },
+            )
             db.commit()
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         except Exception as exc:
             action.status = "failed"
             action.updated_at = now
             db.add(action)
+            _update_pending_message_tool_result(
+                db,
+                conversation_id=conversation_id,
+                token=token,
+                status="failed",
+                result={
+                    "success": False,
+                    "data": {
+                        "requires_confirmation": False,
+                        "action_type": "object_action",
+                        "action_token": token,
+                        "confirmed_action_token": token,
+                    },
+                    "error": {
+                        "code": "object_action_execution_error",
+                        "message": str(exc),
+                    },
+                },
+            )
             db.commit()
             raise HTTPException(
                 status_code=500, detail=f"Object action execution error: {str(exc)}"
@@ -850,70 +767,26 @@ async def confirm_pending_action(conversation_id: int, token: str, db: Session =
                     },
                 )
             )
-        assistant_message = await _build_confirmed_sql_resume_message(
-            db=db,
+        _update_pending_message_tool_result(
+            db,
             conversation_id=conversation_id,
-            intent=str(payload.get("intent") or "").strip(),
-            sql=sql,
-            result=result,
+            token=token,
+            status="confirmed",
+            result={"success": True, "data": result, "error": None},
         )
-        if assistant_message:
-            db.add(
-                models.Message(
-                    conversation_id=conversation_id,
-                    role="assistant",
-                    content=assistant_message,
-                )
-            )
-        msg_result = _find_message_with_pending_token(
-            db, conversation_id=conversation_id, token=token
-        )
-        if msg_result:
-            pending_msg, tc_idx = msg_result
-            if isinstance(pending_msg.content_parts, list):
-                updated_parts = list(pending_msg.content_parts)
-                updated_parts[tc_idx] = {
-                    **updated_parts[tc_idx],
-                    "pending_action_status": "confirmed",
-                }
-                pending_msg.content_parts = updated_parts
-                tool_use_parts = [
-                    p for p in updated_parts if isinstance(p, dict) and p.get("type") == "tool_use"
-                ]
-                if tool_use_parts:
-                    pending_msg.tool_calls = [
-                        {k: v for k, v in p.items() if k != "type"} for p in tool_use_parts
-                    ]
-            else:
-                updated_tool_calls = list(pending_msg.tool_calls or [])
-                updated_tool_calls[tc_idx] = {
-                    **updated_tool_calls[tc_idx],
-                    "pending_action_status": "confirmed",
-                }
-                pending_msg.tool_calls = updated_tool_calls
-            db.add(pending_msg)
         db.commit()
         return {
             "success": True,
             "token": token,
             "status": "executed",
             "result": result,
-            "assistant_message": assistant_message,
+            "should_resume": True,
         }
     except Exception as exc:
         action.status = "failed"
         action.updated_at = now
         db.add(action)
         error_message = str(exc)
-        assistant_message = await _build_confirmed_sql_failure_resume_message(
-            db=db,
-            conversation_id=conversation_id,
-            intent=str(payload.get("intent") or "").strip(),
-            sql=sql,
-            error_message=error_message,
-            resolved_role=resolved_role,
-            cluster_key=str(datasource.cluster_key or ""),
-        )
         pending_tool_event = _find_pending_tool_result_event(
             db,
             conversation_id=conversation_id,
@@ -990,49 +863,19 @@ async def confirm_pending_action(conversation_id: int, token: str, db: Session =
                     },
                 )
             )
-        db.add(
-            models.Message(
-                conversation_id=conversation_id,
-                role="assistant",
-                content=assistant_message,
-            )
+        _update_pending_message_tool_result(
+            db,
+            conversation_id=conversation_id,
+            token=token,
+            status="failed",
+            result=error_result_payload,
         )
-        msg_result = _find_message_with_pending_token(
-            db, conversation_id=conversation_id, token=token
-        )
-        if msg_result:
-            pending_msg, tc_idx = msg_result
-            if isinstance(pending_msg.content_parts, list):
-                updated_parts = list(pending_msg.content_parts)
-                updated_parts[tc_idx] = {
-                    **updated_parts[tc_idx],
-                    "pending_action_status": "cancelled",
-                    "result": error_result_payload,
-                }
-                pending_msg.content_parts = updated_parts
-                tool_use_parts = [
-                    p for p in updated_parts if isinstance(p, dict) and p.get("type") == "tool_use"
-                ]
-                if tool_use_parts:
-                    pending_msg.tool_calls = [
-                        {k: v for k, v in p.items() if k != "type"} for p in tool_use_parts
-                    ]
-            else:
-                updated_tool_calls = list(pending_msg.tool_calls or [])
-                updated_tool_calls[tc_idx] = {
-                    **updated_tool_calls[tc_idx],
-                    "pending_action_status": "cancelled",
-                    "result": error_result_payload,
-                }
-                pending_msg.tool_calls = updated_tool_calls
-            db.add(pending_msg)
         db.commit()
         return {
             "success": False,
             "token": token,
             "status": "failed",
             "error": error_message,
-            "assistant_message": assistant_message,
             "should_resume": True,
         }
 

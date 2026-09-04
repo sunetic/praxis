@@ -9,6 +9,7 @@ import { ArchiveRestore, Gauge, Loader2, WandSparkles } from "lucide-react"
 
 import { Thread } from "@/components/assistant-ui/thread"
 import type { ThreadSuggestion } from "@/components/assistant-ui/thread"
+import { PendingActionContext } from "@/components/assistant-ui/pending-action-context"
 import { Button } from "@/components/ui/button"
 import { Progress } from "@/components/ui/progress"
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
@@ -131,6 +132,7 @@ function ChatThreadViewSession({
     streamingParts,
     streaming,
     currentBatchPendingActions,
+    pendingActionByToken,
     processingActionToken,
     showReuseSuggestion,
     setShowReuseSuggestion,
@@ -139,8 +141,8 @@ function ChatThreadViewSession({
     handleSaveAsAgent,
     sendMessage,
     stopMessage,
-    confirmCurrentBatch,
-    cancelCurrentBatch,
+    confirmPendingAction,
+    cancelPendingAction,
     runtimeStatus,
     contextStatus,
     contextCompressionNotice,
@@ -240,6 +242,7 @@ function ChatThreadViewSession({
   }, [controller.input, runtime])
 
   const actionsDisabled = streaming || savingAgent || readOnly
+  const awaitingConfirmation = enableBatchActions && currentBatchPendingActions.length > 0
   const visibleContextStatus: ChatContextStatus = contextStatus ?? {
     conversation_id: conversationId ?? 0,
     context_window_tokens: 128000,
@@ -267,7 +270,16 @@ function ChatThreadViewSession({
 
   return (
     <AssistantRuntimeProvider runtime={runtime}>
-      <div className={rootClass}>
+      <PendingActionContext.Provider
+        value={{
+          actionsByToken: enableBatchActions ? pendingActionByToken : new Map(),
+          processingToken: processingActionToken,
+          disabled: actionsDisabled,
+          onConfirm: confirmPendingAction,
+          onCancel: cancelPendingAction,
+        }}
+      >
+        <div className={rootClass}>
         {/* Optional header */}
         {showHeader && (title || headerAction) ? (
           <div className="flex items-center justify-between gap-3 border-b border-border px-4 py-3">
@@ -307,61 +319,20 @@ function ChatThreadViewSession({
           </div>
         ) : null}
 
-        {/* Main thread — official assistant-ui Thread component */}
-        {/* Business overlays (batch actions, save-agent banners) are passed as footerContent
-            so they render inside ThreadPrimitive.ViewportFooter, above the composer. */}
+        {/* Main thread — official assistant-ui Thread component. Pending actions render
+            inside their tool message; the composer pauses until the user decides. */}
         <div className="min-h-0 flex-1 overflow-hidden">
           <Thread
             suggestions={normalizedSuggestions}
             statusText={streaming ? runtimeStatus?.text : undefined}
             placeholder={placeholder}
-            readOnly={readOnly}
+            readOnly={readOnly || awaitingConfirmation}
             footerContent={
               <div className="flex flex-col gap-2">
                   {contextCompressionNotice ? (
                     <ContextCompressionBanner notice={contextCompressionNotice} />
                   ) : null}
                   <ContextUsageIndicator status={visibleContextStatus} />
-                  {enableBatchActions && currentBatchPendingActions.length > 0 ? (
-                    <div className="flex items-center justify-between gap-3 rounded-lg border border-border bg-card px-3 py-2">
-                      <div className="min-w-0">
-                        <p className="text-sm font-medium">
-                          {currentBatchPendingActions.length > 1
-                            ? `${currentBatchPendingActions.length} ${t("chat.batch.countMany")}`
-                            : t("chat.batch.countOne")}
-                        </p>
-                        <p className="text-xs text-muted-foreground">{t("chat.batch.hint")}</p>
-                      </div>
-                      <div className="flex shrink-0 items-center gap-2">
-                        <Button
-                          size="sm"
-                          onClick={() => void confirmCurrentBatch()}
-                          disabled={actionsDisabled || processingActionToken !== null}
-                          className="h-7 px-3 text-xs"
-                        >
-                          {processingActionToken === "__batch_confirm__" ? (
-                            <Loader2 className="size-3.5 animate-spin" />
-                          ) : (
-                            t("chat.batch.confirm")
-                          )}
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          onClick={() => void cancelCurrentBatch()}
-                          disabled={actionsDisabled || processingActionToken !== null}
-                          className="h-7 px-3 text-xs"
-                        >
-                          {processingActionToken === "__batch_cancel__" ? (
-                            <Loader2 className="size-3.5 animate-spin" />
-                          ) : (
-                            t("chat.batch.cancel")
-                          )}
-                        </Button>
-                      </div>
-                    </div>
-                  ) : null}
-
                   {enableSaveAsAgent && showReuseSuggestion ? (
                     <div className="flex items-center justify-between gap-3 rounded-lg border border-border bg-card px-3 py-2">
                       <div className="flex items-center gap-2 min-w-0">
@@ -433,7 +404,8 @@ function ChatThreadViewSession({
             <p className="text-xs text-muted-foreground">{resolvedReadOnlyHint}</p>
           </div>
         ) : null}
-      </div>
+        </div>
+      </PendingActionContext.Provider>
     </AssistantRuntimeProvider>
   )
 }
@@ -478,9 +450,6 @@ export function ContextUsageIndicator({ status }: { status: ChatContextStatus })
               indicatorClassName={`${indicatorClassName}${isCompressing ? " animate-pulse" : ""}`}
             />
             <span className="min-w-10 tabular-nums text-foreground">{percent.toFixed(1)}%</span>
-            {status.compacted_through_message_id ? (
-              <span className="hidden text-muted-foreground @md:inline">{t("chat.context.memoryActive")}</span>
-            ) : null}
           </div>
         </TooltipTrigger>
         <TooltipContent side="top" sideOffset={6}>

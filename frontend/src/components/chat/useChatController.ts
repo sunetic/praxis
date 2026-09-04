@@ -244,10 +244,79 @@ function parseToolArgs(argumentsText?: string): Record<string, unknown> | null {
   }
 }
 
+type FinalPendingActionResult = {
+  status: "confirmed" | "cancelled" | "failed"
+  result: unknown
+}
+
+function collectFinalPendingActionResults(events: ChatEvent[]): Map<string, FinalPendingActionResult> {
+  const results = new Map<string, FinalPendingActionResult>()
+  for (const event of events) {
+    if (event.event_type !== "step_result" && event.event_type !== "tool_result") continue
+    const payload = event.payload
+    if (!payload || typeof payload !== "object") continue
+    const result = payload.result
+    if (!result || typeof result !== "object") continue
+    const resultRecord = result as Record<string, unknown>
+    const data = resultRecord.data && typeof resultRecord.data === "object"
+      ? resultRecord.data as Record<string, unknown>
+      : {}
+    const tokenCandidates = [
+      payload.confirmed_action_token,
+      payload.cancelled_action_token,
+      data.confirmed_action_token,
+      data.cancelled_action_token,
+      data.action_token,
+    ]
+    const token = tokenCandidates.find(
+      (candidate): candidate is string => typeof candidate === "string" && candidate.trim().length > 0,
+    )
+    if (!token) continue
+    const error = resultRecord.error && typeof resultRecord.error === "object"
+      ? resultRecord.error as Record<string, unknown>
+      : null
+    const isCancelled = Boolean(payload.cancelled_action_token || data.cancelled || data.cancelled_action_token)
+      || error?.code === "action_cancelled"
+    const isTerminal = Boolean(payload.confirmed_action_token || payload.cancelled_action_token)
+      || data.requires_confirmation === false
+      || isCancelled
+    if (!isTerminal) continue
+    results.set(token, {
+      status: isCancelled ? "cancelled" : resultRecord.success === true ? "confirmed" : "failed",
+      result,
+    })
+  }
+  return results
+}
+
+function reconcilePendingToolResults(messages: Message[], events: ChatEvent[]): Message[] {
+  const finalResults = collectFinalPendingActionResults(events)
+  if (finalResults.size === 0) return messages
+  return messages.map((message) => {
+    if (message.role !== "assistant") return message
+    const contentParts = message.content_parts?.map((part) => {
+      if (part.type !== "tool_use" || !part.pending_action_token) return part
+      const finalResult = finalResults.get(part.pending_action_token)
+      return finalResult
+        ? { ...part, result: finalResult.result, pending_action_status: finalResult.status }
+        : part
+    })
+    const toolCalls = message.tool_calls?.map((toolCall) => {
+      if (!toolCall.pending_action_token) return toolCall
+      const finalResult = finalResults.get(toolCall.pending_action_token)
+      return finalResult
+        ? { ...toolCall, result: finalResult.result, pending_action_status: finalResult.status }
+        : toolCall
+    })
+    return { ...message, content_parts: contentParts, tool_calls: toolCalls }
+  })
+}
+
 function hydrateMessagesWithToolEvents(messages: Message[], events: ChatEvent[]): Message[] {
+  const reconciledMessages = reconcilePendingToolResults(messages, events)
   const persistedText = new Set<string>()
   const persistedToolIds = new Set<string>()
-  for (const message of messages) {
+  for (const message of reconciledMessages) {
     if (message.role !== "assistant") continue
     const content = message.content.trim()
     if (content) persistedText.add(content)
@@ -320,7 +389,7 @@ function hydrateMessagesWithToolEvents(messages: Message[], events: ChatEvent[])
     })
     .filter((message): message is Message => message !== null)
 
-  return [...messages, ...assistantMessages, ...toolMessages].sort((left, right) => {
+  return [...reconciledMessages, ...assistantMessages, ...toolMessages].sort((left, right) => {
     const timeDelta = Date.parse(left.created_at) - Date.parse(right.created_at)
     if (Number.isFinite(timeDelta) && timeDelta !== 0) return timeDelta
     return left.id - right.id
@@ -733,13 +802,10 @@ export function useChatController({
     setProcessingActionToken(token)
     try {
       const response = await chatApi.confirmPendingAction(conversationId, token)
-      if (response.should_resume) {
-        await fetchMessagesImpl(conversationId, { finalizeStream: true })
+      await fetchMessagesImpl(conversationId, { finalizeStream: true })
+      if (response.should_resume && !customSendFn) {
         setProcessingActionToken(null)
-        await sendMessageImpl(t("chat.action.resumeAfterFailure"))
-      } else {
-        toast.success("Action confirmed")
-        await fetchMessagesImpl(conversationId, { finalizeStream: true })
+        await sendMessageImpl("", { resumeActionToken: token })
       }
     } catch (error: unknown) {
       const detail = extractApiErrorDetail(error)
@@ -757,7 +823,6 @@ export function useChatController({
     setProcessingActionToken(token)
     try {
       await chatApi.cancelPendingAction(conversationId, token)
-      toast.success("Action cancelled")
       await fetchMessagesImpl(conversationId, { finalizeStream: true })
     } catch {
       toast.error("Failed to cancel. Please try again.")
@@ -771,18 +836,10 @@ export function useChatController({
     setProcessingActionToken("__batch_confirm__")
     const tokens = currentBatchPendingActions.map((item) => item.token)
     try {
-      let shouldResume = false
       for (const token of tokens) {
-        const resp = await chatApi.confirmPendingAction(conversationId, token)
-        if (resp.should_resume) shouldResume = true
+        await chatApi.confirmPendingAction(conversationId, token)
       }
       await fetchMessagesImpl(conversationId, { finalizeStream: true })
-      if (shouldResume) {
-        setProcessingActionToken(null)
-        await sendMessageImpl(t("chat.action.resumeAfterFailure"))
-      } else {
-        toast.success(`Confirmed ${tokens.length} action(s) in this batch`)
-      }
     } catch (error: unknown) {
       const detail = extractApiErrorDetail(error)
       toast.error(detail || "Failed to confirm batch. Please refresh and try again.")
@@ -802,7 +859,6 @@ export function useChatController({
       for (const token of tokens) {
         await chatApi.cancelPendingAction(conversationId, token)
       }
-      toast.success(`Cancelled ${tokens.length} pending action(s) in this batch`)
       await fetchMessagesImpl(conversationId, { finalizeStream: true })
     } catch {
       toast.error("Failed to cancel batch. Please try again.")
@@ -906,17 +962,22 @@ export function useChatController({
 
   // ── Main send ──
 
-  async function sendMessageImpl(override?: string, options?: { runDatasourceIds?: number[] }) {
+  async function sendMessageImpl(
+    override?: string,
+    options?: { runDatasourceIds?: number[]; resumeActionToken?: string },
+  ) {
     const text = (override ?? input).trim()
-    if (!text || streaming || savingAgent) return
+    const resumeActionToken = String(options?.resumeActionToken || "").trim()
+    const isActionResume = Boolean(resumeActionToken)
+    if ((!text && !isActionResume) || streaming || savingAgent) return
 
     // NL command interception
-    if (pendingActions.length > 0 && checkIsConfirmCommand(text)) {
+    if (!isActionResume && pendingActions.length > 0 && checkIsConfirmCommand(text)) {
       setInput("")
       await confirmCurrentBatchImpl()
       return
     }
-    if (pendingActions.length > 0 && checkIsCancelCommand(text)) {
+    if (!isActionResume && pendingActions.length > 0 && checkIsCancelCommand(text)) {
       setInput("")
       await cancelCurrentBatchImpl()
       return
@@ -952,7 +1013,9 @@ export function useChatController({
 
     try {
       // Add user message
-      if (isCustomStream) {
+      if (isActionResume) {
+        // Confirmation resumes the existing Agent turn; it is not a new user message.
+      } else if (isCustomStream) {
         setMessages((prev) => [...prev, {
           id: nextLocalMessageId(),
           conversation_id: cid!,
@@ -984,6 +1047,7 @@ export function useChatController({
           sceneAgent: sceneAgentPayload || undefined,
           conversationContext,
           locale,
+          resumeActionToken: resumeActionToken || undefined,
         })
       }
 

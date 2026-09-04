@@ -133,6 +133,7 @@ class ChatService:
         compression_threshold_tokens: int | None = None,
         is_cancelled: Callable[[], bool] | None = None,
         task_state: dict[str, Any] | None = None,
+        resumed_execution: dict[str, Any] | None = None,
     ) -> AsyncGenerator[dict[str, Any], None]:
         del use_state_machine
         chat_messages = list(messages)
@@ -211,6 +212,7 @@ class ChatService:
                 system_prompt=system_prompt,
                 is_cancelled=is_cancelled,
                 task_state=task_state,
+                resumed_execution=resumed_execution,
             ):
                 raw_phase = ChatPhase(raw_event["phase"])
                 final_phase = raw_phase

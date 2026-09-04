@@ -23,6 +23,7 @@ from app.schemas import schemas
 from app.services.chat import stream_helpers as chat_stream_helpers
 from app.services.chat import tool_binding as chat_tool_binding
 from app.services.chat import turn_context as chat_turn_context
+from app.services.chat.action_resume import load_action_resume_context
 from app.services.chat.stream_helpers import _normalize_json_payload
 from app.services.chat.turn_context import TurnContextExtras, build_agent_turn_context
 from app.skills.store import SkillStore
@@ -2315,6 +2316,47 @@ async def test_confirm_pending_object_action_executes_and_updates_event(
             },
         )
         db.add(pending)
+        pending_result = {
+            "success": False,
+            "data": {
+                "requires_confirmation": True,
+                "action_type": "object_action",
+                "action_token": token,
+            },
+            "error": {
+                "code": "pending_confirmation",
+                "message": "The object action has not been executed yet.",
+            },
+        }
+        db.add(
+            models.Message(
+                conversation_id=conversation.id,
+                role="assistant",
+                content="Please confirm this object action.",
+                content_parts=[
+                    {"type": "text", "text": "Please confirm this object action."},
+                    {
+                        "type": "tool_use",
+                        "id": "step-confirm-1",
+                        "name": "object.crud",
+                        "input": {"object_type": "datasource", "action": "list"},
+                        "result": pending_result,
+                        "pending_action_token": token,
+                        "pending_action_status": "pending",
+                    },
+                ],
+                tool_calls=[
+                    {
+                        "id": "step-confirm-1",
+                        "name": "object.crud",
+                        "input": {"object_type": "datasource", "action": "list"},
+                        "result": pending_result,
+                        "pending_action_token": token,
+                        "pending_action_status": "pending",
+                    }
+                ],
+            )
+        )
         db.add(
             models.ChatEvent(
                 conversation_id=conversation.id,
@@ -2386,7 +2428,7 @@ async def test_confirm_pending_object_action_executes_and_updates_event(
 
 
 @pytest.mark.anyio
-async def test_confirm_execute_sql_adds_assistant_followup_message(
+async def test_confirm_execute_sql_persists_result_for_agent_resume(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     factory, engine = _build_session_factory(tmp_path)
@@ -2437,6 +2479,47 @@ async def test_confirm_execute_sql_adds_assistant_followup_message(
             },
         )
         db.add(pending)
+        pending_result = {
+            "success": False,
+            "data": {
+                "requires_confirmation": True,
+                "action_type": "execute_sql",
+                "action_token": token,
+            },
+            "error": {
+                "code": "pending_confirmation",
+                "message": "SQL has not been executed yet.",
+            },
+        }
+        db.add(
+            models.Message(
+                conversation_id=conversation.id,
+                role="assistant",
+                content="Please confirm this SQL action.",
+                content_parts=[
+                    {"type": "text", "text": "Please confirm this SQL action."},
+                    {
+                        "type": "tool_use",
+                        "id": "step-confirm-sql-1",
+                        "name": "execute_sql",
+                        "input": {"sql": "SHOW TABLES LIKE 't'"},
+                        "result": pending_result,
+                        "pending_action_token": token,
+                        "pending_action_status": "pending",
+                    },
+                ],
+                tool_calls=[
+                    {
+                        "id": "step-confirm-sql-1",
+                        "name": "execute_sql",
+                        "input": {"sql": "SHOW TABLES LIKE 't'"},
+                        "result": pending_result,
+                        "pending_action_token": token,
+                        "pending_action_status": "pending",
+                    }
+                ],
+            )
+        )
         db.add(
             models.ChatEvent(
                 conversation_id=conversation.id,
@@ -2472,33 +2555,11 @@ async def test_confirm_execute_sql_adds_assistant_followup_message(
                     "row_count": 1,
                 }
 
-        class _FakeResumeLLM:
-            async def chat(
-                self,
-                messages,
-                tools=None,
-                stream=False,
-                temperature=None,
-                response_format=None,
-                reasoning_config=None,
-            ):
-                del messages, tools, stream, temperature, response_format, reasoning_config
-                yield {
-                    "choices": [
-                        {
-                            "message": {
-                                "content": "已继续完成这一步：目标表存在，查询返回 1 条结果，可继续下一步分析。"
-                            }
-                        }
-                    ]
-                }
-
         monkeypatch.setattr(chat_pending_api, "probe_tenant_fingerprint", _fake_probe)
         monkeypatch.setattr(
             chat_pending_api, "build_execution_fingerprint", lambda **kwargs: "fp-1"
         )
         monkeypatch.setattr("app.db.connection.get_db_pool", lambda: _FakePool())
-        monkeypatch.setattr(chat_pending_api, "get_llm_client", lambda: _FakeResumeLLM())
 
         result = await chat_api.confirm_pending_action(
             conversation_id=conversation.id, token=token, db=db
@@ -2506,10 +2567,8 @@ async def test_confirm_execute_sql_adds_assistant_followup_message(
 
         assert result["success"] is True
         assert result["status"] == "executed"
-        assert (
-            result.get("assistant_message")
-            == "已继续完成这一步：目标表存在，查询返回 1 条结果，可继续下一步分析。"
-        )
+        assert result["should_resume"] is True
+        assert "assistant_message" not in result
 
         refreshed = (
             db.query(models.PendingAction)
@@ -2548,8 +2607,105 @@ async def test_confirm_execute_sql_adds_assistant_followup_message(
             .all()
         )
         assert [item.content for item in assistant_messages] == [
-            "已继续完成这一步：目标表存在，查询返回 1 条结果，可继续下一步分析。"
+            "Please confirm this SQL action.",
         ]
+        pending_message = assistant_messages[0]
+        tool_part = pending_message.content_parts[1]
+        assert tool_part["pending_action_status"] == "confirmed"
+        assert tool_part["result"]["success"] is True
+        assert tool_part["result"]["data"]["row_count"] == 1
+        assert pending_message.tool_calls[0]["result"] == tool_part["result"]
+    finally:
+        db.close()
+        engine.dispose()
+
+
+def test_load_action_resume_context_restores_terminal_result_and_task_state(
+    tmp_path: Path,
+) -> None:
+    factory, engine = _build_session_factory(tmp_path)
+    db = factory()
+    try:
+        conversation = models.Conversation(title="resume-context")
+        db.add(conversation)
+        db.commit()
+        db.refresh(conversation)
+        db.add(
+            models.Message(
+                conversation_id=conversation.id,
+                role="user",
+                content="Complete the database change and verify the outcome.",
+            )
+        )
+        token = "resume-terminal-result"
+        db.add(
+            models.PendingAction(
+                conversation_id=conversation.id,
+                token=token,
+                action_type="execute_sql",
+                status="failed",
+                payload={"sql": "CREATE TABLE sample (id INT PRIMARY KEY)"},
+            )
+        )
+        task_state = {
+            "task_run_id": "task-resume-terminal-result",
+            "status": "awaiting_confirmation",
+            "contract": {
+                "objective": "Complete the database change and verify the outcome.",
+                "acceptance_criteria": ["The requested change is verified."],
+            },
+        }
+        db.add(
+            models.ChatEvent(
+                conversation_id=conversation.id,
+                turn_id="turn-resume-terminal-result",
+                event_type="task_state",
+                payload=task_state,
+            )
+        )
+        db.add(
+            models.ChatEvent(
+                conversation_id=conversation.id,
+                turn_id="turn-resume-terminal-result",
+                event_type="step_result",
+                phase="reflecting",
+                payload={
+                    "step_id": "step-create-sample",
+                    "name": "execute_sql",
+                    "arguments": '{"sql":"CREATE TABLE sample (id INT PRIMARY KEY)"}',
+                    "result": {
+                        "success": False,
+                        "data": {
+                            "requires_confirmation": False,
+                            "confirmed_action_token": token,
+                        },
+                        "error": {
+                            "code": "sql_execution_error",
+                            "message": "The requested resource already exists.",
+                        },
+                    },
+                },
+            )
+        )
+        db.commit()
+
+        context = load_action_resume_context(
+            db,
+            conversation_id=conversation.id,
+            token=token,
+        )
+
+        assert context is not None
+        assert context.status == "failed"
+        assert context.user_request == "Complete the database change and verify the outcome."
+        assert context.task_state == task_state
+        assert context.execution["tool_call_id"] == f"confirmed-{token}"
+        assert context.execution["name"] == "execute_sql"
+        assert context.execution["result"]["success"] is False
+        assert (
+            context.execution["result"]["error"]["message"]
+            == "The requested resource already exists."
+        )
     finally:
         db.close()
         engine.dispose()
@@ -2607,6 +2763,47 @@ async def test_confirm_execute_sql_marks_failed_event_without_requiring_confirma
             },
         )
         db.add(pending)
+        pending_result = {
+            "success": False,
+            "data": {
+                "requires_confirmation": True,
+                "action_type": "execute_sql",
+                "action_token": token,
+            },
+            "error": {
+                "code": "pending_confirmation",
+                "message": "SQL has not been executed yet.",
+            },
+        }
+        db.add(
+            models.Message(
+                conversation_id=conversation.id,
+                role="assistant",
+                content="Please confirm this SQL action.",
+                content_parts=[
+                    {"type": "text", "text": "Please confirm this SQL action."},
+                    {
+                        "type": "tool_use",
+                        "id": "step-confirm-sql-1",
+                        "name": "execute_sql",
+                        "input": {"sql": "UPDATE t SET a=1"},
+                        "result": pending_result,
+                        "pending_action_token": token,
+                        "pending_action_status": "pending",
+                    },
+                ],
+                tool_calls=[
+                    {
+                        "id": "step-confirm-sql-1",
+                        "name": "execute_sql",
+                        "input": {"sql": "UPDATE t SET a=1"},
+                        "result": pending_result,
+                        "pending_action_token": token,
+                        "pending_action_status": "pending",
+                    }
+                ],
+            )
+        )
         db.add(
             models.ChatEvent(
                 conversation_id=conversation.id,
@@ -2641,33 +2838,11 @@ async def test_confirm_execute_sql_marks_failed_event_without_requiring_confirma
             async def execute_query(self, *args, **kwargs):
                 return await _raise_execute(*args, **kwargs)
 
-        class _FakeFailureResumeLLM:
-            async def chat(
-                self,
-                messages,
-                tools=None,
-                stream=False,
-                temperature=None,
-                response_format=None,
-                reasoning_config=None,
-            ):
-                del messages, tools, stream, temperature, response_format, reasoning_config
-                yield {
-                    "choices": [
-                        {
-                            "message": {
-                                "content": "这次确认后的 SQL 执行失败了，核心报错是 table not found。建议先核对目标表名、当前库以及执行租户是否正确，再决定是否重试。"
-                            }
-                        }
-                    ]
-                }
-
         monkeypatch.setattr(chat_pending_api, "probe_tenant_fingerprint", _fake_probe)
         monkeypatch.setattr(
             chat_pending_api, "build_execution_fingerprint", lambda **kwargs: "fp-1"
         )
         monkeypatch.setattr("app.db.connection.get_db_pool", lambda: _FakePool())
-        monkeypatch.setattr(chat_pending_api, "get_llm_client", lambda: _FakeFailureResumeLLM())
 
         confirmation = await chat_api.confirm_pending_action(
             conversation_id=conversation.id, token=token, db=db
@@ -2718,8 +2893,14 @@ async def test_confirm_execute_sql_marks_failed_event_without_requiring_confirma
             .all()
         )
         assert [item.content for item in assistant_messages] == [
-            "这次确认后的 SQL 执行失败了，核心报错是 table not found。建议先核对目标表名、当前库以及执行租户是否正确，再决定是否重试。"
+            "Please confirm this SQL action.",
         ]
+        pending_message = assistant_messages[0]
+        tool_part = pending_message.content_parts[1]
+        assert tool_part["pending_action_status"] == "failed"
+        assert tool_part["result"]["success"] is False
+        assert tool_part["result"]["error"]["code"] == "sql_execution_error"
+        assert pending_message.tool_calls[0]["result"] == tool_part["result"]
     finally:
         db.close()
         engine.dispose()

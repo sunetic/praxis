@@ -1050,6 +1050,13 @@ class ChatStreamRequest(BaseModel):
     scene_agent: SceneAgentRequest | None = None
     conversation_context: str | None = None
     locale: str | None = None
+    resume_action_token: str | None = None
+
+    @field_validator("resume_action_token")
+    @classmethod
+    def _normalize_resume_action_token(cls, value: str | None) -> str | None:
+        normalized = str(value or "").strip()
+        return normalized or None
 
     @model_validator(mode="before")
     @classmethod

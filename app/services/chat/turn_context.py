@@ -59,6 +59,7 @@ class TurnContextExtras:
     scene_fallback_payload: dict[str, Any] | None = None
     selected_skills: list[Any] | None = None
     locale: str | None = None
+    resumed_action: dict[str, str] | None = None
 
 
 def _build_pending_confirmation_block(pending_actions: list[models.PendingAction] | None) -> str:
@@ -77,6 +78,15 @@ def _build_pending_confirmation_block(pending_actions: list[models.PendingAction
         pending_action_count=len(pending_actions),
         pending_action_types=action_types,
         pending_previews=previews,
+    )
+
+
+def _build_pending_action_resume_block(resumed_action: dict[str, str] | None) -> str:
+    if not resumed_action:
+        return ""
+    return PromptLoader.render(
+        "chat/prompts/pending_action_resume.tpl",
+        action_status=str(resumed_action.get("action_status") or "unknown"),
     )
 
 
@@ -369,6 +379,7 @@ def build_agent_turn_context(
         tenant_role=(selected_datasource.tenant_role if selected_datasource else "unknown"),
         datasource_attributes_json=ds_attrs_json,
         pending_confirmation_block=_build_pending_confirmation_block(extra.pending_actions),
+        pending_action_resume_block=_build_pending_action_resume_block(extra.resumed_action),
         handoff_context_block=_build_handoff_context_block(extra.handoff_payload),
         handoff_policy_block=_build_handoff_policy_block(extra.handoff_payload),
         scope_block=_build_scope_block(scope_context),

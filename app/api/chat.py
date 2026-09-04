@@ -32,6 +32,7 @@ from app.schemas.schemas import (
     ChatStreamRequest,
 )
 from app.services.chat import get_chat_service
+from app.services.chat.action_resume import load_action_resume_context
 from app.services.chat.agent import ChatAgent
 from app.services.chat.capabilities import (
     list_active_skill_models,
@@ -182,6 +183,37 @@ async def chat_stream(
 
     db.refresh(conversation)
     incoming_content = message.content.strip()
+    resume_action_token = message.resume_action_token
+    if incoming_content and resume_action_token:
+        raise HTTPException(
+            status_code=400,
+            detail="content and resume_action_token cannot be sent together",
+        )
+    resume_context = None
+    if resume_action_token:
+        resume_context = load_action_resume_context(
+            db,
+            conversation_id=conversation_id,
+            token=resume_action_token,
+        )
+        if resume_context is None:
+            logger.warning(
+                "chat_action_resume_rejected %s",
+                fmt_kv(conversation_id=conversation_id, reason="terminal_result_not_found"),
+            )
+            raise HTTPException(
+                status_code=409,
+                detail="Confirmed action is not ready to resume",
+            )
+        logger.info(
+            "chat_action_resume_loaded %s",
+            fmt_kv(
+                conversation_id=conversation_id,
+                action_type=resume_context.action_type,
+                action_status=resume_context.status,
+                restored_task_state=resume_context.task_state is not None,
+            ),
+        )
     run_datasource_ids: list[int] = [x for x in (message.run_datasource_ids or []) if x > 0]
     scene_agent_payload = _extract_scene_agent_payload(message.model_dump())
     locale = message.locale
@@ -278,10 +310,14 @@ async def chat_stream(
         )
 
     chat_messages, messages = load_chat_messages(db, conversation_id, incoming_content)
-    resumable_task_state = _load_resumable_task_state(
-        db,
-        conversation_id=conversation_id,
-        user_input=incoming_content,
+    resumable_task_state = (
+        resume_context.task_state
+        if resume_context is not None
+        else _load_resumable_task_state(
+            db,
+            conversation_id=conversation_id,
+            user_input=incoming_content,
+        )
     )
 
     tools = _filter_tools_by_agent(conversation.agent)
@@ -417,7 +453,10 @@ async def chat_stream(
             ),
             scene_agent_payload=scene_agent_payload,
         )
-    latest_user_input = incoming_content
+    latest_user_input = (
+        incoming_content
+        or (resume_context.user_request if resume_context is not None else "")
+    )
     skill_selection = await _select_dynamic_skills(
         conversation=conversation,
         messages=messages,
@@ -464,6 +503,7 @@ async def chat_stream(
             scene_fallback_payload=scene_fallback_payload,
             selected_skills=selected_skills,
             locale=locale,
+            resumed_action=(resume_context.prompt_payload() if resume_context else None),
         ),
     )
 
@@ -810,6 +850,7 @@ async def chat_stream(
                 ],
                 is_cancelled=_is_cancelled,
                 task_state=resumable_task_state,
+                resumed_execution=(resume_context.execution if resume_context else None),
             ):
                 event_type = event.get("type")
                 event_data = event.get("data") if isinstance(event.get("data"), dict) else {}

@@ -59,6 +59,10 @@ Execution Action Policy:
 {{ pending_confirmation_block }}
 {% endif %}
 
+{% if pending_action_resume_block %}
+{{ pending_action_resume_block }}
+{% endif %}
+
 {% if handoff_context_block %}
 {{ handoff_context_block }}
 {% endif %}
