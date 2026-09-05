@@ -5,6 +5,8 @@ from urllib.parse import urlsplit
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from app.services.datasource.access import normalize_access_level
+
 SKILL_VERSION_REGEX = re.compile(r"^\d+\.\d+\.\d+$")
 SKILL_DATABASES = {"oceanbase", "mysql", "postgresql", "general"}
 
@@ -24,10 +26,28 @@ class DataSourceBase(BaseModel):
     port: int = 3306
     db_type: str = "mysql"
     cluster_key: str
+    access_level: Literal["user", "admin"] = "user"
     tenant_role: str = "user"
     attributes: dict | None = None
     user: str
     database: str = ""
+
+    @model_validator(mode="before")
+    @classmethod
+    def infer_access_level_from_legacy_role(cls, data: Any) -> Any:
+        if not isinstance(data, dict) or "access_level" in data:
+            return data
+        legacy_role = data.get("tenant_role")
+        if legacy_role is None:
+            return data
+        normalized = dict(data)
+        normalized["access_level"] = normalize_access_level(str(legacy_role))
+        return normalized
+
+    @field_validator("access_level", mode="before")
+    @classmethod
+    def validate_access_level(cls, value: str) -> str:
+        return normalize_access_level(value)
 
     @field_validator("tenant_role")
     @classmethod
@@ -50,12 +70,32 @@ class DataSourceUpdate(BaseModel):
     port: int | None = None
     db_type: str | None = None
     cluster_key: str | None = None
+    access_level: Literal["user", "admin"] | None = None
     tenant_role: str | None = None
     attributes: dict | None = None
     user: str | None = None
     password: str | None = None
     database: str | None = None
     status: str | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def infer_update_access_level_from_legacy_role(cls, data: Any) -> Any:
+        if not isinstance(data, dict) or "access_level" in data:
+            return data
+        legacy_role = data.get("tenant_role")
+        if legacy_role is None:
+            return data
+        normalized = dict(data)
+        normalized["access_level"] = normalize_access_level(str(legacy_role))
+        return normalized
+
+    @field_validator("access_level", mode="before")
+    @classmethod
+    def validate_update_access_level(cls, value: str | None) -> str | None:
+        if value is None:
+            return value
+        return normalize_access_level(value)
 
     @field_validator("tenant_role")
     @classmethod

@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from app.core.logging import get_logger
 from app.db.database import get_db
 from app.models import models
+from app.services.datasource.access import normalize_access_level
 from app.services.datasource.sql_guard import (
     build_execution_fingerprint,
     compare_tenant_fingerprint,
@@ -45,6 +46,7 @@ def _serialize_pending_action(action: models.PendingAction) -> dict:
         "intent": payload.get("intent"),
         "resolved_datasource_id": payload.get("resolved_datasource_id"),
         "resolved_role": payload.get("resolved_role"),
+        "resolved_access_level": payload.get("resolved_access_level"),
         "cluster_key": payload.get("cluster_key"),
         "tenant_fingerprint": tenant_fingerprint if isinstance(tenant_fingerprint, dict) else {},
         "execution_fingerprint": payload.get("execution_fingerprint"),
@@ -657,6 +659,12 @@ async def confirm_pending_action(conversation_id: int, token: str, db: Session =
 
     sql = str(payload.get("sql") or "").strip()
     resolved_role = str(payload.get("resolved_role") or "").strip().lower()
+    resolved_access_level = normalize_access_level(
+        str(payload.get("resolved_access_level") or resolved_role)
+    )
+    fingerprint_access_level = (
+        resolved_access_level if payload.get("resolved_access_level") else resolved_role
+    )
     resolved_datasource_id = payload.get("resolved_datasource_id")
     raw_expected_fingerprint = payload.get("tenant_fingerprint")
     expected_fingerprint = (
@@ -695,7 +703,7 @@ async def confirm_pending_action(conversation_id: int, token: str, db: Session =
     current_execution_fingerprint = build_execution_fingerprint(
         sql=sql,
         resolved_datasource_id=resolved_datasource_id,
-        resolved_role=resolved_role,
+        resolved_role=fingerprint_access_level,
         tenant_fingerprint=expected_fingerprint,
     )
     if (
@@ -710,6 +718,7 @@ async def confirm_pending_action(conversation_id: int, token: str, db: Session =
         result = await pool.execute_query(datasource, sql, role=resolved_role)
         result["resolved_datasource_id"] = datasource.id
         result["resolved_role"] = resolved_role
+        result["resolved_access_level"] = resolved_access_level
         result["route_reason"] = "confirmed_pending_action"
         result["cluster_key"] = datasource.cluster_key
 
@@ -750,7 +759,7 @@ async def confirm_pending_action(conversation_id: int, token: str, db: Session =
                             {
                                 "sql": sql,
                                 "datasource_id": resolved_datasource_id,
-                                "role": resolved_role,
+                                "access_level": resolved_access_level,
                                 "intent": payload.get("intent") or "",
                             },
                             ensure_ascii=False,
@@ -801,6 +810,7 @@ async def confirm_pending_action(conversation_id: int, token: str, db: Session =
                 "confirmed_action_token": token,
                 "resolved_datasource_id": datasource.id,
                 "resolved_role": resolved_role,
+                "resolved_access_level": resolved_access_level,
                 "cluster_key": datasource.cluster_key,
                 "tenant_fingerprint": current_fingerprint,
                 "execution_fingerprint": current_execution_fingerprint,

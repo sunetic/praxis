@@ -69,6 +69,7 @@ def get_db() -> Session:
 
 def init_db() -> None:
     Base.metadata.create_all(bind=engine)
+    _migrate_datasource_schema()
     _migrate_agent_schema()
     _migrate_runtime_object_schema()
     _migrate_schedule_schema()
@@ -90,6 +91,34 @@ def _migrate_service_schema() -> None:
     with engine.begin() as conn:
         conn.execute(text("ALTER TABLE services ADD COLUMN secrets TEXT"))
     logger.info("service_schema_migration_success %s", fmt_kv(column="secrets"))
+
+
+def _migrate_datasource_schema() -> None:
+    """Keep local databases compatible with the datasource access model."""
+
+    inspector = inspect(engine)
+    if "datasources" not in set(inspector.get_table_names()):
+        return
+
+    existing_columns = {column["name"] for column in inspector.get_columns("datasources")}
+    with engine.begin() as conn:
+        if "access_level" not in existing_columns:
+            conn.execute(
+                text(
+                    "ALTER TABLE datasources ADD COLUMN access_level "
+                    "VARCHAR(50) NOT NULL DEFAULT 'user'"
+                )
+            )
+        conn.execute(
+            text(
+                "UPDATE datasources SET access_level = CASE "
+                "WHEN LOWER(COALESCE(tenant_role, '')) IN "
+                "('sys', 'admin', 'root', 'superuser') THEN 'admin' "
+                "ELSE 'user' END "
+                "WHERE access_level IS NULL OR TRIM(access_level) = '' "
+                "OR LOWER(access_level) IN ('business', 'tenant', 'sys', 'root', 'superuser')"
+            )
+        )
 
 
 def _migrate_agent_schema() -> None:

@@ -16,6 +16,7 @@ export type DataSource = {
   port: number;
   db_type: string;
   cluster_key: string;
+  access_level?: "user" | "admin";
   tenant_role: "sys" | "user";
   attributes?: Record<string, unknown> | null;
   user: string;
@@ -31,6 +32,7 @@ export type DataSourceInput = {
   port: number;
   db_type: string;
   cluster_key: string;
+  access_level: "user" | "admin";
   tenant_role: "sys" | "user";
   attributes?: Record<string, unknown> | null;
   user: string;
@@ -397,6 +399,7 @@ export type PendingAction = {
   intent?: string;
   resolved_datasource_id?: number;
   resolved_role?: string;
+  resolved_access_level?: "user" | "admin";
   cluster_key?: string;
   tenant_fingerprint?: Record<string, string>;
   execution_fingerprint?: string;

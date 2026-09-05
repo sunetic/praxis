@@ -31,6 +31,7 @@ def _execution(
     errno: int | None = None,
     requires_confirmation: bool = False,
     planning_goal: str = "",
+    retryable_without_user_action: bool = False,
 ) -> dict[str, Any]:
     error: dict[str, Any] | None = None
     if not success:
@@ -42,6 +43,12 @@ def _execution(
         }
         if errno is not None:
             error["db_errno"] = errno
+        if retryable_without_user_action:
+            error["recovery"] = {
+                "strategy": "retry_with_access_level",
+                "tool_arguments": {"access_level": "admin"},
+                "requires_user_action": False,
+            }
     return {
         "tool_call_id": call_id,
         "name": "execute_sql",
@@ -621,6 +628,28 @@ def test_permission_failure_waits_for_authority_instead_of_retrying() -> None:
     assert decision["decision"] == ProgressDecision.AWAIT_CONFIRMATION
     assert decision["action"] == "await_confirmation"
     assert decision["reason_code"] == "authorization_required"
+
+
+def test_permission_failure_retries_when_tool_reports_in_scope_recovery() -> None:
+    journal = _journal()
+    decision = _evaluate(
+        journal,
+        _execution(
+            call_id="permission-with-recovery",
+            sql="SELECT * FROM protected_table",
+            success=False,
+            category="permission_denied",
+            message="Access denied for user",
+            error_class="execution_error",
+            retryable_without_user_action=True,
+        ),
+        1,
+    )
+
+    assert decision["decision"] == ProgressDecision.RECOVERABLE_FAILURE
+    assert decision["action"] == "retry"
+    assert decision["reason_code"] == "tool_failure_detected"
+    assert journal.status == "recovering"
 
 
 def test_transient_failure_has_separate_retry_budget() -> None:

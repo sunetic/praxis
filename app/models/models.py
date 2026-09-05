@@ -46,6 +46,7 @@ class DataSource(Base):
     port: Mapped[int] = mapped_column(Integer, nullable=False)
     db_type: Mapped[str] = mapped_column(String(50), default="mysql")
     cluster_key: Mapped[str] = mapped_column(String(255), nullable=False, default="")
+    access_level: Mapped[str] = mapped_column(String(50), nullable=False, default="user")
     tenant_role: Mapped[str] = mapped_column(String(50), nullable=False, default="user")
 
     user: Mapped[str | None] = mapped_column(String(255), nullable=True)

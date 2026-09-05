@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session
 
 from app.core.logging import get_logger
 from app.models import models
-from app.services.chat.vds import event_to_vds as _event_to_vds
+from app.services.datasource.access import datasource_access_level
 from app.services.llm import get_llm_client
 from app.services.platform.skill_selector import select_skills_for_context
 from app.skills.store import skill_store
@@ -277,6 +277,7 @@ def _normalize_scene_agent_payload_datasource(
             "id": datasource.id,
             "name": datasource.name,
             "cluster_key": datasource.cluster_key,
+            "access_level": datasource_access_level(datasource),
             "tenant_role": datasource.tenant_role,
             "host": datasource.host,
             "port": datasource.port,
@@ -496,58 +497,6 @@ async def _select_dynamic_skills(
         llm_client_factory=get_llm_client,
         skill_store_instance=skill_store,
     )
-
-
-ALL_TENANTS_REQUEST_PATTERNS = (re.compile(r"\b(all|across)\s+tenants?\b", flags=re.IGNORECASE),)
-
-
-def _is_all_tenants_request(user_input: str) -> bool:
-    text = str(user_input or "").strip()
-    if not text:
-        return False
-    return any(pattern.search(text) for pattern in ALL_TENANTS_REQUEST_PATTERNS)
-
-
-def _build_cross_tenant_scope_guard_message(datasource: models.DataSource) -> str:
-    datasource_name = str(datasource.name or f"Datasource#{datasource.id}").strip()
-    return (
-        f"The current session is bound to {datasource_name} (#{datasource.id}), which has user scope and can only see the current tenant. "
-        "Your request involves all tenants, which requires sys scope. "
-        "Please switch to a sys-scope datasource and retry, or explicitly confirm that only the current tenant should be checked."
-    )
-
-
-async def _stream_scope_guard_reply(
-    *,
-    conversation_id: int,
-    trace_id: str,
-    guard_payload: dict[str, Any],
-):
-    await _save_chat_events_to_db(
-        [
-            models.ChatEvent(
-                conversation_id=conversation_id,
-                event_type="scope_guard",
-                phase="planning",
-                payload=_normalize_json_payload(guard_payload),
-            )
-        ]
-    )
-    assistant_text = str(guard_payload.get("message") or "").strip()
-    if assistant_text:
-        await _save_messages_to_db(
-            [
-                models.Message(
-                    conversation_id=conversation_id,
-                    role="assistant",
-                    content=assistant_text,
-                )
-            ]
-        )
-        yield _event_to_vds(
-            {"type": "assistant", "phase": "responding", "data": {"text": assistant_text}}
-        )
-    yield _event_to_vds({"type": "done", "data": {"trace_id": trace_id}})
 
 
 def _build_builder_scene_conversation_context(

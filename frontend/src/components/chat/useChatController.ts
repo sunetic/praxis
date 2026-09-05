@@ -50,7 +50,7 @@ export type SaveAgentState = {
 
 export type TenantBadge = {
   text: string
-  isSys: boolean
+  isAdmin: boolean
 }
 
 
@@ -420,18 +420,28 @@ export function getTenantBadge(
       ? (resultPayload.data as Record<string, unknown>)
       : null
 
-  const resolvedRole = String(resultData?.resolved_role ?? parsedArgs?.role ?? "user").toLowerCase()
-  if (resolvedRole === "sys") return { text: "sys", isSys: true }
-  if (resolvedRole === "user" || resolvedRole === "business" || resolvedRole === "tenant") {
-    return { text: "user", isSys: false }
+  const resolvedAccessLevel = String(
+    resultData?.resolved_access_level ??
+      parsedArgs?.access_level ??
+      resultData?.resolved_role ??
+      parsedArgs?.role ??
+      "user"
+  ).toLowerCase()
+  if (["admin", "sys", "root", "superuser"].includes(resolvedAccessLevel)) {
+    return { text: "admin", isAdmin: true }
+  }
+  if (["user", "business", "tenant"].includes(resolvedAccessLevel)) {
+    return { text: "user", isAdmin: false }
   }
 
   const datasourceId =
     parseNumericId(resultData?.resolved_datasource_id) ?? parseNumericId(parsedArgs?.datasource_id)
   const matchedDatasource =
     datasourceId !== null ? datasources.find((item) => item.id === datasourceId) : undefined
-  if (matchedDatasource?.tenant_role === "sys") return { text: "sys", isSys: true }
-  return { text: "user", isSys: false }
+  if (matchedDatasource?.access_level === "admin" || matchedDatasource?.tenant_role === "sys") {
+    return { text: "admin", isAdmin: true }
+  }
+  return { text: "user", isAdmin: false }
 }
 
 // ── Hook ───────────────────────────────────────────────────────────────

@@ -186,8 +186,8 @@ def test_existing_plaintext_row_reads_transparently(db_session):
     """Simulates a pre-migration row with plaintext password."""
     db_session.execute(
         text(
-            "INSERT INTO datasources (name, host, port, db_type, cluster_key, tenant_role, user, password, database, status, created_at, updated_at) "
-            "VALUES ('legacy', '127.0.0.1', 2881, 'oceanbase', '127.0.0.1:2881', 'user', 'root', 'legacy-plain', 'oceanbase', 'active', datetime('now'), datetime('now'))"
+            "INSERT INTO datasources (name, host, port, db_type, cluster_key, access_level, tenant_role, user, password, database, status, created_at, updated_at) "
+            "VALUES ('legacy', '127.0.0.1', 2881, 'oceanbase', '127.0.0.1:2881', 'user', 'user', 'root', 'legacy-plain', 'oceanbase', 'active', datetime('now'), datetime('now'))"
         )
     )
     db_session.commit()

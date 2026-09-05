@@ -1,12 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from "react"
 import { useNavigate, useSearchParams } from "react-router-dom"
-import { ChevronDown, Database, Loader2, MessageSquarePlus, Trash2 } from "lucide-react"
+import { Database, Loader2, MessageSquarePlus, Trash2 } from "lucide-react"
 import { toast } from "sonner"
 
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { ConfirmActionDialog } from "@/components/ui/confirm-action-dialog"
+import { Select, SelectContent, SelectItem, SelectTrigger } from "@/components/ui/select"
 import { ChatThreadView } from "@/components/chat/ChatThreadView"
 import { WorkbenchPage } from "@/components/shared/WorkbenchPage"
 import { useChatController } from "@/components/chat/useChatController"
@@ -75,7 +76,6 @@ export function ChatPage() {
   const [skills, setSkills] = useState<Skill[]>([])
   const [currentConversation, setCurrentConversation] = useState<Conversation | null>(null)
   const [loading, setLoading] = useState(false)
-  const [showDatasourceSelect, setShowDatasourceSelect] = useState(false)
   const [updatingDatasource, setUpdatingDatasource] = useState(false)
   const [clearingAll, setClearingAll] = useState(false)
   const [clearConfirmOpen, setClearConfirmOpen] = useState(false)
@@ -83,7 +83,6 @@ export function ChatPage() {
   const [handoff, setHandoff] = useState<ChatHandoff | null>(null)
   const [, setLoadingHandoff] = useState(false)
 
-  const datasourceMenuRef = useRef<HTMLDivElement>(null)
   const runContextAppliedRef = useRef<number | null>(null)
   const autoRunTriggeredRef = useRef<number | null>(null)
 
@@ -224,15 +223,6 @@ export function ChatPage() {
     if (matched && currentConversation?.id !== matched.id) setCurrentConversation(matched)
   }, [searchParams, conversations, currentConversation?.id])
 
-  useEffect(() => {
-    if (!showDatasourceSelect) return
-    const handleClickOutside = (event: MouseEvent) => {
-      if (!datasourceMenuRef.current?.contains(event.target as Node)) setShowDatasourceSelect(false)
-    }
-    document.addEventListener("mousedown", handleClickOutside)
-    return () => document.removeEventListener("mousedown", handleClickOutside)
-  }, [showDatasourceSelect])
-
   // Handoff loading
   useEffect(() => {
     const handoffRoute = parseHandoffRoute(searchParams)
@@ -296,7 +286,8 @@ export function ChatPage() {
     if (!currentConversation?.datasource_id) return t("chat.datasource.select")
     const matched = datasources.find((item) => item.id === currentConversation.datasource_id)
     if (!matched) return `Datasource ${currentConversation.datasource_id}`
-    return `${matched.name} (${matched.tenant_role})`
+    const accessLevel = matched.access_level || (matched.tenant_role === "sys" ? "admin" : "user")
+    return `${matched.name} (${accessLevel})`
   }, [currentConversation?.datasource_id, datasources])
 
   const skillDescriptionByName = useMemo(() => {
@@ -324,7 +315,6 @@ export function ChatPage() {
       setCurrentConversation(created)
       setAgentRunContext(null)
       setHandoff(null)
-      setShowDatasourceSelect(false)
     } catch {
       toast.error(t("chat.toast.createFailed"))
     }
@@ -360,14 +350,12 @@ export function ChatPage() {
       return
     }
     if (currentConversation.datasource_id === datasourceId) {
-      setShowDatasourceSelect(false)
       return
     }
     setUpdatingDatasource(true)
     try {
       const updated = await conversationsApi.update(currentConversation.id, { datasource_id: datasourceId })
       updateConversationState(currentConversation.id, updated)
-      setShowDatasourceSelect(false)
     } catch {
       toast.error(t("chat.toast.switchDsFailed"))
     } finally {
@@ -511,49 +499,44 @@ export function ChatPage() {
               ))}
             </select>
             <div className="flex flex-wrap items-center gap-3">
-              <div ref={datasourceMenuRef} className="relative">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="h-8 max-w-[280px] justify-between gap-2"
-                  onClick={() => setShowDatasourceSelect((prev) => !prev)}
+              <Select
+                value={currentConversation?.datasource_id ? String(currentConversation.datasource_id) : ""}
+                onValueChange={(value) => void handleSelectDatasource(Number(value))}
+                disabled={!currentConversation || controller.streaming || controller.savingAgent || updatingDatasource || isSceneConversation}
+              >
+                <SelectTrigger
+                  aria-label={t("chat.datasource.select")}
+                  className="h-8 w-auto max-w-[280px] min-w-0 gap-2"
                   disabled={!currentConversation || controller.streaming || controller.savingAgent || updatingDatasource || isSceneConversation}
                 >
-                  <span className="min-w-0 flex items-center gap-2">
-                    <Database className="size-3.5 text-muted-foreground" />
-                    <span className="truncate text-xs">{currentDatasourceLabel}</span>
-                  </span>
+                  <Database className="size-3.5 shrink-0 text-muted-foreground" />
+                  <span className="min-w-0 truncate text-xs">{currentDatasourceLabel}</span>
                   {updatingDatasource ? (
-                    <Loader2 className="size-3.5 animate-spin text-muted-foreground" />
+                    <Loader2 className="size-3.5 shrink-0 animate-spin text-muted-foreground" />
+                  ) : null}
+                </SelectTrigger>
+                <SelectContent className="w-72 max-w-[calc(100vw-2rem)]">
+                  {agentRunDatasourceOptions.length === 0 ? (
+                    <div className="px-2 py-2 text-xs text-muted-foreground">{t("chat.datasource.empty")}</div>
                   ) : (
-                    <ChevronDown className="size-3.5 text-muted-foreground" />
+                    agentRunDatasourceOptions.map((item) => {
+                      const accessLevel = item.access_level || (item.tenant_role === "sys" ? "admin" : "user")
+                      return (
+                        <SelectItem key={item.id} value={String(item.id)} className="py-2">
+                          <span className="flex min-w-0 max-w-60 flex-col items-start">
+                            <span className="block max-w-full truncate text-xs font-medium text-foreground">
+                              {item.name}
+                            </span>
+                            <span className="block max-w-full truncate text-[11px] text-muted-foreground">
+                              {item.cluster_key} · {accessLevel}
+                            </span>
+                          </span>
+                        </SelectItem>
+                      )
+                    })
                   )}
-                </Button>
-                {showDatasourceSelect ? (
-                  <div className="absolute top-full left-0 z-20 mt-2 w-80 rounded-lg border border-border bg-card p-1 shadow-md">
-                    {agentRunDatasourceOptions.length === 0 ? (
-                      <div className="px-2 py-2 text-xs text-muted-foreground">{t("chat.datasource.empty")}</div>
-                    ) : (
-                      agentRunDatasourceOptions.map((item) => (
-                        <Button
-                          key={item.id}
-                          type="button"
-                          variant="ghost"
-                          className={`h-auto w-full justify-start rounded-lg px-2 py-2 text-left transition-colors ${
-                            currentConversation?.datasource_id === item.id ? "bg-accent" : "hover:bg-muted"
-                          }`}
-                          onClick={() => handleSelectDatasource(item.id)}
-                        >
-                          <div className="text-xs font-medium text-foreground">{item.name}</div>
-                          <div className="text-[11px] text-muted-foreground">
-                            {item.cluster_key} · {item.tenant_role} · {item.host}:{item.port}
-                          </div>
-                        </Button>
-                      ))
-                    )}
-                  </div>
-                ) : null}
-              </div>
+                </SelectContent>
+              </Select>
 
               <div className="h-4 w-px bg-border" />
               <div className="flex min-w-0 flex-1 items-center gap-2 rounded-lg border border-border bg-muted/60 px-3 py-1.5">

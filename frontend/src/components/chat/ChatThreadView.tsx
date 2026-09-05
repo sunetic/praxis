@@ -203,6 +203,22 @@ function ChatThreadViewSession({
     return result
   }, [conversationId, persistedMessages, streaming, streamingParts])
 
+  const actionBoundaryToolCallIds = useMemo(() => {
+    const ids = new Set<string>()
+    for (const msg of persistedMessages) {
+      if (conversationId !== null && msg.conversation_id !== conversationId) continue
+      for (const part of msg.content_parts ?? []) {
+        if (part.type === "tool_use" && part.pending_action_token) {
+          ids.add(part.id)
+        }
+      }
+      for (const toolCall of msg.tool_calls ?? []) {
+        if (toolCall.pending_action_token) ids.add(toolCall.id)
+      }
+    }
+    return ids
+  }, [conversationId, persistedMessages])
+
   const onNew = useCallback(
     async (msg: AppendMessage) => {
       const text = msg.content
@@ -327,6 +343,7 @@ function ChatThreadViewSession({
             statusText={streaming ? runtimeStatus?.text : undefined}
             placeholder={placeholder}
             readOnly={readOnly || awaitingConfirmation}
+            actionBoundaryToolCallIds={actionBoundaryToolCallIds}
             footerContent={
               <div className="flex flex-col gap-2">
                   {contextCompressionNotice ? (

@@ -8,7 +8,17 @@ from typing import Any
 from app.core.config import get_settings
 from app.core.logging import fmt_kv, get_logger
 from app.db.database import SessionLocal
-from app.services.datasource.router import DataSourceRoutingError, resolve_datasource_by_role
+from app.services.datasource.access import (
+    ADMIN_ACCESS_LEVEL,
+    USER_ACCESS_LEVEL,
+    datasource_access_level,
+    normalize_access_level,
+)
+from app.services.datasource.router import (
+    DataSourceRoutingError,
+    list_available_access_levels,
+    resolve_datasource_by_access_level,
+)
 from app.services.platform.object_tools import ObjectToolError, ObjectToolService
 
 logger = get_logger("tools.registry")
@@ -104,7 +114,10 @@ def _build_sql_error_payload(exc: Exception, prefix: str) -> dict[str, Any]:
     if category in {"unknown_table", "unknown_column"}:
         retry_hint = "Discover available schema objects first, then adapt SQL."
     elif category == "permission_error":
-        retry_hint = "Try switching datasource or use accessible objects."
+        retry_hint = (
+            "Retry with access_level='admin' when an active admin datasource is configured "
+            "for the same cluster, or continue with objects available to the user datasource."
+        )
 
     return {
         "code": "sql_execution_error",
@@ -114,6 +127,32 @@ def _build_sql_error_payload(exc: Exception, prefix: str) -> dict[str, Any]:
         "message": f"{prefix}: {raw_message}",
         "retry_hint": retry_hint,
     }
+
+
+def _attach_access_level_recovery(
+    error: dict[str, Any],
+    *,
+    db: Any,
+    datasource_id: int,
+    requested_access_level: str,
+) -> dict[str, Any]:
+    """Describe an already-authorized retry path without executing it automatically."""
+
+    if error.get("category") != "permission_error":
+        return error
+    try:
+        requested = normalize_access_level(requested_access_level)
+        available = list_available_access_levels(db, datasource_id)
+    except (DataSourceRoutingError, ValueError):
+        return error
+    if requested == ADMIN_ACCESS_LEVEL or ADMIN_ACCESS_LEVEL not in available:
+        return error
+    error["recovery"] = {
+        "strategy": "retry_with_access_level",
+        "tool_arguments": {"access_level": ADMIN_ACCESS_LEVEL},
+        "requires_user_action": False,
+    }
+    return error
 
 
 class ExecuteSQLTool(BaseTool):
@@ -133,10 +172,14 @@ class ExecuteSQLTool(BaseTool):
         "properties": {
             "sql": {"type": "string", "description": "The SQL statement to execute"},
             "datasource_id": {"type": "integer", "description": "Datasource ID"},
-            "role": {
+            "access_level": {
                 "type": "string",
-                "enum": ["sys", "user"],
-                "description": "Connection role, defaults to user (legacy aliases tenant/business are still supported)",
+                "enum": ["user", "admin"],
+                "default": "user",
+                "description": (
+                    "Credential access level. Start with user. Use admin only when system-level "
+                    "visibility or a permission failure requires the same cluster's admin datasource."
+                ),
             },
             "intent": {
                 "type": "string",
@@ -147,7 +190,12 @@ class ExecuteSQLTool(BaseTool):
     }
 
     async def execute(
-        self, sql: str, datasource_id: int, role: str = "user", **params: object
+        self,
+        sql: str,
+        datasource_id: int,
+        access_level: str = USER_ACCESS_LEVEL,
+        role: str | None = None,
+        **params: object,
     ) -> ToolResult:
         from app.db.database import SessionLocal
         from app.db.pool_factory import get_pool_for_datasource
@@ -160,20 +208,34 @@ class ExecuteSQLTool(BaseTool):
             redact_sql_preview,
         )
 
+        requested_access_level = role or access_level
         db = SessionLocal()
         try:
             logger.info(
                 "tool_execute_start %s",
-                fmt_kv(tool=self.name, datasource_id=datasource_id, role=role),
+                fmt_kv(
+                    tool=self.name,
+                    datasource_id=datasource_id,
+                    access_level=requested_access_level,
+                ),
             )
             try:
-                routed = resolve_datasource_by_role(db, datasource_id, role)
+                routed = resolve_datasource_by_access_level(
+                    db,
+                    datasource_id,
+                    requested_access_level,
+                )
             except DataSourceRoutingError as e:
                 logger.warning(
                     "tool_execute_route_failed %s",
-                    fmt_kv(tool=self.name, datasource_id=datasource_id, role=role),
+                    fmt_kv(
+                        tool=self.name,
+                        datasource_id=datasource_id,
+                        access_level=requested_access_level,
+                        route_error=e.code,
+                    ),
                 )
-                return ToolResult(success=False, error=str(e))
+                return ToolResult(success=False, error=e.to_payload())
 
             pool = get_pool_for_datasource(routed.datasource)
             is_mutating = is_mutating_sql(sql)
@@ -184,7 +246,11 @@ class ExecuteSQLTool(BaseTool):
                 if not allow_mutating:
                     logger.info(
                         "tool_execute_blocked_safety_mode %s",
-                        fmt_kv(tool=self.name, datasource_id=datasource_id, role=role),
+                        fmt_kv(
+                            tool=self.name,
+                            datasource_id=datasource_id,
+                            access_level=requested_access_level,
+                        ),
                     )
                     return ToolResult(
                         success=False,
@@ -216,7 +282,7 @@ class ExecuteSQLTool(BaseTool):
                 execution_fingerprint = build_execution_fingerprint(
                     sql=sql,
                     resolved_datasource_id=routed.datasource.id,
-                    resolved_role=routed.resolved_role,
+                    resolved_role=routed.resolved_access_level,
                     tenant_fingerprint=tenant_fingerprint,
                 )
                 confirmation_bypassed = bool(get_setting(db, "ai_action_confirmation_bypass"))
@@ -236,7 +302,7 @@ class ExecuteSQLTool(BaseTool):
                         routed=routed,
                         sql=sql,
                         datasource_id=datasource_id,
-                        requested_role=role,
+                        requested_access_level=requested_access_level,
                         bypass_metadata={
                             "confirmation_bypassed": True,
                             "execution_fingerprint": execution_fingerprint,
@@ -278,7 +344,7 @@ class ExecuteSQLTool(BaseTool):
                             conversation_id=conversation_id,
                             token=existing.token,
                             resolved_datasource_id=routed.datasource.id,
-                            role=routed.resolved_role,
+                            access_level=routed.resolved_access_level,
                         ),
                     )
                     return ToolResult(
@@ -294,6 +360,7 @@ class ExecuteSQLTool(BaseTool):
                             "tenant_fingerprint": tenant_fingerprint,
                             "resolved_datasource_id": routed.datasource.id,
                             "resolved_role": routed.resolved_role,
+                            "resolved_access_level": routed.resolved_access_level,
                             "route_reason": routed.reason,
                             "cluster_key": routed.datasource.cluster_key,
                             "deduplicated_pending_action": True,
@@ -309,9 +376,11 @@ class ExecuteSQLTool(BaseTool):
                     "sql": sql,
                     "intent": str(params.get("intent") or ""),
                     "requested_datasource_id": datasource_id,
-                    "requested_role": role,
+                    "requested_role": routed.requested_role,
+                    "requested_access_level": routed.requested_access_level,
                     "resolved_datasource_id": routed.datasource.id,
                     "resolved_role": routed.resolved_role,
+                    "resolved_access_level": routed.resolved_access_level,
                     "route_reason": routed.reason,
                     "cluster_key": routed.datasource.cluster_key,
                     "batch_id": batch_id,
@@ -336,7 +405,7 @@ class ExecuteSQLTool(BaseTool):
                         conversation_id=conversation_id,
                         token=token,
                         resolved_datasource_id=routed.datasource.id,
-                        role=routed.resolved_role,
+                        access_level=routed.resolved_access_level,
                     ),
                 )
                 return ToolResult(
@@ -351,6 +420,7 @@ class ExecuteSQLTool(BaseTool):
                         "tenant_fingerprint": tenant_fingerprint,
                         "resolved_datasource_id": routed.datasource.id,
                         "resolved_role": routed.resolved_role,
+                        "resolved_access_level": routed.resolved_access_level,
                         "route_reason": routed.reason,
                         "cluster_key": routed.datasource.cluster_key,
                     },
@@ -365,16 +435,27 @@ class ExecuteSQLTool(BaseTool):
                 routed=routed,
                 sql=sql,
                 datasource_id=datasource_id,
-                requested_role=role,
+                requested_access_level=requested_access_level,
             )
         except Exception as e:
             logger.exception(
                 "tool_execute_error %s error=%s",
-                fmt_kv(tool=self.name, datasource_id=datasource_id, role=role),
+                fmt_kv(
+                    tool=self.name,
+                    datasource_id=datasource_id,
+                    access_level=requested_access_level,
+                ),
                 str(e),
             )
+            error = _build_sql_error_payload(e, "SQL execution error")
             return ToolResult(
-                success=False, error=_build_sql_error_payload(e, "SQL execution error")
+                success=False,
+                error=_attach_access_level_recovery(
+                    error,
+                    db=db,
+                    datasource_id=datasource_id,
+                    requested_access_level=requested_access_level,
+                ),
             )
         finally:
             db.close()
@@ -386,7 +467,7 @@ class ExecuteSQLTool(BaseTool):
         routed: Any,
         sql: str,
         datasource_id: int,
-        requested_role: str,
+        requested_access_level: str,
         bypass_metadata: dict[str, Any] | None = None,
     ) -> ToolResult:
         result = await pool.execute_query(
@@ -396,6 +477,7 @@ class ExecuteSQLTool(BaseTool):
         )
         result["resolved_datasource_id"] = routed.datasource.id
         result["resolved_role"] = routed.resolved_role
+        result["resolved_access_level"] = routed.resolved_access_level
         result["route_reason"] = routed.reason
         result["cluster_key"] = routed.datasource.cluster_key
         if bypass_metadata:
@@ -407,8 +489,8 @@ class ExecuteSQLTool(BaseTool):
                 tool=self.name,
                 datasource_id=datasource_id,
                 resolved_datasource_id=routed.datasource.id,
-                role=routed.resolved_role,
-                requested_role=requested_role,
+                access_level=routed.resolved_access_level,
+                requested_access_level=requested_access_level,
                 confirmation_bypassed=bool(bypass_metadata),
                 row_count=result.get("row_count"),
             ),
@@ -424,10 +506,13 @@ class ExplainSQLTool(BaseTool):
         "properties": {
             "sql": {"type": "string", "description": "The SQL statement to analyze"},
             "datasource_id": {"type": "integer", "description": "Datasource ID"},
-            "role": {
+            "access_level": {
                 "type": "string",
-                "enum": ["sys", "user"],
-                "description": "Connection role, defaults to user (legacy aliases tenant/business are still supported)",
+                "enum": ["user", "admin"],
+                "default": "user",
+                "description": (
+                    "Credential access level. Start with user and use admin only when required."
+                ),
             },
             "intent": {
                 "type": "string",
@@ -438,25 +523,44 @@ class ExplainSQLTool(BaseTool):
     }
 
     async def execute(
-        self, sql: str, datasource_id: int, role: str = "user", **params: object
+        self,
+        sql: str,
+        datasource_id: int,
+        access_level: str = USER_ACCESS_LEVEL,
+        role: str | None = None,
+        **params: object,
     ) -> ToolResult:
         from app.db.database import SessionLocal
         from app.db.pool_factory import get_pool_for_datasource
 
+        requested_access_level = role or access_level
         db = SessionLocal()
         try:
             logger.info(
                 "tool_execute_start %s",
-                fmt_kv(tool=self.name, datasource_id=datasource_id, role=role),
+                fmt_kv(
+                    tool=self.name,
+                    datasource_id=datasource_id,
+                    access_level=requested_access_level,
+                ),
             )
             try:
-                routed = resolve_datasource_by_role(db, datasource_id, role)
+                routed = resolve_datasource_by_access_level(
+                    db,
+                    datasource_id,
+                    requested_access_level,
+                )
             except DataSourceRoutingError as e:
                 logger.warning(
                     "tool_execute_route_failed %s",
-                    fmt_kv(tool=self.name, datasource_id=datasource_id, role=role),
+                    fmt_kv(
+                        tool=self.name,
+                        datasource_id=datasource_id,
+                        access_level=requested_access_level,
+                        route_error=e.code,
+                    ),
                 )
-                return ToolResult(success=False, error=str(e))
+                return ToolResult(success=False, error=e.to_payload())
 
             pool = get_pool_for_datasource(routed.datasource)
             result = await pool.execute_explain(
@@ -466,6 +570,7 @@ class ExplainSQLTool(BaseTool):
             )
             result["resolved_datasource_id"] = routed.datasource.id
             result["resolved_role"] = routed.resolved_role
+            result["resolved_access_level"] = routed.resolved_access_level
             result["route_reason"] = routed.reason
             result["cluster_key"] = routed.datasource.cluster_key
 
@@ -475,17 +580,30 @@ class ExplainSQLTool(BaseTool):
                     tool=self.name,
                     datasource_id=datasource_id,
                     resolved_datasource_id=routed.datasource.id,
-                    role=routed.resolved_role,
+                    access_level=routed.resolved_access_level,
                 ),
             )
             return ToolResult(success=True, data=result)
         except Exception as e:
             logger.exception(
                 "tool_execute_error %s error=%s",
-                fmt_kv(tool=self.name, datasource_id=datasource_id, role=role),
+                fmt_kv(
+                    tool=self.name,
+                    datasource_id=datasource_id,
+                    access_level=requested_access_level,
+                ),
                 str(e),
             )
-            return ToolResult(success=False, error=_build_sql_error_payload(e, "EXPLAIN error"))
+            error = _build_sql_error_payload(e, "EXPLAIN error")
+            return ToolResult(
+                success=False,
+                error=_attach_access_level_recovery(
+                    error,
+                    db=db,
+                    datasource_id=datasource_id,
+                    requested_access_level=requested_access_level,
+                ),
+            )
         finally:
             db.close()
 
@@ -567,9 +685,14 @@ class DatasourceSwitchTool(BaseTool):
             return ToolResult(
                 success=True,
                 data={
-                    "message": f"Switched to datasource {datasource.name} (#{datasource.id}, {datasource.tenant_role}). Subsequent queries will use this datasource by default.",
+                    "message": (
+                        f"Switched to datasource {datasource.name} "
+                        f"(#{datasource.id}, {datasource_access_level(datasource)}). "
+                        "Subsequent queries will use this datasource by default."
+                    ),
                     "datasource_id": datasource.id,
                     "datasource_name": datasource.name,
+                    "access_level": datasource_access_level(datasource),
                     "tenant_role": datasource.tenant_role,
                 },
             )

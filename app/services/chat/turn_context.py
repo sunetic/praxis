@@ -19,6 +19,8 @@ from app.services.chat.capabilities import (
 )
 from app.services.chat.scene_agents import SceneAgentPayload
 from app.services.chat.tool_binding import inject_service_tools
+from app.services.datasource.access import datasource_access_level
+from app.services.datasource.router import list_available_access_levels
 from app.services.platform.prompt_loader import PromptLoader
 from app.services.response_style import build_response_style_prompt
 from app.skills.store import skill_store
@@ -368,6 +370,14 @@ def build_agent_turn_context(
         agent_base_prompt = str(agent.prompt or "").strip() or agent_base_prompt
 
     db_type = selected_datasource.db_type if selected_datasource else "unknown"
+    selected_access_level = (
+        datasource_access_level(selected_datasource) if selected_datasource else "unknown"
+    )
+    available_access_levels = (
+        list_available_access_levels(db, selected_datasource.id)
+        if selected_datasource is not None
+        else []
+    )
 
     turn_context_block = PromptLoader.render(
         "chat/prompts/chat_core_agent.tpl",
@@ -376,7 +386,8 @@ def build_agent_turn_context(
         db_type=db_type,
         db_type_block=_build_db_type_block(db_type),
         cluster_key=(selected_datasource.cluster_key if selected_datasource else "unknown"),
-        tenant_role=(selected_datasource.tenant_role if selected_datasource else "unknown"),
+        access_level=selected_access_level,
+        available_access_levels=available_access_levels,
         datasource_attributes_json=ds_attrs_json,
         pending_confirmation_block=_build_pending_confirmation_block(extra.pending_actions),
         pending_action_resume_block=_build_pending_action_resume_block(extra.resumed_action),

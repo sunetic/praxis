@@ -16,6 +16,7 @@ const {
   conversationsApi: {
     list: vi.fn(),
     create: vi.fn(),
+    update: vi.fn(),
     delete: vi.fn(),
   },
   datasourcesApi: {
@@ -45,6 +46,7 @@ const {
 vi.mock("@/lib/api", () => ({
   conversationsApi,
   datasourcesApi,
+  filterConnectableDatasources: (datasources: unknown[]) => datasources,
   messagesApi,
   chatApi,
   skillsApi,
@@ -128,6 +130,9 @@ describe("ChatPage workspace boundary and handoff", () => {
       created_at: "2026-03-14T00:00:00Z",
       updated_at: "2026-03-14T00:00:00Z",
     })
+    conversationsApi.update.mockImplementation(async (id: number, payload: { datasource_id?: number }) =>
+      buildConversation({ id, datasource_id: payload.datasource_id ?? null })
+    )
     conversationsApi.delete.mockResolvedValue({})
     datasourcesApi.list.mockResolvedValue([
       {
@@ -494,6 +499,109 @@ describe("ChatPage workspace boundary and handoff", () => {
     expect(screen.getByText("检查完成。")).toBeInTheDocument()
   })
 
+  it("keeps a pending approval visible outside a collapsed tool group", async () => {
+    const pendingResult = {
+      success: false,
+      data: {
+        requires_confirmation: true,
+        action_type: "execute_sql",
+        action_token: "token-visible",
+      },
+      error: {
+        code: "pending_confirmation",
+        message: "SQL has not been executed yet.",
+      },
+    }
+    const pendingMessages = [
+      {
+        id: 11,
+        conversation_id: 1,
+        role: "assistant",
+        content: "等待确认。",
+        content_parts: [
+          { type: "tool_use", id: "tool-1", name: "execute_sql", input: { sql: "SELECT 1" }, result: { success: true } },
+          { type: "tool_use", id: "tool-2", name: "execute_sql", input: { sql: "SELECT 2" }, result: { success: true } },
+          {
+            type: "tool_use",
+            id: "tool-3",
+            name: "execute_sql",
+            input: { sql: "DELETE FROM demo_users WHERE id = 4" },
+            result: pendingResult,
+            pending_action_token: "token-visible",
+            pending_action_status: "pending",
+          },
+          { type: "text", text: "等待确认。" },
+        ],
+        created_at: "2026-03-14T00:00:04.000000",
+      },
+    ]
+    const confirmedMessages = [
+      {
+        ...pendingMessages[0],
+        content_parts: pendingMessages[0].content_parts.map((part) =>
+          part.type === "tool_use" && part.id === "tool-3"
+            ? {
+                ...part,
+                result: {
+                  success: true,
+                  data: { rows: [], row_count: 1 },
+                  error: null,
+                },
+                pending_action_status: "confirmed",
+              }
+            : part
+        ),
+      },
+    ]
+    messagesApi.list
+      .mockResolvedValueOnce(pendingMessages)
+      .mockResolvedValueOnce(confirmedMessages)
+    chatApi.listPendingActions.mockResolvedValueOnce([
+      {
+        token: "token-visible",
+        action_type: "execute_sql",
+        status: "pending",
+        intent: "删除测试用户",
+        sql_preview: "DELETE FROM demo_users WHERE id = 4",
+        cluster_key: "local-mysql-8.4",
+        resolved_role: "user",
+      },
+    ]).mockResolvedValueOnce([])
+    chatApi.confirmPendingAction.mockResolvedValueOnce({
+      success: true,
+      status: "confirmed",
+      should_resume: false,
+    })
+
+    render(
+      <MemoryRouter>
+        <ChatPage />
+      </MemoryRouter>
+    )
+
+    const group = await screen.findByRole("button", { name: /2 个工具调用/ })
+    expect(group).toHaveAttribute("aria-expanded", "false")
+    const confirmButton = await screen.findByRole("button", { name: "确认执行" })
+    expect(confirmButton).toBeVisible()
+    expect(confirmButton.closest('[data-slot="tool-group-content"]')).toBeNull()
+    expect(screen.getByText("删除测试用户")).toBeVisible()
+    expect(screen.queryByPlaceholderText("输入问题...")).not.toBeInTheDocument()
+
+    await userEvent.click(confirmButton)
+    await waitFor(() => {
+      expect(chatApi.confirmPendingAction).toHaveBeenCalledWith(1, "token-visible")
+    })
+    await waitFor(() => {
+      expect(screen.queryByRole("button", { name: "确认执行" })).not.toBeInTheDocument()
+    })
+    expect(screen.getByRole("button", { name: /2 个工具调用/ })).toHaveAttribute(
+      "aria-expanded",
+      "false"
+    )
+    expect(screen.getByText("执行成功，返回 1 条记录")).toBeVisible()
+    expect(screen.getByPlaceholderText("输入问题...")).toBeInTheDocument()
+  })
+
   it("shows request analysis as an inline message status", async () => {
     chatApi.stream.mockImplementationOnce(() => new Promise<Response>(() => undefined))
 
@@ -588,6 +696,68 @@ describe("ChatPage workspace boundary and handoff", () => {
       expect(screen.getAllByText("正在检索知识库。")).toHaveLength(1)
       expect(screen.getAllByRole("button", { name: /工具调用：knowledge_search/i })).toHaveLength(1)
       expect(screen.getAllByText("检索完成。")).toHaveLength(1)
+    })
+  })
+
+  it("keeps datasource choices compact and omits connection addresses", async () => {
+    const user = userEvent.setup()
+    datasourcesApi.list.mockResolvedValue([
+      {
+        id: 1,
+        name: "A very long production datasource name that must not overflow",
+        host: "127.0.0.1",
+        port: 3307,
+        db_type: "mysql",
+        cluster_key: "a-very-long-production-cluster-key-that-must-be-truncated",
+        access_level: "user",
+        tenant_role: "user",
+        user: "app_user",
+        database: "app",
+        status: "active",
+        created_at: "2026-03-14T00:00:00Z",
+        updated_at: "2026-03-14T00:00:00Z",
+      },
+      {
+        id: 2,
+        name: "A very long admin datasource name that must not overflow",
+        host: "127.0.0.1",
+        port: 3307,
+        db_type: "mysql",
+        cluster_key: "a-very-long-production-cluster-key-that-must-be-truncated",
+        access_level: "admin",
+        tenant_role: "user",
+        user: "admin_user",
+        database: "app",
+        status: "active",
+        created_at: "2026-03-14T00:00:00Z",
+        updated_at: "2026-03-14T00:00:00Z",
+      },
+    ])
+
+    render(
+      <MemoryRouter>
+        <ChatPage />
+      </MemoryRouter>
+    )
+
+    await screen.findByText(/A very long production datasource name that must not overflow/)
+    const datasourceSelect = screen.getByRole("combobox", { name: "选择数据源" })
+    await user.click(datasourceSelect)
+
+    const adminName = await screen.findByText(
+      "A very long admin datasource name that must not overflow"
+    )
+    const adminOption = adminName.closest('[role="option"]')
+    if (!adminOption) throw new Error("Admin datasource option was not rendered")
+    expect(adminOption).toHaveTextContent(
+      "a-very-long-production-cluster-key-that-must-be-truncated · admin"
+    )
+    expect(adminOption).not.toHaveTextContent("127.0.0.1:3307")
+    expect(adminOption.querySelectorAll(".truncate")).toHaveLength(2)
+
+    await user.click(adminOption)
+    await waitFor(() => {
+      expect(conversationsApi.update).toHaveBeenCalledWith(1, { datasource_id: 2 })
     })
   })
 

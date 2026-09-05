@@ -55,7 +55,7 @@ _FUNCTION_RUNTIME_CONTRACT: dict[str, Any] = {
             },
             "usage_note": "Always iterate `result.get('rows', [])`; never iterate db.query(...) return object directly.",
         },
-        "role_enum": ["user", "sys"],
+        "role_enum": ["user", "admin", "sys"],
         "schemas": {
             "query": {
                 "type": "object",
@@ -69,7 +69,11 @@ _FUNCTION_RUNTIME_CONTRACT: dict[str, Any] = {
                             {"type": "null"},
                         ],
                     },
-                    "role": {"type": "string", "enum": ["user", "sys"], "default": "user"},
+                    "role": {
+                        "type": "string",
+                        "enum": ["user", "admin", "sys"],
+                        "default": "user",
+                    },
                     "params": {"type": "array", "items": {"type": "any"}},
                 },
                 "constraints": {"required": ["sql"]},
@@ -86,7 +90,11 @@ _FUNCTION_RUNTIME_CONTRACT: dict[str, Any] = {
                             {"type": "null"},
                         ],
                     },
-                    "role": {"type": "string", "enum": ["user", "sys"], "default": "user"},
+                    "role": {
+                        "type": "string",
+                        "enum": ["user", "admin", "sys"],
+                        "default": "user",
+                    },
                 },
                 "constraints": {"required": ["sql"]},
             },
@@ -293,6 +301,7 @@ _FUNCTION_RUNTIME_CONTRACT: dict[str, Any] = {
                 "additional_properties": False,
                 "properties": {
                     "status": {"type": "string", "enum": ["active", "inactive"]},
+                    "access_level": {"type": "string", "enum": ["user", "admin"]},
                     "tenant_role": {"type": "string", "enum": ["user", "sys"]},
                 },
             },
@@ -415,6 +424,11 @@ _FUNCTION_RUNTIME_CONTRACT: dict[str, Any] = {
                         "port": {"type": "integer", "minimum": 1, "maximum": 65535},
                         "db_type": {"type": "string", "min_length": 1, "default": "mysql"},
                         "cluster_key": {"type": "string", "min_length": 1},
+                        "access_level": {
+                            "type": "string",
+                            "enum": ["user", "admin"],
+                            "default": "user",
+                        },
                         "tenant_role": {
                             "type": "string",
                             "enum": ["user", "sys"],
@@ -444,6 +458,7 @@ _FUNCTION_RUNTIME_CONTRACT: dict[str, Any] = {
                         "port": {"type": "integer", "minimum": 1, "maximum": 65535},
                         "db_type": {"type": "string", "min_length": 1},
                         "cluster_key": {"type": "string", "min_length": 1},
+                        "access_level": {"type": "string", "enum": ["user", "admin"]},
                         "tenant_role": {"type": "string", "enum": ["user", "sys"]},
                         "tenant_identifier": {"one_of": [{"type": "string"}, {"type": "null"}]},
                         "attributes": {"one_of": [{"type": "object"}, {"type": "null"}]},

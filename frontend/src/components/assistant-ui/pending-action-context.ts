@@ -11,3 +11,11 @@ export type PendingActionContextValue = {
 }
 
 export const PendingActionContext = createContext<PendingActionContextValue | null>(null)
+
+export function getPendingActionToken(result: unknown): string | null {
+  if (!result || typeof result !== "object") return null
+  const data = (result as Record<string, unknown>).data
+  if (!data || typeof data !== "object") return null
+  const token = (data as Record<string, unknown>).action_token
+  return typeof token === "string" && token.trim() ? token : null
+}

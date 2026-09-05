@@ -51,12 +51,13 @@ export type ThreadSuggestion = {
   prompt: string;
 };
 
-export const Thread: FC<{ suggestions?: ThreadSuggestion[]; footerContent?: ReactNode; statusText?: string; placeholder?: string; readOnly?: boolean }> = ({
+export const Thread: FC<{ suggestions?: ThreadSuggestion[]; footerContent?: ReactNode; statusText?: string; placeholder?: string; readOnly?: boolean; actionBoundaryToolCallIds?: ReadonlySet<string> }> = ({
   suggestions = [],
   footerContent,
   statusText,
   placeholder,
   readOnly = false,
+  actionBoundaryToolCallIds = new Set(),
 }) => {
   return (
     <ThreadPrimitive.Root
@@ -81,7 +82,11 @@ export const Thread: FC<{ suggestions?: ThreadSuggestion[]; footerContent?: Reac
             className="mb-6 flex flex-col gap-y-6 empty:hidden"
           >
             <ThreadPrimitive.Messages>
-              {() => <ThreadMessage />}
+              {() => (
+                <ThreadMessage
+                  actionBoundaryToolCallIds={actionBoundaryToolCallIds}
+                />
+              )}
             </ThreadPrimitive.Messages>
             <AuiIf condition={(s) => s.thread.isRunning}>
               {statusText ? <ThreadThinkingIndicator label={statusText} /> : null}
@@ -99,13 +104,17 @@ export const Thread: FC<{ suggestions?: ThreadSuggestion[]; footerContent?: Reac
   );
 };
 
-const ThreadMessage: FC = () => {
+const ThreadMessage: FC<{
+  actionBoundaryToolCallIds: ReadonlySet<string>;
+}> = ({ actionBoundaryToolCallIds }) => {
   const role = useAuiState((s) => s.message.role);
   const isEditing = useAuiState((s) => s.message.composer.isEditing);
 
   if (isEditing) return <EditComposer />;
   if (role === "user") return <UserMessage />;
-  return <AssistantMessage />;
+  return (
+    <AssistantMessage actionBoundaryToolCallIds={actionBoundaryToolCallIds} />
+  );
 };
 
 const ThreadScrollToBottom: FC = () => {
@@ -244,7 +253,9 @@ const MessageError: FC = () => {
   );
 };
 
-const AssistantMessage: FC = () => {
+const AssistantMessage: FC<{
+  actionBoundaryToolCallIds: ReadonlySet<string>;
+}> = ({ actionBoundaryToolCallIds }) => {
   return (
     <MessagePrimitive.Root
       data-slot="aui_assistant-message-root"
@@ -260,7 +271,12 @@ const AssistantMessage: FC = () => {
           groupBy={(part) => {
             if (part.type === "reasoning")
               return ["group-chainOfThought", "group-reasoning"];
-            if (part.type === "tool-call") return ["group-tools"];
+            if (part.type === "tool-call") {
+              if (actionBoundaryToolCallIds.has(part.toolCallId)) {
+                return null;
+              }
+              return ["group-tools"];
+            }
             return null;
           }}
         >

@@ -7,6 +7,12 @@ from app.core.logging import fmt_kv, get_logger
 from app.db.database import get_db
 from app.models import models
 from app.schemas import schemas
+from app.services.datasource.access import (
+    ADMIN_ACCESS_LEVEL,
+    datasource_access_level,
+    normalize_access_level,
+    normalize_database_family,
+)
 
 try:
     from app.services.datasource.probe import probe_and_fill_ob_ids as _probe_and_fill_ob_ids
@@ -25,26 +31,57 @@ def _normalize_datasource_payload(payload: dict) -> dict:
     return payload
 
 
-def _ensure_single_sys_per_cluster(
+def _ensure_cluster_access_invariants(
     db: Session,
     cluster_key: str,
-    tenant_role: str,
+    db_type: str,
+    access_level: str,
+    datasource_status: str = "active",
     exclude_id: int | None = None,
 ) -> None:
-    if tenant_role != "sys":
-        return
-
     query = db.query(models.DataSource).filter(
         models.DataSource.cluster_key == cluster_key,
-        models.DataSource.tenant_role == "sys",
     )
     if exclude_id is not None:
         query = query.filter(models.DataSource.id != exclude_id)
-    existing = query.first()
-    if existing:
+    siblings = query.all()
+
+    requested_family = normalize_database_family(db_type)
+    incompatible = [
+        item
+        for item in siblings
+        if normalize_database_family(item.db_type) != requested_family
+    ]
+    if incompatible:
         raise HTTPException(
             status_code=400,
-            detail=f"Cluster '{cluster_key}' already has a sys datasource (id={existing.id}).",
+            detail=(
+                f"Cluster '{cluster_key}' is already associated with database type "
+                f"'{incompatible[0].db_type}'. Use a different cluster key."
+            ),
+        )
+
+    if (
+        normalize_access_level(access_level) != ADMIN_ACCESS_LEVEL
+        or str(datasource_status or "active").lower() != "active"
+    ):
+        return
+    active_admin = next(
+        (
+            item
+            for item in siblings
+            if str(item.status or "").lower() == "active"
+            and datasource_access_level(item) == ADMIN_ACCESS_LEVEL
+        ),
+        None,
+    )
+    if active_admin is not None:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Cluster '{cluster_key}' already has an active admin datasource "
+                f"(id={active_admin.id})."
+            ),
         )
 
 
@@ -59,6 +96,7 @@ async def test_connection(datasource: schemas.DataSourceCreate):
             host=datasource.host,
             port=datasource.port,
             tenant_role=datasource.tenant_role,
+            access_level=datasource.access_level,
             cluster_key=datasource.cluster_key,
         ),
     )
@@ -157,10 +195,11 @@ async def create_datasource(datasource: schemas.DataSourceCreate, db: Session = 
     from app.db.connection import get_db_pool
 
     payload = _normalize_datasource_payload(datasource.model_dump())
-    _ensure_single_sys_per_cluster(
+    _ensure_cluster_access_invariants(
         db,
         cluster_key=payload["cluster_key"],
-        tenant_role=payload["tenant_role"],
+        db_type=payload["db_type"],
+        access_level=payload["access_level"],
     )
     db_datasource = models.DataSource(**payload)
     db.add(db_datasource)
@@ -172,6 +211,7 @@ async def create_datasource(datasource: schemas.DataSourceCreate, db: Session = 
             datasource_id=db_datasource.id,
             host=db_datasource.host,
             tenant_role=db_datasource.tenant_role,
+            access_level=db_datasource.access_level,
             cluster_key=db_datasource.cluster_key,
         ),
     )
@@ -204,6 +244,7 @@ async def update_datasource(
         "port": db_datasource.port,
         "db_type": db_datasource.db_type,
         "cluster_key": db_datasource.cluster_key,
+        "access_level": db_datasource.access_level,
         "tenant_role": db_datasource.tenant_role,
         "user": db_datasource.user,
         "password": db_datasource.password,
@@ -211,10 +252,12 @@ async def update_datasource(
         "status": db_datasource.status,
     }
     update_data = _normalize_datasource_payload({**current_payload, **update_data})
-    _ensure_single_sys_per_cluster(
+    _ensure_cluster_access_invariants(
         db,
         cluster_key=update_data["cluster_key"],
-        tenant_role=update_data["tenant_role"],
+        db_type=update_data["db_type"],
+        access_level=update_data["access_level"],
+        datasource_status=update_data["status"],
         exclude_id=datasource_id,
     )
     for field, value in update_data.items():
@@ -228,6 +271,7 @@ async def update_datasource(
         fmt_kv(
             datasource_id=datasource_id,
             tenant_role=db_datasource.tenant_role,
+            access_level=db_datasource.access_level,
             cluster_key=db_datasource.cluster_key,
         ),
     )

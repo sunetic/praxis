@@ -48,6 +48,7 @@ class Observation:
     errno: int | None
     message: str
     retry_hint: str
+    retryable_without_user_action: bool
     error_class: str
     target_object: str
     normalized_signature: str
@@ -67,6 +68,11 @@ class Observation:
         success = bool(result.get("success"))
         error = result.get("error")
         error_payload = error if isinstance(error, dict) else {}
+        recovery_payload = (
+            error_payload.get("recovery")
+            if isinstance(error_payload.get("recovery"), dict)
+            else {}
+        )
         message = str(
             error_payload.get("db_message")
             or error_payload.get("message")
@@ -114,6 +120,10 @@ class Observation:
             errno=errno,
             message=message,
             retry_hint=str(error_payload.get("retry_hint") or "").strip(),
+            retryable_without_user_action=(
+                bool(recovery_payload)
+                and recovery_payload.get("requires_user_action") is False
+            ),
             error_class=error_class,
             target_object=target_object,
             normalized_signature=normalized_signature,
@@ -627,6 +637,7 @@ class TaskJournal:
                     item
                     for item in failures
                     if item.error_class in {"permission_error", "authorization_error"}
+                    and not item.retryable_without_user_action
                 ),
                 None,
             )

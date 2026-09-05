@@ -60,6 +60,11 @@ function generateAutoClusterKey(seed?: string) {
   return `${prefix}-${suffix}`
 }
 
+function getAccessLevel(datasource: DataSource): "user" | "admin" {
+  if (datasource.access_level === "admin") return "admin"
+  return datasource.tenant_role === "sys" ? "admin" : "user"
+}
+
 // ─── Main Page ───────────────────────────────────────────────────────────────
 
 export function DataSourcesPage() {
@@ -92,6 +97,7 @@ export function DataSourcesPage() {
     host: "",
     port: 3306,
     db_type: "mysql",
+    access_level: "user" as "user" | "admin",
     tenant_role: "user" as "sys" | "user",
     user: "",
     password: "",
@@ -187,6 +193,7 @@ export function DataSourcesPage() {
       host: "",
       port: 3306,
       db_type: "mysql",
+      access_level: "user",
       tenant_role: "user",
       user: "",
       password: "",
@@ -217,6 +224,7 @@ export function DataSourcesPage() {
           host: form.host,
           port: form.port,
           db_type: form.db_type,
+          access_level: form.access_level,
           tenant_role: form.tenant_role,
           user: form.user,
           database: form.database,
@@ -235,6 +243,7 @@ export function DataSourcesPage() {
           host: form.host,
           port: form.port,
           db_type: form.db_type,
+          access_level: form.access_level,
           tenant_role: form.tenant_role,
           user: form.user,
           password: form.password,
@@ -264,6 +273,7 @@ export function DataSourcesPage() {
       host: ds.host,
       port: ds.port,
       db_type: ds.db_type,
+      access_level: getAccessLevel(ds),
       tenant_role: ds.tenant_role,
       user: ds.user || "",
       password: "",
@@ -344,7 +354,7 @@ export function DataSourcesPage() {
   )
 
   // ── Table columns ──────────────────────────────────────────────────────────
-  const columnCount = 6
+  const columnCount = 7
 
   function renderTableBody() {
     if (loading) {
@@ -407,6 +417,14 @@ export function DataSourcesPage() {
           <Badge variant="outline" className="border-border">
             {ds.db_type === "oceanbase" ? "OceanBase" : ds.db_type === "mysql" ? "MySQL" : ds.db_type === "postgresql" ? "PostgreSQL" : ds.db_type}
           </Badge>
+        </TableCell>
+        <TableCell>
+          <div className="flex items-center gap-2">
+            <span className={`size-1.5 rounded-full ${getAccessLevel(ds) === "admin" ? "bg-warning" : "bg-positive"}`} />
+            <span className="text-sm text-muted-foreground">
+              {getAccessLevel(ds) === "admin" ? t("ds.access.admin") : t("ds.access.user")}
+            </span>
+          </div>
         </TableCell>
         <TableCell className="text-right">
           <div className="flex items-center justify-end gap-0.5" onClick={(e) => e.stopPropagation()}>
@@ -482,6 +500,7 @@ export function DataSourcesPage() {
               <TableHead>{t("ds.col.cluster")}</TableHead>
               <TableHead>{t("ds.col.host")}</TableHead>
               <TableHead>{t("ds.col.type")}</TableHead>
+              <TableHead>{t("ds.col.access")}</TableHead>
               <TableHead className="text-right">{t("ds.col.actions")}</TableHead>
             </TableRow>
           </TableHeader>
@@ -619,6 +638,25 @@ export function DataSourcesPage() {
                     <SelectItem value="postgresql">PostgreSQL</SelectItem>
                   </SelectContent>
                 </Select>
+              </div>
+
+              <div>
+                <label className="mb-1.5 block text-sm text-foreground">{t("ds.label.accessLevel")}</label>
+                <Select
+                  value={form.access_level}
+                  onValueChange={(value: "user" | "admin") => setForm({ ...form, access_level: value })}
+                >
+                  <SelectTrigger className="w-full">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="user">{t("ds.access.user")}</SelectItem>
+                    <SelectItem value="admin">{t("ds.access.admin")}</SelectItem>
+                  </SelectContent>
+                </Select>
+                <p className="mt-2 text-xs leading-relaxed text-muted-foreground">
+                  {form.access_level === "admin" ? t("ds.access.adminHelp") : t("ds.access.userHelp")}
+                </p>
               </div>
             </div>
 

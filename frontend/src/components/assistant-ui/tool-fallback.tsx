@@ -19,7 +19,10 @@ import {
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
 import { Button } from "@/components/ui/button";
-import { PendingActionContext } from "@/components/assistant-ui/pending-action-context";
+import {
+  PendingActionContext,
+  getPendingActionToken,
+} from "@/components/assistant-ui/pending-action-context";
 import { cn } from "@/lib/utils";
 import type { PendingAction } from "@/lib/api";
 import { useShellI18n } from "@/i18n/shellI18n";
@@ -135,7 +138,7 @@ function ToolFallbackTrigger({
         className={cn(
           "aui-tool-fallback-trigger-icon size-4 shrink-0",
           isCancelled && "text-muted-foreground",
-          pendingAction && "text-amber-600 dark:text-amber-400",
+          pendingAction && "text-warning",
           isRunning && "animate-spin",
         )}
       />
@@ -297,14 +300,6 @@ function getToolResultSummary(
   return null;
 }
 
-function getPendingActionToken(result: unknown): string | null {
-  if (!result || typeof result !== "object") return null;
-  const data = (result as Record<string, unknown>).data;
-  if (!data || typeof data !== "object") return null;
-  const token = (data as Record<string, unknown>).action_token;
-  return typeof token === "string" && token.trim() ? token : null;
-}
-
 function PendingActionApproval({
   action,
   processing,
@@ -321,7 +316,7 @@ function PendingActionApproval({
   const { t } = useShellI18n();
   const description = action.intent || action.source_text || t("tool.approval.description");
   const preview = action.sql_preview || action.preview;
-  const target = [action.cluster_key, action.resolved_role]
+  const target = [action.cluster_key, action.resolved_access_level || action.resolved_role]
     .filter((value): value is string => Boolean(value))
     .join(" · ");
 
@@ -428,7 +423,7 @@ const ToolFallbackImpl: ToolCallMessagePartComponent = ({
       onOpenChange={setUserOpen}
       className={cn(
         isCancelled && "border-muted-foreground/30 bg-muted/30",
-        pendingAction && "border-amber-500/40 bg-amber-500/5",
+        pendingAction && "border-warning/40 bg-warning/5",
       )}
     >
       <ToolFallbackTrigger

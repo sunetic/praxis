@@ -1043,6 +1043,54 @@ def test_p0_datasource_crud_lifecycle(api_client):
     assert gone.status_code == 404
 
 
+def test_p0_datasource_cluster_access_level_invariants(api_client):
+    client, _ = api_client
+    base_payload = {
+        "host": "127.0.0.1",
+        "port": 3307,
+        "db_type": "mysql",
+        "cluster_key": "mysql-access-pair",
+        "tenant_role": "user",
+        "user": "tester",
+        "password": "secret",
+        "database": "app",
+    }
+
+    user = client.post(
+        "/api/v1/datasources",
+        json={**base_payload, "name": "mysql-user", "access_level": "user"},
+    )
+    assert user.status_code == 201, user.text
+    assert user.json()["access_level"] == "user"
+
+    admin = client.post(
+        "/api/v1/datasources",
+        json={**base_payload, "name": "mysql-admin", "access_level": "admin"},
+    )
+    assert admin.status_code == 201, admin.text
+    assert admin.json()["access_level"] == "admin"
+
+    duplicate_admin = client.post(
+        "/api/v1/datasources",
+        json={**base_payload, "name": "mysql-admin-2", "access_level": "admin"},
+    )
+    assert duplicate_admin.status_code == 400
+    assert "already has an active admin datasource" in duplicate_admin.json()["detail"]
+
+    mixed_engine = client.post(
+        "/api/v1/datasources",
+        json={
+            **base_payload,
+            "name": "postgres-user",
+            "db_type": "postgresql",
+            "port": 5432,
+            "access_level": "user",
+        },
+    )
+    assert mixed_engine.status_code == 400
+    assert "already associated with database type" in mixed_engine.json()["detail"]
+
+
 def test_p0_settings_get_redacts_api_key(api_client):
     client, session_local = api_client
 

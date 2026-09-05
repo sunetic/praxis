@@ -15,9 +15,6 @@ from app.services.agent.reasoning_engine import (
     ReasoningPhase,
     SimpleToolExecutor,
     _build_best_candidate_fallback,
-    _build_initial_progress_note,
-    _build_observation_progress_note,
-    _build_plan_progress_note,
     _build_retry_system_hint,
     _check_transition,
     _extract_completion_verification_policies,
@@ -27,7 +24,7 @@ from app.services.agent.reasoning_engine import (
 )
 from app.services.agent.task_contract import AcceptanceCriterion, TaskContract, latest_user_text
 from app.services.agent.task_contract_agent import TaskContractBuild
-from app.services.agent.task_runtime import Observation, TaskJournal
+from app.services.agent.task_runtime import TaskJournal
 
 
 def test_unverified_retained_candidate_is_labelled_partial() -> None:
@@ -38,114 +35,6 @@ def test_unverified_retained_candidate_is_labelled_partial() -> None:
 
     assert result.startswith("阶段性结果（本次执行未完整结束，不能视为最终结论）")
     assert "已检查客户数据。" in result
-
-
-def _failed_sql_observation(
-    message: str,
-    *,
-    category: str,
-    error_class: str,
-) -> Observation:
-    return Observation.from_execution(
-        {
-            "name": "execute_sql",
-            "tool_call_id": "tc-sql-error",
-            "arguments": {"sql": "SELECT (SELECT id, name FROM customers)"},
-            "result": {
-                "success": False,
-                "error": {"category": category, "db_message": message},
-            },
-            "error_class": error_class,
-        }
-    )
-
-
-def test_complex_initial_progress_names_the_user_task_without_copying_sql() -> None:
-    journal = TaskJournal.create(
-        TaskContract(
-            objective=(
-                "请验证商品经营周报草稿，形成可复核报告。\n"
-                "```sql\nSELECT missing_column FROM sample_table\n```\n"
-                "最终报告覆盖字段可用性、时间变化和引用异常。"
-            ),
-            acceptance_criteria=[AcceptanceCriterion(id="ac-1", description="验证商品经营周报")],
-            complex=True,
-        )
-    )
-
-    note = _build_initial_progress_note(journal)
-
-    assert "商品经营周报" in note
-    assert "SELECT" not in note
-    assert 60 <= len(note) <= 220
-
-
-@pytest.mark.parametrize(
-    ("message", "expected"),
-    [
-        ("The returned cardinality is incompatible", "数据结构"),
-        ("The tool arguments are malformed", "参数格式不完整"),
-    ],
-)
-def test_progress_notes_explain_known_execution_errors(
-    message: str,
-    expected: str,
-) -> None:
-    journal = TaskJournal.create(TaskContract(objective="检查规模和异常"))
-    result_shape = "cardinality" in message
-    observation = _failed_sql_observation(
-        message,
-        category="result_shape_error" if result_shape else "argument_error",
-        error_class="result_shape_error" if result_shape else "argument_error",
-    )
-
-    observation_note = _build_observation_progress_note(journal, [observation], {})
-    journal.evaluate_observations(
-        [observation],
-        iteration=1,
-        per_episode_retry_budget=3,
-        transient_retry_budget=3,
-        max_no_progress_rounds=3,
-    )
-    plan_note = _build_plan_progress_note(
-        journal,
-        [
-            {
-                "name": "execute_sql",
-                "arguments": {"sql": "SELECT COUNT(*) FROM customers"},
-            }
-        ],
-        iteration=2,
-    )
-
-    assert expected in observation_note
-    assert "参数" in plan_note or "数据结构" in plan_note
-
-
-def test_pending_confirmation_progress_is_not_described_as_failure() -> None:
-    journal = TaskJournal.create(TaskContract(objective="执行一项需要确认的写操作"))
-    observation = Observation.from_execution(
-        {
-            "name": "execute_sql",
-            "tool_call_id": "tc-pending",
-            "arguments": {"sql": "CREATE TEMPORARY TABLE probe (id INT)"},
-            "result": {
-                "success": False,
-                "data": {"requires_confirmation": True, "action_token": "token-1"},
-                "error": {"code": "pending_confirmation", "message": "Awaiting confirmation."},
-            },
-            "error_class": "guardrail_error",
-        }
-    )
-
-    note = _build_observation_progress_note(
-        journal,
-        [observation],
-        {"decision": "await_confirmation"},
-    )
-
-    assert "等你决定" in note
-    assert "没有成功" not in note
 
 
 @pytest.fixture
@@ -808,10 +697,7 @@ async def test_verifier_semantic_rejection_does_not_restart_execution() -> None:
 
     assert executed_actions == ["/health"]
     assert llm.call_count == 3
-    progress_notes = [
-        event["data"]["text"] for event in events if event["type"] == "assistant_progress"
-    ]
-    assert any("确认服务当前是否可用" in note for note in progress_notes)
+    assert not any(event["type"] == "assistant_progress" for event in events)
     assert events[-1]["data"]["completed"] is True
     assert events[-1]["data"]["task_outcome"] == "success"
     assert events[-1]["data"]["audit_status"] == "warning"
@@ -1260,6 +1146,73 @@ async def test_confirmed_action_failure_resumes_agent_with_evidence_and_tools() 
     assert final_state["evidence"][0]["ref"] == "confirmed-action-token"
     assert events[-1]["data"]["completed"] is True
     assert events[-1]["data"]["completion_mode"] == "explicit"
+
+
+@pytest.mark.anyio
+async def test_in_scope_permission_recovery_can_retry_with_admin_access() -> None:
+    executed_access_levels: list[str] = []
+
+    async def executor(name: str, args: dict[str, Any]) -> dict[str, Any]:
+        assert name == "execute_sql"
+        access_level = str(args.get("access_level") or "user")
+        executed_access_levels.append(access_level)
+        if access_level == "user":
+            return {
+                "success": False,
+                "error": {
+                    "code": "sql_execution_error",
+                    "category": "permission_error",
+                    "message": "The selected credential cannot read this diagnostic view.",
+                    "retry_hint": "Retry with access_level='admin'.",
+                    "recovery": {
+                        "strategy": "retry_with_access_level",
+                        "tool_arguments": {"access_level": "admin"},
+                        "requires_user_action": False,
+                    },
+                },
+                "error_class": "permission_error",
+            }
+        return {
+            "success": True,
+            "data": {
+                "rows": [],
+                "row_count": 0,
+                "resolved_access_level": "admin",
+                "resolved_datasource_id": 2,
+            },
+        }
+
+    llm = FakeLLM(
+        responses=[
+            _tool_call_chunk(
+                "execute_sql",
+                '{"sql":"SELECT * FROM diagnostic_view","access_level":"user"}',
+                call_id="tc-user-access",
+            ),
+            _tool_call_chunk(
+                "execute_sql",
+                '{"sql":"SELECT * FROM diagnostic_view","access_level":"admin"}',
+                call_id="tc-admin-access",
+            ),
+            [_text_chunk("The diagnostic query completed with admin access.")],
+        ]
+    )
+    engine = _make_engine(
+        llm=llm,
+        config=EngineConfig(max_iterations=5, completion_verifier_enabled=False),
+        executor=executor,
+    )
+
+    events = await _collect(
+        engine,
+        messages=[{"role": "user", "content": "Inspect the protected diagnostic view."}],
+        tools=[{"type": "function", "function": {"name": "execute_sql"}}],
+    )
+
+    assert executed_access_levels == ["user", "admin"]
+    assert llm.call_count == 3
+    assert events[-1]["data"]["completed"] is True
+    assert events[-1]["data"]["task_outcome"] == "success"
 
 
 @pytest.mark.anyio

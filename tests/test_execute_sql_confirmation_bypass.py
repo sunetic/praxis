@@ -58,14 +58,18 @@ def execute_sql_runtime(
     )
     routed = RoutedDataSource(
         datasource=datasource,
-        requested_role="user",
-        resolved_role="user",
+        requested_access_level="user",
+        resolved_access_level="user",
         reason="requested_role_available",
     )
     pool = RecordingPool()
 
     monkeypatch.setattr(database_module, "SessionLocal", session_local)
-    monkeypatch.setattr(registry_module, "resolve_datasource_by_role", lambda *_: routed)
+    monkeypatch.setattr(
+        registry_module,
+        "resolve_datasource_by_access_level",
+        lambda *_: routed,
+    )
     monkeypatch.setattr("app.db.pool_factory.get_pool_for_datasource", lambda _: pool)
 
     async def fake_probe(*_: object) -> dict[str, str]:

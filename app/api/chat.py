@@ -42,11 +42,9 @@ from app.services.chat.scene_agents import SceneAgentPayload, SceneAgentRegistry
 from app.services.chat.stream_helpers import (
     _annotate_runtime_event,
     _build_builder_scene_conversation_context,
-    _build_cross_tenant_scope_guard_message,
     _extract_error_message,
     _extract_scene_agent_payload,
     _infer_datasource_id_from_scene_agent_payload,
-    _is_all_tenants_request,
     _json_dumps_safe,
     _map_tool_event_to_step_event,
     _normalize_json_payload,
@@ -58,7 +56,6 @@ from app.services.chat.stream_helpers import (
     _save_messages_to_db,
     _select_dynamic_skills,
     _stream_builder_scene_proxy,
-    _stream_scope_guard_reply,
 )
 from app.services.chat.tool_binding import (  # noqa: I001
     bind_default_datasource_to_tools as _bind_default_datasource_to_tools,
@@ -238,22 +235,6 @@ async def chat_stream(
         message.handoff_id if (message.handoff_id and message.handoff_id > 0) else None
     )
 
-    pending_handoff_turn = False
-    if handoff_id is not None:
-        precheck_handoff_event = _get_handoff_event(
-            db,
-            conversation_id=conversation_id,
-            handoff_id=handoff_id,
-        )
-        if not precheck_handoff_event:
-            raise HTTPException(status_code=404, detail="Handoff not found")
-        precheck_payload = (
-            precheck_handoff_event.payload
-            if isinstance(precheck_handoff_event.payload, dict)
-            else {}
-        )
-        pending_handoff_turn = _handoff_status(precheck_payload) == HANDOFF_STATUS_PENDING
-
     ensure_stream_user_message(db, conversation_id, incoming_content)
 
     selected_datasource = None
@@ -266,39 +247,6 @@ async def chat_stream(
     scene_agent_payload = _normalize_scene_agent_payload_datasource(
         scene_agent_payload, selected_datasource
     )
-    if (
-        not pending_handoff_turn
-        and selected_datasource
-        and str(selected_datasource.tenant_role or "").lower() != "sys"
-        and _is_all_tenants_request(incoming_content)
-    ):
-        guard_payload = {
-            "trace_id": trace_id,
-            "datasource_id": selected_datasource.id,
-            "datasource_name": selected_datasource.name,
-            "tenant_role": selected_datasource.tenant_role,
-            "reason": "cross_tenant_requires_sys_scope",
-            "message": _build_cross_tenant_scope_guard_message(selected_datasource),
-        }
-        logger.info(
-            "chat_scope_guard_blocked %s",
-            fmt_kv(
-                conversation_id=conversation_id,
-                trace_id=trace_id,
-                datasource_id=selected_datasource.id,
-                tenant_role=selected_datasource.tenant_role,
-                reason=guard_payload["reason"],
-            ),
-        )
-        return StreamingResponse(
-            _stream_scope_guard_reply(
-                conversation_id=conversation_id,
-                trace_id=trace_id,
-                guard_payload=guard_payload,
-            ),
-            media_type="text/plain; charset=utf-8",
-        )
-
     chat_messages, messages = load_chat_messages(db, conversation_id, incoming_content)
     resumable_task_state = (
         resume_context.task_state
@@ -946,10 +894,12 @@ async def chat_stream(
                     event_result_data = event_result.get("data") or {}
                     resolved_datasource_id = event_result_data.get("resolved_datasource_id")
                     resolved_role = event_result_data.get("resolved_role")
+                    resolved_access_level = event_result_data.get("resolved_access_level")
                     route_reason = event_result_data.get("route_reason")
                     cluster_key = event_result_data.get("cluster_key")
                     event_data["resolved_datasource_id"] = resolved_datasource_id
                     event_data["resolved_role"] = resolved_role
+                    event_data["resolved_access_level"] = resolved_access_level
                     event_data["route_reason"] = route_reason
                     event_data["cluster_key"] = cluster_key
                     event_data["trace_id"] = event_meta.get("trace_id") or trace_id
