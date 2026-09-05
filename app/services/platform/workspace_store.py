@@ -12,12 +12,11 @@ from typing import Any
 from app.core.logging import fmt_kv, get_logger
 from app.models import models
 from app.services.platform.coding_engine import (
-    AiderLikeAdapter,
+    BuiltinReasoningAdapter,
     CodingEngineAdapter,
     CodingEngineApplyResult,
     CodingEngineEdit,
     CodingEnginePlan,
-    PiLiteAdapter,
 )
 
 try:
@@ -83,7 +82,7 @@ def _strip_duplicate_flags(command: str, pre_flags: str, post_flags: str) -> str
 
 def _resolve_adapter() -> CodingEngineAdapter:
     """Resolve the coding engine adapter from platform settings, falling back to env var."""
-    engine_name = str(os.getenv("PRAXIS_CODING_ENGINE", "pi_lite")).strip().lower()
+    engine_name = str(os.getenv("PRAXIS_CODING_ENGINE", "reasoning")).strip().lower()
     external_cli_command = ""
     pre_flags = ""
     post_flags = ""
@@ -116,8 +115,8 @@ def _resolve_adapter() -> CodingEngineAdapter:
 
     if engine_name == "external_cli":
         if not external_cli_command:
-            logger.warning("external_cli_engine_no_command fallback=pi_lite")
-            return PiLiteAdapter()
+            logger.warning("external_cli_engine_no_command fallback=reasoning")
+            return BuiltinReasoningAdapter()
         from app.services.external_cli_adapter import ExternalCliAdapter
         from app.services.function.context_writer import FunctionContextWriter
 
@@ -127,10 +126,8 @@ def _resolve_adapter() -> CodingEngineAdapter:
             post_flags=post_flags,
             context_writer=FunctionContextWriter(),
         )
-    if engine_name == "aider_like":
-        return AiderLikeAdapter()
-    if engine_name == "pi_lite":
-        return PiLiteAdapter()
+    if engine_name == "reasoning":
+        return BuiltinReasoningAdapter()
     raise ValueError(f"Unsupported coding engine: {engine_name}")
 
 
@@ -167,6 +164,10 @@ class WorkspaceStore:
                 "workspace_store_adapter %s",
                 fmt_kv(adapter_type=type(self._adapter).__name__, root=self.root),
             )
+
+    @property
+    def engine_name(self) -> str:
+        return str(getattr(self._adapter, "engine_name", "unknown"))
 
     def sync_function_draft(self, function: models.Function) -> Path:
         target_dir = self.objects_root / "functions" / str(function.id)

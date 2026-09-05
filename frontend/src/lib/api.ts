@@ -1058,7 +1058,7 @@ export const channelsApi = {
 }
 
 export type PlatformSettings = {
-  build_engine: "pi_lite" | "external_cli"
+  build_engine: "reasoning" | "external_cli"
   external_cli_command: string
   external_cli_pre_flags?: string
   external_cli_post_flags?: string

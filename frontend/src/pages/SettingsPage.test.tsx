@@ -31,6 +31,23 @@ describe("SettingsPage build engine", () => {
     settingsApi.patch.mockResolvedValue({ ai_api_key_configured: true })
   })
 
+  it("shows the shared Reasoning Engine as the built-in option", async () => {
+    settingsApi.get.mockResolvedValue({
+      build_engine: "reasoning",
+      external_cli_command: "",
+      ai_api_key_configured: true,
+      context_window_tokens: 128000,
+      context_compression_threshold_percent: 75,
+    })
+    const user = userEvent.setup()
+
+    render(<SettingsPage />)
+    await user.click(screen.getByRole("tab", { name: "构建引擎" }))
+
+    expect(await screen.findByText("内建 Reasoning Engine")).toBeInTheDocument()
+    expect(screen.getByText(/Chat、Function、Page 共用同一套推理与工具循环核心/)).toBeInTheDocument()
+  })
+
   it("applies a validated command suggested by the backend", async () => {
     settingsApi.testEngine.mockResolvedValue({
       ok: true,

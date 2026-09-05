@@ -134,6 +134,7 @@ class EngineConfig:
     completion_verifier_enabled: bool = False
     persistent_journal_enabled: bool = True
     parallel_read_only_enabled: bool = True
+    terminal_result_required: bool = False
     max_transient_retries: int = 3
     max_no_progress_rounds: int = 3
     max_parallel_tools: int = 4
@@ -609,7 +610,9 @@ class ReasoningEngine:
                 async for planner_event in self._planner_step(
                     chat_messages,
                     planner_tools,
-                    require_tool_call=require_explicit_terminal_signal,
+                    require_tool_call=(
+                        require_explicit_terminal_signal or cfg.terminal_result_required
+                    ),
                 ):
                     if planner_event["type"] == "text":
                         planner_text = str(planner_event["content"] or "")
@@ -667,7 +670,9 @@ class ReasoningEngine:
                     },
                 )
 
-                if require_explicit_terminal_signal and not plan["tool_calls"]:
+                if (
+                    require_explicit_terminal_signal or cfg.terminal_result_required
+                ) and not plan["tool_calls"]:
                     terminal_signal_misses += 1
                     candidate_text = str(plan.get("assistant_text") or "").strip()
                     if candidate_text:
@@ -687,6 +692,8 @@ class ReasoningEngine:
                                 "role": "system",
                                 "content": PromptLoader.render(
                                     "agent/prompts/resume_terminal_repair.tpl"
+                                    if require_explicit_terminal_signal
+                                    else "agent/prompts/terminal_result_repair.tpl"
                                 ),
                             }
                         )
@@ -704,7 +711,7 @@ class ReasoningEngine:
                         reason_code="resume_terminal_signal_missing",
                         reason=(
                             "The model repeatedly omitted the required next-action or completion "
-                            "signal; current progress was retained for a later resume."
+                            "signal; current progress was retained."
                         ),
                     )
                     phase = ReasoningPhase.RESPONDING
@@ -1004,6 +1011,33 @@ class ReasoningEngine:
                     )
                     if cfg.persistent_journal_enabled:
                         yield _task_state_event(journal, phase, iteration, run_id)
+
+                    terminal_result = _successful_terminal_result(execution_results)
+                    if terminal_result is not None:
+                        terminal_text = str(terminal_result.get("terminal_text") or "").strip()
+                        if terminal_text:
+                            emitted_text += terminal_text
+                            yield _event(
+                                type_="assistant",
+                                phase=ReasoningPhase.RESPONDING,
+                                data={"text": terminal_text, "iteration": iteration},
+                                meta={
+                                    "iteration": iteration,
+                                    "run_id": run_id,
+                                    "task_run_id": journal.task_run_id,
+                                    "explicit_terminal_signal": True,
+                                },
+                            )
+                            journal.record_candidate(terminal_text, iteration=iteration)
+                            chat_messages.append({"role": "assistant", "content": terminal_text})
+                        journal.status = "completed"
+                        final_status = "completed"
+                        completion_mode = "explicit"
+                        transition_err = _check_transition(phase, ReasoningPhase.RESPONDING)
+                        if transition_err:
+                            raise RuntimeError(transition_err)
+                        phase = ReasoningPhase.RESPONDING
+                        break
 
                     if decision["action"] == "retry":
                         reflection_count += 1
@@ -1950,6 +1984,25 @@ def _requires_confirmation(item: dict[str, Any]) -> bool:
     result = item.get("result") if isinstance(item.get("result"), dict) else {}
     data = result.get("data") if isinstance(result.get("data"), dict) else {}
     return bool(data.get("requires_confirmation"))
+
+
+def _successful_terminal_result(
+    execution_results: list[dict[str, Any]],
+) -> dict[str, Any] | None:
+    """Return terminal metadata declared by a successful domain tool.
+
+    Domain agents can finish through the shared loop without teaching the engine
+    about domain-specific completion tool names. A terminal result must be an
+    explicitly successful tool result with ``data.terminal=true``.
+    """
+    for item in execution_results:
+        result = item.get("result") if isinstance(item.get("result"), dict) else {}
+        if result.get("success") is not True:
+            continue
+        data = result.get("data") if isinstance(result.get("data"), dict) else {}
+        if data.get("terminal") is True:
+            return data
+    return None
 
 
 def _can_parallelize_tool_calls(

@@ -4,51 +4,145 @@ import ast
 import json
 import re
 import subprocess
-from collections.abc import Awaitable, Callable
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 from app.core.logging import fmt_kv, get_logger
+from app.services.agent.reasoning_engine import EngineConfig, ReasoningEngine, SimpleToolExecutor
 from app.services.datasource.router import normalize_role
 from app.services.function.runtime_contract import get_function_runtime_contract
-from app.services.llm import get_llm_client
+from app.services.llm import LLMClient, get_llm_client
 from app.services.platform.coding_engine import CodingEngineApplyResult
+from app.services.platform.prompt_loader import PromptLoader
 
-logger = get_logger("app.services.pi_lite_engine")
-
-
-ChatCompletionFn = Callable[
-    [list[dict[str, Any]], list[dict[str, Any]]],
-    Awaitable[dict[str, Any]],
-]
+logger = get_logger("app.services.coding.reasoning_agent")
 
 
 @dataclass
-class _PiLiteState:
+class _CodingWorkspaceState:
     changed_files: set[str] = field(default_factory=set)
     probe_required: bool = False
     probe_attempts: int = 0
     last_probe_error: str | None = None
-    intermediate_messages: int = 0
+    completion: dict[str, Any] | None = None
 
 
-class PiLiteEngine:
+class _CodingToolExecutor:
+    def __init__(
+        self,
+        *,
+        agent: CodingReasoningAgent,
+        workspace_dir: Path,
+        allowed: set[str],
+        state: _CodingWorkspaceState,
+    ) -> None:
+        self._agent = agent
+        self._workspace_dir = workspace_dir
+        self._allowed = allowed
+        self._state = state
+
+    async def execute(self, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+        if name == "complete_coding_task":
+            return self._complete(arguments)
+        raw = self._agent._execute_tool_call(
+            call={
+                "id": f"coding-{name}",
+                "function": {"name": name, "arguments": json.dumps(arguments)},
+            },
+            workspace_dir=self._workspace_dir,
+            allowed=self._allowed,
+            state=self._state,
+        )
+        if raw.get("ok") is True:
+            return {"success": True, "data": raw}
+        message = str(raw.get("error") or raw.get("output") or f"{name} failed")
+        return {
+            "success": False,
+            "data": None,
+            "error": {
+                "code": "coding_tool_error",
+                "category": "execution_error",
+                "message": message,
+                "phase": "execution",
+            },
+            "error_class": "coding_tool_error",
+        }
+
+    def _complete(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        if self._agent._requires_page_preview_sync(self._allowed, self._state):
+            return self._completion_error(
+                "main.tsx changed without a matching preview.html update"
+            )
+        if self._state.probe_required:
+            detail = self._state.last_probe_error or "function_runtime_probe has not passed"
+            hint = self._agent._build_probe_repair_hint(detail)
+            if hint:
+                detail = f"{detail}. Repair hint: {hint}"
+            return self._completion_error(detail)
+
+        result_status = str(arguments.get("result_status") or "completed").strip().lower()
+        allowed_statuses = {
+            "completed",
+            "clear",
+            "refined",
+            "needs_clarification",
+            "too_complex",
+        }
+        if result_status not in allowed_statuses:
+            return self._completion_error(f"unsupported result_status: {result_status}")
+        assistant_message = str(
+            arguments.get("assistant_message") or arguments.get("result") or ""
+        ).strip()
+        if not assistant_message:
+            return self._completion_error("assistant_message is required")
+
+        self._state.completion = {
+            **arguments,
+            "assistant_message": assistant_message,
+            "result_status": result_status,
+        }
+        return {
+            "success": True,
+            "data": {
+                "terminal": True,
+                "terminal_text": assistant_message,
+                "result_status": result_status,
+                "changed_files": sorted(self._state.changed_files),
+            },
+        }
+
+    @staticmethod
+    def _completion_error(message: str) -> dict[str, Any]:
+        return {
+            "success": False,
+            "data": None,
+            "error": {
+                "code": "coding_completion_rejected",
+                "category": "verification",
+                "message": message,
+                "phase": "completion",
+            },
+            "error_class": "verification_error",
+        }
+
+
+class CodingReasoningAgent:
     """
-    Minimal Python coding agent loop:
-    - model -> tool_calls -> tool_results -> model
-    - bounded by `max_steps`
-    - final assistant must output JSON result envelope
+    Coding capability implemented on the shared ReasoningEngine tool loop.
     """
 
     def __init__(
         self,
         *,
-        max_steps: int = 10,
-        chat_completion: ChatCompletionFn | None = None,
+        max_iterations: int = 12,
+        llm_client: LLMClient | None = None,
+        event_callback: Callable[[dict[str, Any]], None] | None = None,
     ) -> None:
-        self.max_steps = max_steps
-        self._chat_completion = chat_completion or self._default_chat_completion
+        self.max_iterations = max_iterations
+        self._llm = llm_client or get_llm_client()
+        self._event_callback = event_callback
 
     async def run(
         self,
@@ -60,183 +154,102 @@ class PiLiteEngine:
         workspace_resolved = workspace_dir.resolve()
         allowed = {str(item or "").strip() for item in allowed_files if str(item or "").strip()}
         if not allowed:
-            raise ValueError("allowed_files cannot be empty for pi-lite engine")
+            raise ValueError("allowed_files cannot be empty for the coding agent")
         logger.info(
-            "pi_lite_run_start %s",
+            "coding_reasoning_run_start %s",
             fmt_kv(
                 workspace_dir=workspace_resolved,
                 allowed_files=",".join(sorted(allowed)),
-                max_steps=self.max_steps,
+                max_iterations=self.max_iterations,
             ),
         )
 
-        state = _PiLiteState()
-        if self._requires_function_runtime_probe(allowed):
-            state.probe_required = True
+        state = _CodingWorkspaceState()
         tools = self._build_tools(
             include_function_tools=self._requires_function_runtime_probe(allowed)
         )
-        messages: list[dict[str, Any]] = [
-            {
-                "role": "system",
-                "content": self._build_system_prompt(workspace_resolved, sorted(allowed)),
-            },
-            {"role": "user", "content": goal},
-        ]
+        executor = _CodingToolExecutor(
+            agent=self,
+            workspace_dir=workspace_resolved,
+            allowed=allowed,
+            state=state,
+        )
+        engine = ReasoningEngine(
+            config=EngineConfig(
+                max_iterations=self.max_iterations,
+                max_reflections=4,
+                max_repeated_tool_rounds=2,
+                task_contract_enabled=False,
+                completion_verifier_enabled=False,
+                persistent_journal_enabled=False,
+                parallel_read_only_enabled=False,
+                terminal_result_required=True,
+            ),
+            llm=self._llm,
+            tool_executor=SimpleToolExecutor(executor.execute),
+        )
+        final_status = ""
+        async for event in engine.run(
+            messages=[{"role": "user", "content": goal}],
+            tools=tools,
+            system_prompt=self._build_system_prompt(workspace_resolved, sorted(allowed)),
+        ):
+            self._emit_event(event)
+            if event.get("type") == "done":
+                final_status = str((event.get("data") or {}).get("status") or "")
 
-        for step in range(1, self.max_steps + 1):
-            response = await self._chat_completion(messages, tools)
-            message = ((response.get("choices") or [{}])[0] or {}).get("message") or {}
-            tool_calls = message.get("tool_calls") or []
-            content = message.get("content")
-            logger.info(
-                "pi_lite_step %s",
-                fmt_kv(
-                    step=step, has_tool_calls=bool(tool_calls), content_len=len(str(content or ""))
-                ),
+        final = state.completion
+        if final is None:
+            raise ValueError(
+                "coding reasoning agent ended without a successful complete_coding_task call "
+                f"(status={final_status or 'unknown'})"
             )
+        logger.info(
+            "coding_reasoning_run_done %s",
+            fmt_kv(
+                changed_files=",".join(sorted(state.changed_files)),
+                result_status=str(final.get("result_status") or "completed"),
+            ),
+        )
+        return CodingEngineApplyResult(
+            changed_files=sorted(state.changed_files),
+            diff_summary=str(
+                final.get("diff_summary")
+                or f"Applied {len(state.changed_files)} file change(s)"
+            ),
+            tests_suggested=self._normalize_string_list(final.get("tests_suggested")),
+            risk_notes=self._normalize_string_list(final.get("risk_notes")),
+            assistant_message=str(final.get("assistant_message") or "Code changes applied."),
+            generated_title=str(final.get("generated_title") or "").strip(),
+            generated_description=str(final.get("generated_description") or "").strip(),
+            result_status=str(final.get("result_status") or "completed"),
+        )
 
-            messages.append(
+    def _emit_event(self, event: dict[str, Any]) -> None:
+        callback = self._event_callback
+        if callback is None:
+            return
+        event_type = str(event.get("type") or "")
+        if event_type not in {"tool_start", "tool_result", "progress", "assistant"}:
+            return
+        data = event.get("data") if isinstance(event.get("data"), dict) else {}
+        tool_name = str(data.get("name") or "").strip()
+        summary = str(data.get("text") or data.get("reason") or "").strip()
+        if not summary and tool_name:
+            summary = f"Coding tool: {tool_name}"
+        if not summary:
+            return
+        try:
+            callback(
                 {
-                    "role": "assistant",
-                    "content": content if isinstance(content, str) else "",
-                    "tool_calls": tool_calls
-                    if isinstance(tool_calls, list) and tool_calls
-                    else None,
+                    "type": "phase",
+                    "phase": "act",
+                    "status": "running",
+                    "summary": summary[:300],
                 }
             )
-
-            if isinstance(tool_calls, list) and tool_calls:
-                for call in tool_calls:
-                    tool_result = self._execute_tool_call(
-                        call=call,
-                        workspace_dir=workspace_resolved,
-                        allowed=allowed,
-                        state=state,
-                    )
-                    messages.append(
-                        {
-                            "role": "tool",
-                            "tool_call_id": str(call.get("id") or ""),
-                            "content": json.dumps(tool_result, ensure_ascii=False),
-                        }
-                    )
-                continue
-
-            content_text = content if isinstance(content, str) else ""
-            try:
-                final = self._parse_final_json(content_text)
-            except ValueError as exc:
-                if self._should_continue_after_intermediate_message(
-                    content=content_text, state=state
-                ):
-                    state.intermediate_messages += 1
-                    logger.info(
-                        "pi_lite_intermediate_message %s",
-                        fmt_kv(step=step, intermediate_messages=state.intermediate_messages),
-                    )
-                    messages.append(
-                        {
-                            "role": "user",
-                            "content": (
-                                "Plan acknowledged. Continue to Step 1/2 now.\n"
-                                "Use tool calls to inspect, edit, or verify files.\n"
-                                "Only return raw final JSON when edits and verification are complete.\n"
-                                "Do not stop at another natural-language progress update."
-                            ),
-                        }
-                    )
-                    continue
-                raise exc
-            if self._requires_page_preview_sync(allowed, state):
-                logger.warning(
-                    "pi_lite_page_preview_sync_required %s",
-                    fmt_kv(
-                        step=step,
-                        changed_files=",".join(sorted(state.changed_files)),
-                    ),
-                )
-                messages.append(
-                    {
-                        "role": "user",
-                        "content": (
-                            "You updated main.tsx but did not update preview.html in this run.\n"
-                            "Update preview.html so runtime behavior matches main.tsx, then return final JSON."
-                        ),
-                    }
-                )
-                continue
-            if self._requires_function_runtime_probe(allowed) and state.probe_required:
-                logger.warning(
-                    "pi_lite_probe_required_before_finalize %s",
-                    fmt_kv(
-                        step=step,
-                        probe_attempts=state.probe_attempts,
-                        last_probe_error=str(state.last_probe_error or ""),
-                    ),
-                )
-                repair_hint = self._build_probe_repair_hint(str(state.last_probe_error or ""))
-                hint_block = f"Repair hint: {repair_hint}\n" if repair_hint else ""
-                messages.append(
-                    {
-                        "role": "user",
-                        "content": (
-                            "Before final JSON, call `function_runtime_probe` on the current main.py and confirm `ok=true`.\n"
-                            f"Last probe error: {state.last_probe_error or 'none'}\n"
-                            f"{hint_block}"
-                            "Read the error, consult `get_function_runtime_contract` if needed, fix main.py, then probe again.\n"
-                            "Do not finalize until probe passes."
-                        ),
-                    }
-                )
-                continue
-
-            logger.info(
-                "pi_lite_run_done %s",
-                fmt_kv(
-                    step=step,
-                    changed_files=",".join(sorted(state.changed_files)),
-                    assistant_message=str(final.get("assistant_message") or ""),
-                ),
-            )
-            return CodingEngineApplyResult(
-                changed_files=sorted(state.changed_files),
-                diff_summary=str(
-                    final.get("diff_summary")
-                    or f"Applied {len(state.changed_files)} file change(s)"
-                ),
-                tests_suggested=self._normalize_string_list(final.get("tests_suggested")),
-                risk_notes=self._normalize_string_list(final.get("risk_notes")),
-                assistant_message=str(
-                    final.get("assistant_message") or "Code changes applied; please verify."
-                ),
-                generated_title=str(final.get("generated_title") or "").strip(),
-                generated_description=str(final.get("generated_description") or "").strip(),
-            )
-
-        logger.error(
-            "pi_lite_run_failed %s", fmt_kv(reason="max_steps_exceeded", max_steps=self.max_steps)
-        )
-        raise ValueError(f"pi-lite reached max_steps={self.max_steps} without final JSON response")
-
-    def _should_continue_after_intermediate_message(
-        self, *, content: str, state: _PiLiteState
-    ) -> bool:
-        text = str(content or "").strip()
-        if not text:
-            return False
-        return state.intermediate_messages < 2
-
-    async def _default_chat_completion(
-        self, messages: list[dict[str, Any]], tools: list[dict[str, Any]]
-    ) -> dict[str, Any]:
-        client = get_llm_client()
-        async for payload in client.chat(
-            messages=messages, tools=tools, stream=False, temperature=0
-        ):
-            if isinstance(payload, dict):
-                return payload
-        raise ValueError("LLM returned no response payload")
+        except Exception:
+            return
 
     def _build_tools(self, *, include_function_tools: bool = False) -> list[dict[str, Any]]:
         base_tools: list[dict[str, Any]] = [
@@ -303,36 +316,84 @@ class PiLiteEngine:
                 },
             },
         ]
-        if not include_function_tools:
-            return base_tools
-        return [
-            *base_tools,
-            {
-                "type": "function",
-                "function": {
-                    "name": "get_function_runtime_contract",
-                    "description": "Get machine-readable function runtime contract (entry, context, db API).",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {},
+        function_tools = []
+        if include_function_tools:
+            function_tools = [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "get_function_runtime_contract",
+                        "description": (
+                            "Get the machine-readable function runtime contract for entry, "
+                            "context, database, platform, and scheduler APIs."
+                        ),
+                        "parameters": {"type": "object", "properties": {}},
                     },
                 },
-            },
-            {
-                "type": "function",
-                "function": {
-                    "name": "function_runtime_probe",
-                    "description": "Execute current main.py with platform runtime context and return structured probe result.",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "payload": {"type": "object"},
-                            "context": {"type": "object"},
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "function_runtime_probe",
+                        "description": (
+                            "Execute the current main.py with a realistic platform runtime "
+                            "context and return a structured verification result."
+                        ),
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "payload": {"type": "object"},
+                                "context": {"type": "object"},
+                            },
                         },
                     },
                 },
+            ]
+        completion_tool = {
+            "type": "function",
+            "function": {
+                "name": "complete_coding_task",
+                "description": (
+                    "Finish the coding or analysis task. Completion is rejected until all "
+                    "required probes and synchronized file updates have passed."
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "assistant_message": {
+                            "type": "string",
+                            "description": "Concise user-facing outcome or analysis result.",
+                        },
+                        "result": {
+                            "type": "string",
+                            "description": "Alias for assistant_message in analysis stages.",
+                        },
+                        "result_status": {
+                            "type": "string",
+                            "enum": [
+                                "completed",
+                                "clear",
+                                "refined",
+                                "needs_clarification",
+                                "too_complex",
+                            ],
+                        },
+                        "diff_summary": {"type": "string"},
+                        "tests_suggested": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                        },
+                        "risk_notes": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                        },
+                        "generated_title": {"type": "string"},
+                        "generated_description": {"type": "string"},
+                    },
+                    "required": ["result_status"],
+                },
             },
-        ]
+        }
+        return [*base_tools, *function_tools, completion_tool]
 
     def _build_system_prompt(self, workspace_dir: Path, allowed_files: list[str]) -> str:
         allowed_text = "\n".join(f"- {item}" for item in allowed_files)
@@ -348,9 +409,9 @@ class PiLiteEngine:
                 "- `scheduler_history.delete(...)` must use structured `where=...` and `policy=...`; put retention in `policy.retention_seconds`.\n"
                 "- In plan mode, `scheduler_history.delete(...)` requires `dry_run=True` before any apply-mode delete.\n"
                 "- Call `get_function_runtime_contract` if uncertain about db/platform API.\n"
-                "- Before final JSON: call `function_runtime_probe` with a realistic payload "
+                "- After changing main.py, call `function_runtime_probe` with a realistic payload "
                 "(derive keys and types from the actual `main(payload, context)` implementation) "
-                "and confirm `ok=true`.\n"
+                "and confirm success before calling `complete_coding_task`.\n"
             )
         page_contract = ""
         if "main.tsx" in allowed_files and "preview.html" in allowed_files:
@@ -360,24 +421,12 @@ class PiLiteEngine:
                 "- If main.tsx changes, update preview.html in the same run.\n"
                 "- preview.html must be fully self-contained (all CSS defined inline).\n"
             )
-        return (
-            "You are pi-lite, a focused coding engine.\n"
-            "Workflow (follow in order):\n"
-            "  Step 0 — Understand: read the relevant existing files, then output a brief change plan "
-            "(one message, no tool call) describing what exists and what you will change and why. "
-            "Do not skip this step.\n"
-            "  Step 1 — Edit: make minimal, targeted edits. Prefer `edit_file` over full file rewrites.\n"
-            "  Step 2 — Verify: run probe/checks, then return the final JSON.\n"
-            "Hard rules:\n"
-            "1) Only modify files in allowed_files.\n"
-            "2) Re-raise DB/platform exceptions; never return mock/fake data.\n"
-            "3) Final response: raw JSON only (no markdown fences) — keys: assistant_message, diff_summary, tests_suggested, risk_notes.\n"
-            "4) assistant_message: 3–5 sentences, user-facing business language — no platform internals "
-            "(get_session_by_id / SQLAlchemy / execution_mode / plan mode / runtime_path).\n"
-            f"{function_contract}"
-            f"{page_contract}"
-            f"workspace_dir: {workspace_dir}\n"
-            f"allowed_files:\n{allowed_text}\n"
+        return PromptLoader.render(
+            "coding/prompts/reasoning_agent.tpl",
+            workspace_dir=str(workspace_dir),
+            allowed_files_text=allowed_text,
+            function_contract=function_contract,
+            page_contract=page_contract,
         )
 
     def _execute_tool_call(
@@ -386,13 +435,13 @@ class PiLiteEngine:
         call: dict[str, Any],
         workspace_dir: Path,
         allowed: set[str],
-        state: _PiLiteState,
+        state: _CodingWorkspaceState,
     ) -> dict[str, Any]:
         fn = (call.get("function") or {}) if isinstance(call.get("function"), dict) else {}
         name = str(fn.get("name") or "").strip()
         arguments_text = str(fn.get("arguments") or "").strip()
         args = self._safe_json_load(arguments_text)
-        logger.info("pi_lite_tool_call %s", fmt_kv(tool=name))
+        logger.info("coding_reasoning_tool_call %s", fmt_kv(tool=name))
 
         try:
             if name == "read_file":
@@ -484,12 +533,12 @@ class PiLiteEngine:
                 state.last_probe_error = error
                 if ok:
                     logger.info(
-                        "pi_lite_runtime_probe_passed %s",
+                        "coding_reasoning_runtime_probe_passed %s",
                         fmt_kv(probe_attempt=state.probe_attempts, result_type=result_type),
                     )
                 else:
                     logger.warning(
-                        "pi_lite_runtime_probe_failed %s",
+                        "coding_reasoning_runtime_probe_failed %s",
                         fmt_kv(probe_attempt=state.probe_attempts, error=str(error or "")),
                     )
                 return {
@@ -501,7 +550,7 @@ class PiLiteEngine:
 
             raise ValueError(f"Unknown tool: {name}")
         except Exception as exc:
-            logger.warning("pi_lite_tool_error %s", fmt_kv(tool=name, error=str(exc)))
+            logger.warning("coding_reasoning_tool_error %s", fmt_kv(tool=name, error=str(exc)))
             return {"ok": False, "error": str(exc), "tool": name}
 
     def _normalize_allowed_path(
@@ -526,26 +575,6 @@ class PiLiteEngine:
         except json.JSONDecodeError:
             return {}
 
-    def _parse_final_json(self, content: str) -> dict[str, Any]:
-        text = content.strip()
-        if not text:
-            raise ValueError("pi-lite final response is empty")
-        fenced = re.search(r"```(?:json)?\s*(\{.*\})\s*```", text, flags=re.DOTALL)
-        if fenced:
-            text = fenced.group(1).strip()
-        if not text.startswith("{"):
-            start = text.find("{")
-            end = text.rfind("}")
-            if start >= 0 and end > start:
-                text = text[start : end + 1]
-        try:
-            data = json.loads(text)
-        except json.JSONDecodeError as exc:  # pragma: no cover - input-specific
-            raise ValueError(f"pi-lite final response is not valid JSON: {exc}") from exc
-        if not isinstance(data, dict):
-            raise ValueError("pi-lite final response must be a JSON object")
-        return data
-
     def _normalize_string_list(self, value: Any) -> list[str]:
         if not isinstance(value, list):
             return []
@@ -559,7 +588,9 @@ class PiLiteEngine:
     def _requires_function_runtime_probe(self, allowed: set[str]) -> bool:
         return "main.py" in allowed
 
-    def _requires_page_preview_sync(self, allowed: set[str], state: _PiLiteState) -> bool:
+    def _requires_page_preview_sync(
+        self, allowed: set[str], state: _CodingWorkspaceState
+    ) -> bool:
         if not {"main.tsx", "preview.html"}.issubset(allowed):
             return False
         if "main.tsx" not in state.changed_files:
@@ -581,7 +612,7 @@ class PiLiteEngine:
         return {
             "datasource_id": 1,
             "scope": {},
-            "trace_id": "pi-lite-probe",
+            "trace_id": "coding-reasoning-probe",
             "execution_mode": "plan",
         }
 

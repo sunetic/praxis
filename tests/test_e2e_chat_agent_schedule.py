@@ -130,7 +130,7 @@ class _FakeAgentRunner:
 def env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     workspace_root = tmp_path / "workspace"
     monkeypatch.setenv("PRAXIS_WORKSPACE_ROOT", str(workspace_root))
-    monkeypatch.setenv("PRAXIS_CODING_ENGINE", "aider_like")
+    monkeypatch.setenv("PRAXIS_CODING_ENGINE", "reasoning")
 
     db_path = tmp_path / "e2e-chat-agent-schedule.db"
     engine = create_engine(
@@ -161,7 +161,9 @@ def env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr("app.services.llm.get_llm_client", lambda: fake_llm)
     monkeypatch.setattr("app.services.agent.scope_adapter_base.get_llm_client", lambda: fake_llm)
     monkeypatch.setattr("app.services.agent.reasoning_engine.get_llm_client", lambda: fake_llm)
-    monkeypatch.setattr("app.services.agent.build_verify_loop.get_llm_client", lambda: fake_llm)
+    monkeypatch.setattr(
+        "app.services.agent.build_verification_pipeline.get_llm_client", lambda: fake_llm
+    )
     monkeypatch.setattr("app.api.chat_agent_draft.get_llm_client", lambda: fake_llm)
 
     fake_runner = _FakeAgentRunner()

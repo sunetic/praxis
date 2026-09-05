@@ -1,10 +1,81 @@
 import asyncio
 import json
 
-from app.services.pi_lite_engine import PiLiteEngine
+from app.services.coding.reasoning_agent import CodingReasoningAgent
 
 
-def test_pi_lite_engine_requires_runtime_probe_before_finalize(tmp_path):
+class _LegacyCompletionLLM:
+    """Adapt pre-migration full-message fixtures to ReasoningEngine streaming chunks."""
+
+    def __init__(self, chat_completion):
+        self._chat_completion = chat_completion
+
+    async def chat(self, messages, tools=None, stream=True, **_kwargs):
+        _ = stream
+        response = await self._chat_completion(messages, tools or [])
+        message = ((response.get("choices") or [{}])[0].get("message") or {})
+        tool_calls = message.get("tool_calls") or []
+        content = str(message.get("content") or "")
+        if not tool_calls and content:
+            try:
+                completion = json.loads(content)
+            except json.JSONDecodeError:
+                completion = None
+            if isinstance(completion, dict) and (
+                "assistant_message" in completion or "result_status" in completion
+            ):
+                completion.setdefault("result_status", "completed")
+                tool_calls = [
+                    {
+                        "id": "complete-coding-task",
+                        "type": "function",
+                        "function": {
+                            "name": "complete_coding_task",
+                            "arguments": json.dumps(completion, ensure_ascii=False),
+                        },
+                    }
+                ]
+                content = ""
+        if content:
+            yield {
+                "choices": [
+                    {"delta": {"content": content}, "finish_reason": "stop"}
+                ]
+            }
+            return
+        for index, call in enumerate(tool_calls):
+            function = call.get("function") or {}
+            yield {
+                "choices": [
+                    {
+                        "delta": {
+                            "tool_calls": [
+                                {
+                                    "index": index,
+                                    "id": call.get("id"),
+                                    "type": call.get("type", "function"),
+                                    "function": {
+                                        "name": function.get("name"),
+                                        "arguments": function.get("arguments") or "{}",
+                                    },
+                                }
+                            ]
+                        },
+                        "finish_reason": None,
+                    }
+                ]
+            }
+        yield {"choices": [{"delta": {}, "finish_reason": "tool_calls"}]}
+
+
+def _make_agent(max_iterations, chat_completion):
+    return CodingReasoningAgent(
+        max_iterations=max_iterations,
+        llm_client=_LegacyCompletionLLM(chat_completion),
+    )
+
+
+def test_coding_reasoning_agent_requires_runtime_probe_before_finalize(tmp_path):
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
     target = workspace / "main.py"
@@ -65,7 +136,7 @@ def test_pi_lite_engine_requires_runtime_probe_before_finalize(tmp_path):
             assert any(
                 "function_runtime_probe" in str(item.get("content") or "")
                 for item in messages
-                if item.get("role") == "user"
+                if item.get("role") in {"system", "tool"}
             )
             return {
                 "choices": [
@@ -106,7 +177,7 @@ def test_pi_lite_engine_requires_runtime_probe_before_finalize(tmp_path):
             }
         raise AssertionError("unexpected extra retry")
 
-    engine = PiLiteEngine(max_steps=6, chat_completion=fake_chat_completion)
+    engine = _make_agent(6, fake_chat_completion)
     result = asyncio.run(
         engine.run(
             goal="update main.py",
@@ -120,7 +191,7 @@ def test_pi_lite_engine_requires_runtime_probe_before_finalize(tmp_path):
     assert target.read_text(encoding="utf-8").startswith("def main(payload, context)")
 
 
-def test_pi_lite_engine_retries_after_probe_failure(tmp_path):
+def test_coding_reasoning_agent_retries_after_probe_failure(tmp_path):
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
     target = workspace / "main.py"
@@ -133,7 +204,7 @@ def test_pi_lite_engine_retries_after_probe_failure(tmp_path):
         _ = tools
         calls["count"] += 1
         if any(
-            '"ok": false' in str(item.get("content") or "")
+            '"success": false' in str(item.get("content") or "")
             for item in messages
             if item.get("role") == "tool"
         ):
@@ -262,7 +333,7 @@ def test_pi_lite_engine_retries_after_probe_failure(tmp_path):
 
         raise AssertionError("unexpected extra retry")
 
-    engine = PiLiteEngine(max_steps=10, chat_completion=fake_chat_completion)
+    engine = _make_agent(10, fake_chat_completion)
     result = asyncio.run(
         engine.run(
             goal="build function",
@@ -277,7 +348,7 @@ def test_pi_lite_engine_retries_after_probe_failure(tmp_path):
     assert "missing_name" not in target.read_text(encoding="utf-8")
 
 
-def test_pi_lite_engine_accepts_step0_plan_message_before_tools(tmp_path):
+def test_coding_reasoning_agent_accepts_step0_plan_message_before_tools(tmp_path):
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
     target = workspace / "main.py"
@@ -300,9 +371,9 @@ def test_pi_lite_engine_accepts_step0_plan_message_before_tools(tmp_path):
             }
         if calls["count"] == 2:
             assert any(
-                "Plan acknowledged." in str(item.get("content") or "")
+                "domain completion tool" in str(item.get("content") or "")
                 for item in messages
-                if item.get("role") == "user"
+                if item.get("role") in {"system", "tool"}
             )
             return {
                 "choices": [
@@ -371,7 +442,7 @@ def test_pi_lite_engine_accepts_step0_plan_message_before_tools(tmp_path):
             }
         raise AssertionError("unexpected extra retry")
 
-    engine = PiLiteEngine(max_steps=6, chat_completion=fake_chat_completion)
+    engine = _make_agent(6, fake_chat_completion)
     result = asyncio.run(
         engine.run(
             goal="update main.py",
@@ -386,7 +457,7 @@ def test_pi_lite_engine_accepts_step0_plan_message_before_tools(tmp_path):
     assert target.read_text(encoding="utf-8").startswith("def main(payload, context)")
 
 
-def test_pi_lite_engine_runtime_probe_payload_includes_datasource_ids(tmp_path):
+def test_coding_reasoning_agent_runtime_probe_payload_includes_datasource_ids(tmp_path):
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
     target = workspace / "main.py"
@@ -448,7 +519,7 @@ def test_pi_lite_engine_runtime_probe_payload_includes_datasource_ids(tmp_path):
             }
         raise AssertionError("unexpected extra retry")
 
-    engine = PiLiteEngine(max_steps=4, chat_completion=fake_chat_completion)
+    engine = _make_agent(4, fake_chat_completion)
     result = asyncio.run(
         engine.run(
             goal="validate",
@@ -461,7 +532,7 @@ def test_pi_lite_engine_runtime_probe_payload_includes_datasource_ids(tmp_path):
     assert calls["count"] == 2
 
 
-def test_pi_lite_engine_runtime_probe_rejects_system_role_value(tmp_path):
+def test_coding_reasoning_agent_runtime_probe_rejects_system_role_value(tmp_path):
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
     (workspace / "main.py").write_text(
@@ -469,7 +540,7 @@ def test_pi_lite_engine_runtime_probe_rejects_system_role_value(tmp_path):
         encoding="utf-8",
     )
 
-    engine = PiLiteEngine(max_steps=2)
+    engine = CodingReasoningAgent(max_iterations=2)
     ok, error, result_type = engine._run_function_runtime_probe(
         workspace_dir=workspace,
         payload=engine._default_probe_payload(),
@@ -481,7 +552,7 @@ def test_pi_lite_engine_runtime_probe_rejects_system_role_value(tmp_path):
     assert "Unsupported role: system" in str(error or "")
 
 
-def test_pi_lite_engine_runtime_probe_supports_platform_list(tmp_path):
+def test_coding_reasoning_agent_runtime_probe_supports_platform_list(tmp_path):
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
     (workspace / "main.py").write_text(
@@ -495,7 +566,7 @@ def test_pi_lite_engine_runtime_probe_supports_platform_list(tmp_path):
         encoding="utf-8",
     )
 
-    engine = PiLiteEngine(max_steps=2)
+    engine = CodingReasoningAgent(max_iterations=2)
     ok, error, result_type = engine._run_function_runtime_probe(
         workspace_dir=workspace,
         payload=engine._default_probe_payload(),
@@ -507,7 +578,7 @@ def test_pi_lite_engine_runtime_probe_supports_platform_list(tmp_path):
     assert result_type == "dict"
 
 
-def test_pi_lite_engine_runtime_probe_rejects_by_id_positional_calling(tmp_path):
+def test_coding_reasoning_agent_runtime_probe_rejects_by_id_positional_calling(tmp_path):
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
     (workspace / "main.py").write_text(
@@ -519,7 +590,7 @@ def test_pi_lite_engine_runtime_probe_rejects_by_id_positional_calling(tmp_path)
         encoding="utf-8",
     )
 
-    engine = PiLiteEngine(max_steps=2)
+    engine = CodingReasoningAgent(max_iterations=2)
     ok, error, result_type = engine._run_function_runtime_probe(
         workspace_dir=workspace,
         payload=engine._default_probe_payload(),
@@ -531,7 +602,7 @@ def test_pi_lite_engine_runtime_probe_rejects_by_id_positional_calling(tmp_path)
     assert "keyword-only datasource_id" in str(error or "")
 
 
-def test_pi_lite_engine_runtime_probe_rejects_swallowed_db_exception(tmp_path):
+def test_coding_reasoning_agent_runtime_probe_rejects_swallowed_db_exception(tmp_path):
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
     (workspace / "main.py").write_text(
@@ -546,7 +617,7 @@ def test_pi_lite_engine_runtime_probe_rejects_swallowed_db_exception(tmp_path):
         encoding="utf-8",
     )
 
-    engine = PiLiteEngine(max_steps=2)
+    engine = CodingReasoningAgent(max_iterations=2)
     ok, error, result_type = engine._run_function_runtime_probe(
         workspace_dir=workspace,
         payload=engine._default_probe_payload(),
@@ -558,7 +629,7 @@ def test_pi_lite_engine_runtime_probe_rejects_swallowed_db_exception(tmp_path):
     assert "cannot be swallowed" in str(error or "")
 
 
-def test_pi_lite_engine_runtime_probe_rejects_direct_iteration_of_db_query_result(tmp_path):
+def test_coding_reasoning_agent_runtime_probe_rejects_direct_iteration_of_db_query_result(tmp_path):
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
     (workspace / "main.py").write_text(
@@ -571,7 +642,7 @@ def test_pi_lite_engine_runtime_probe_rejects_direct_iteration_of_db_query_resul
         encoding="utf-8",
     )
 
-    engine = PiLiteEngine(max_steps=2)
+    engine = CodingReasoningAgent(max_iterations=2)
     ok, error, result_type = engine._run_function_runtime_probe(
         workspace_dir=workspace,
         payload=engine._default_probe_payload(),
@@ -583,7 +654,7 @@ def test_pi_lite_engine_runtime_probe_rejects_direct_iteration_of_db_query_resul
     assert "result.get('rows', [])" in str(error or "")
 
 
-def test_pi_lite_engine_runtime_probe_rejects_row_index_access_on_mapping_rows(tmp_path):
+def test_coding_reasoning_agent_runtime_probe_rejects_row_index_access_on_mapping_rows(tmp_path):
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
     (workspace / "main.py").write_text(
@@ -597,7 +668,7 @@ def test_pi_lite_engine_runtime_probe_rejects_row_index_access_on_mapping_rows(t
         encoding="utf-8",
     )
 
-    engine = PiLiteEngine(max_steps=2)
+    engine = CodingReasoningAgent(max_iterations=2)
     ok, error, result_type = engine._run_function_runtime_probe(
         workspace_dir=workspace,
         payload=engine._default_probe_payload(),
@@ -609,7 +680,7 @@ def test_pi_lite_engine_runtime_probe_rejects_row_index_access_on_mapping_rows(t
     assert "KeyError: 0" in str(error or "")
 
 
-def test_pi_lite_engine_get_runtime_contract_tool(tmp_path):
+def test_coding_reasoning_agent_get_runtime_contract_tool(tmp_path):
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
     (workspace / "main.py").write_text(
@@ -689,7 +760,7 @@ def test_pi_lite_engine_get_runtime_contract_tool(tmp_path):
             }
         raise AssertionError("unexpected extra retry")
 
-    engine = PiLiteEngine(max_steps=6, chat_completion=fake_chat_completion)
+    engine = _make_agent(6, fake_chat_completion)
     result = asyncio.run(
         engine.run(
             goal="validate",
@@ -702,7 +773,7 @@ def test_pi_lite_engine_get_runtime_contract_tool(tmp_path):
     assert contract_seen["value"] is True
 
 
-def test_pi_lite_engine_probe_required_again_after_main_edit(tmp_path):
+def test_coding_reasoning_agent_probe_required_again_after_main_edit(tmp_path):
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
     target = workspace / "main.py"
@@ -715,9 +786,9 @@ def test_pi_lite_engine_probe_required_again_after_main_edit(tmp_path):
         _ = tools
         calls["count"] += 1
         if any(
-            "Before final JSON, call `function_runtime_probe`" in str(item.get("content") or "")
+            "function_runtime_probe" in str(item.get("content") or "")
             for item in messages
-            if item.get("role") == "user"
+            if item.get("role") in {"system", "tool"}
         ):
             reminder_seen["value"] = True
 
@@ -825,7 +896,7 @@ def test_pi_lite_engine_probe_required_again_after_main_edit(tmp_path):
             }
         raise AssertionError("unexpected extra retry")
 
-    engine = PiLiteEngine(max_steps=8, chat_completion=fake_chat_completion)
+    engine = _make_agent(8, fake_chat_completion)
     result = asyncio.run(
         engine.run(
             goal="update",
@@ -839,10 +910,10 @@ def test_pi_lite_engine_probe_required_again_after_main_edit(tmp_path):
     assert "'ok': False" in target.read_text(encoding="utf-8")
 
 
-def test_pi_lite_engine_function_prompt_mentions_scheduler_history_guidance(tmp_path):
+def test_coding_reasoning_agent_function_prompt_mentions_scheduler_history_guidance(tmp_path):
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
-    engine = PiLiteEngine()
+    engine = CodingReasoningAgent()
 
     prompt = engine._build_system_prompt(workspace, ["main.py"])
 
@@ -852,7 +923,7 @@ def test_pi_lite_engine_function_prompt_mentions_scheduler_history_guidance(tmp_
     assert "dry_run=True" in prompt
 
 
-def test_pi_lite_engine_requires_preview_sync_for_page_workspace(tmp_path):
+def test_coding_reasoning_agent_requires_preview_sync_for_page_workspace(tmp_path):
     workspace = tmp_path / "workspace"
     workspace.mkdir(parents=True, exist_ok=True)
     (workspace / "main.tsx").write_text(
@@ -870,9 +941,9 @@ def test_pi_lite_engine_requires_preview_sync_for_page_workspace(tmp_path):
         _ = tools
         calls["count"] += 1
         if any(
-            "did not update preview.html" in str(item.get("content") or "")
+            "preview.html" in str(item.get("content") or "")
             for item in messages
-            if item.get("role") == "user"
+            if item.get("role") in {"system", "tool"}
         ):
             reminder_seen["value"] = True
 
@@ -964,7 +1035,7 @@ def test_pi_lite_engine_requires_preview_sync_for_page_workspace(tmp_path):
             }
         raise AssertionError("unexpected extra retry")
 
-    engine = PiLiteEngine(max_steps=8, chat_completion=fake_chat_completion)
+    engine = _make_agent(8, fake_chat_completion)
     result = asyncio.run(
         engine.run(
             goal="update page",
@@ -978,8 +1049,8 @@ def test_pi_lite_engine_requires_preview_sync_for_page_workspace(tmp_path):
     assert "<main>i</main>" in (workspace / "preview.html").read_text(encoding="utf-8")
 
 
-def test_pi_lite_engine_probe_repair_hint_for_common_failures():
-    engine = PiLiteEngine(max_steps=2)
+def test_coding_reasoning_agent_probe_repair_hint_for_common_failures():
+    engine = CodingReasoningAgent(max_iterations=2)
 
     signature_hint = engine._build_probe_repair_hint(
         "TypeError: main() takes 1 positional argument but 2 were given"
@@ -1005,6 +1076,6 @@ def test_pi_lite_engine_probe_repair_hint_for_common_failures():
     assert "row.get('Database')" in keyerror_hint
 
 
-def test_pi_lite_engine_probe_repair_hint_empty_for_empty_error():
-    engine = PiLiteEngine(max_steps=2)
+def test_coding_reasoning_agent_probe_repair_hint_empty_for_empty_error():
+    engine = CodingReasoningAgent(max_iterations=2)
     assert engine._build_probe_repair_hint("") == ""

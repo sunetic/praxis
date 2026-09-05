@@ -955,13 +955,13 @@ class PlatformSettingsUpdateRequest(BaseModel):
         if value is None:
             return value
         normalized = value.strip().lower()
-        if normalized not in {"pi_lite", "external_cli"}:
-            raise ValueError("build_engine must be one of: pi_lite, external_cli")
+        if normalized not in {"reasoning", "external_cli"}:
+            raise ValueError("build_engine must be one of: reasoning, external_cli")
         return normalized
 
 
 class PlatformSettingsResponse(BaseModel):
-    build_engine: str = "pi_lite"
+    build_engine: str = "reasoning"
     external_cli_command: str = ""
     external_cli_pre_flags: str = ""
     external_cli_post_flags: str = ""

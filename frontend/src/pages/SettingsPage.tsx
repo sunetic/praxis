@@ -11,7 +11,7 @@ import { Switch } from "@/components/ui/switch"
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { cn } from "@/lib/utils"
 
-type EngineChoice = "pi_lite" | "external_cli"
+type EngineChoice = "reasoning" | "external_cli"
 type TabId = "llm" | "build" | "safety"
 
 // ── LLM tab ───────────────────────────────────────────────────────────────────
@@ -210,7 +210,7 @@ function LlmTab() {
 
 function BuildTab() {
   const { t } = useShellI18n()
-  const [engine, setEngine] = useState<EngineChoice>("pi_lite")
+  const [engine, setEngine] = useState<EngineChoice>("reasoning")
   const [command, setCommand] = useState("")
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
@@ -223,7 +223,7 @@ function BuildTab() {
 
   useEffect(() => {
     settingsApi.get().then((data) => {
-      setEngine((data.build_engine as EngineChoice) || "pi_lite")
+      setEngine((data.build_engine as EngineChoice) || "reasoning")
       setCommand(data.external_cli_command || "")
       setLoaded(true)
     })
@@ -282,12 +282,12 @@ function BuildTab() {
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="pi_lite">{t("settings.engine.builtin")}</SelectItem>
+            <SelectItem value="reasoning">{t("settings.engine.builtin")}</SelectItem>
             <SelectItem value="external_cli">{t("settings.engine.external")}</SelectItem>
           </SelectContent>
         </Select>
         <p className="text-xs text-muted-foreground">
-          {engine === "pi_lite" ? t("settings.engine.builtinDesc") : t("settings.engine.externalDesc")}
+          {engine === "reasoning" ? t("settings.engine.builtinDesc") : t("settings.engine.externalDesc")}
         </p>
       </div>
 

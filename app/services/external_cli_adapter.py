@@ -43,6 +43,8 @@ class ExternalCliAdapter:
     the workspace to determine which files changed.
     """
 
+    engine_name = "external_cli"
+
     def __init__(
         self,
         *,

@@ -6,6 +6,8 @@ from sqlalchemy.orm import sessionmaker
 
 from app.db import database as db_module
 from app.db.database import Base
+from app.models.models import PlatformSetting
+from app.services.platform.settings_store import get_setting, load_settings
 from app.services.platform.workspace_store import _strip_duplicate_flags
 
 
@@ -17,6 +19,22 @@ def test_strip_duplicate_flags_removes_known_probe_flags():
     normalized = _strip_duplicate_flags(command, pre_flags, post_flags)
 
     assert normalized == "claude"
+
+
+def test_unknown_stored_build_engine_falls_back_to_shared_reasoning(tmp_path: Path):
+    engine = create_engine(f"sqlite:///{tmp_path / 'stale-settings.db'}")
+    Base.metadata.create_all(bind=engine)
+    session_local = sessionmaker(bind=engine)
+    db = session_local()
+    try:
+        db.add(PlatformSetting(key="build_engine", value="retired_engine"))
+        db.commit()
+
+        assert get_setting(db, "build_engine") == "reasoning"
+        assert load_settings(db)["build_engine"] == "reasoning"
+    finally:
+        db.close()
+        engine.dispose()
 
 
 def test_patch_settings_normalizes_external_cli_command(tmp_path: Path, monkeypatch):

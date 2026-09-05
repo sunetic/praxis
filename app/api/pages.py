@@ -1241,16 +1241,17 @@ def create_page_build_run(
                 if str(item or "").strip()
             ]
         )
+    workspace = WorkspaceStore()
+    engine_name = str(getattr(workspace, "engine_name", "reasoning") or "reasoning")
     logger.info(
         "page_build_mode_selected %s",
         fmt_kv(
             page_id=page.id,
-            engine="pi_lite",
+            engine=engine_name,
             has_context=bool(conversation_context),
             orchestration_enabled=bool(orchestration.get("enabled")),
         ),
     )
-    workspace = WorkspaceStore()
     recent_contexts = _load_recent_page_build_contexts(db, page_id=page.id)
     previous_draft_payload = (
         deepcopy(page.draft_payload) if isinstance(page.draft_payload, dict) else {}
@@ -1403,7 +1404,7 @@ def create_page_build_run(
                     "assistant_message": result.assistant_message,
                     "tests_suggested": result.tests_suggested,
                     "risk_notes": result.risk_notes,
-                    "engine": "pi_lite",
+                    "engine": engine_name,
                     "planner": orchestration_result.plan_summary,
                     "attempts": orchestration_result.attempts,
                     "verification": {

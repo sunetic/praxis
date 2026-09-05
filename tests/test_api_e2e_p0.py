@@ -72,7 +72,7 @@ def _release_function(client: TestClient, function_id: int) -> dict[str, Any]:
 def api_client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     workspace_root = tmp_path / "workspace"
     monkeypatch.setenv("PRAXIS_WORKSPACE_ROOT", str(workspace_root))
-    monkeypatch.setenv("PRAXIS_CODING_ENGINE", "aider_like")
+    monkeypatch.setenv("PRAXIS_CODING_ENGINE", "reasoning")
 
     db_path = tmp_path / "e2e-api.db"
     engine = create_engine(
@@ -148,7 +148,7 @@ def patch_runtime_stubs(monkeypatch: pytest.MonkeyPatch):
                 str(item.get("content") or "") for item in messages if item.get("role") == "system"
             )
             if not stream:
-                # pi_lite_engine: detect by tool presence in system prompt
+                # Legacy single-response callers still use non-streaming JSON.
                 if "write_file" in system_text or "function_runtime_probe" in system_text:
                     last_role = (messages[-1] or {}).get("role", "")
                     # After a tool result, return final JSON
@@ -267,11 +267,13 @@ def patch_runtime_stubs(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr("app.services.chat.stream_helpers.get_llm_client", lambda: fake_llm)
     monkeypatch.setattr("app.services.chat.get_llm_client", lambda: fake_llm)
     monkeypatch.setattr(functions_api, "get_llm_client", lambda: fake_llm)
-    monkeypatch.setattr("app.services.pi_lite_engine.get_llm_client", lambda: fake_llm)
+    monkeypatch.setattr("app.services.coding.reasoning_agent.get_llm_client", lambda: fake_llm)
     monkeypatch.setattr("app.services.llm.get_llm_client", lambda: fake_llm)
     monkeypatch.setattr("app.services.agent.scope_adapter_base.get_llm_client", lambda: fake_llm)
     monkeypatch.setattr("app.services.agent.reasoning_engine.get_llm_client", lambda: fake_llm)
-    monkeypatch.setattr("app.services.agent.build_verify_loop.get_llm_client", lambda: fake_llm)
+    monkeypatch.setattr(
+        "app.services.agent.build_verification_pipeline.get_llm_client", lambda: fake_llm
+    )
     monkeypatch.setattr("app.api.datasources._probe_and_fill_ob_ids", None)
     monkeypatch.setattr(
         functions_api,

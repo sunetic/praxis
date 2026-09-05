@@ -10,6 +10,7 @@ from datetime import UTC, datetime
 from typing import Any, Protocol
 
 from app.services.agent.core import summarize_build_goal
+from app.services.agent.reasoning_engine import EngineConfig, ReasoningEngine
 from app.services.llm import LLMClient, get_llm_client
 from app.services.platform.prompt_loader import PromptLoader
 
@@ -203,14 +204,12 @@ class ReflectionPlanner:
                 "missing": ["string"],
             },
         }
-        messages = [
-            {
-                "role": "system",
-                "content": PromptLoader.render("agent/prompts/reflection_planner.tpl"),
-            },
-            {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
-        ]
-        raw = _run_async_safely(self._call_llm_json(messages=messages))
+        raw = _run_async_safely(
+            self._run_reflection_reasoning(
+                system_prompt=PromptLoader.render("agent/prompts/reflection_planner.tpl"),
+                payload=payload,
+            )
+        )
         parsed = _parse_json_object(raw)
         action = str(parsed.get("action") or "").strip().lower()
         if action not in {"retry", "needs_clarification"}:
@@ -223,28 +222,43 @@ class ReflectionPlanner:
             missing=missing,
         )
 
-    async def _call_llm_json(self, *, messages: list[dict[str, str]]) -> str:
-        response: dict[str, Any] | None = None
-        async for chunk in self._llm.chat(
-            messages=messages,
-            tools=None,
-            stream=False,
-            temperature=0.1,
-            response_format={"type": "json_object"},
+    async def _run_reflection_reasoning(
+        self,
+        *,
+        system_prompt: str,
+        payload: dict[str, Any],
+    ) -> str:
+        engine = ReasoningEngine(
+            config=EngineConfig(
+                max_iterations=1,
+                task_contract_enabled=False,
+                completion_verifier_enabled=False,
+                persistent_journal_enabled=False,
+                parallel_read_only_enabled=False,
+            ),
+            llm=self._llm,
+        )
+        content_parts: list[str] = []
+        async for event in engine.run(
+            messages=[
+                {"role": "user", "content": json.dumps(payload, ensure_ascii=False)}
+            ],
+            tools=[],
+            system_prompt=system_prompt,
         ):
-            response = chunk
-            break
-        if response is None:
-            raise ValueError("LLM reflection empty")
-        content = (
-            ((response.get("choices") or [{}])[0].get("message") or {}).get("content") or ""
-        ).strip()
+            if event.get("type") != "assistant":
+                continue
+            data = event.get("data") if isinstance(event.get("data"), dict) else {}
+            text = str(data.get("text") or "")
+            if text:
+                content_parts.append(text)
+        content = "".join(content_parts).strip()
         if not content:
             raise ValueError("LLM reflection missing content")
         return content
 
 
-class BuildVerifyLoop:
+class BuildVerificationPipeline:
     def __init__(
         self,
         *,

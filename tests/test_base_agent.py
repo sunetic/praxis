@@ -172,6 +172,65 @@ async def _collect(engine: ReasoningEngine, **kwargs: Any) -> list[dict[str, Any
     return events
 
 
+@pytest.mark.anyio
+async def test_successful_domain_terminal_result_finishes_shared_loop() -> None:
+    llm = FakeLLM(
+        responses=[
+            _tool_call_chunk(
+                "complete_domain_task",
+                json.dumps({"message": "Finished through the shared engine."}),
+            )
+        ]
+    )
+
+    async def execute(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+        assert name == "complete_domain_task"
+        assert arguments["message"] == "Finished through the shared engine."
+        return {
+            "success": True,
+            "data": {
+                "terminal": True,
+                "terminal_text": arguments["message"],
+            },
+        }
+
+    engine = _make_engine(
+        llm=llm,
+        config=EngineConfig(
+            max_iterations=5,
+            task_contract_enabled=False,
+            completion_verifier_enabled=False,
+            persistent_journal_enabled=False,
+            terminal_result_required=True,
+        ),
+        executor=execute,
+    )
+    events = await _collect(
+        engine,
+        messages=[{"role": "user", "content": "Complete the domain task"}],
+        tools=[
+            {
+                "type": "function",
+                "function": {
+                    "name": "complete_domain_task",
+                    "parameters": {"type": "object"},
+                },
+            }
+        ],
+    )
+
+    assert llm.call_count == 1
+    assert any(
+        event.get("type") == "assistant"
+        and (event.get("data") or {}).get("text")
+        == "Finished through the shared engine."
+        for event in events
+    )
+    assert events[-1]["type"] == "done"
+    assert events[-1]["data"]["status"] == "completed"
+    assert events[-1]["data"]["completion_mode"] == "explicit"
+
+
 def test_valid_transitions() -> None:
     assert ReasoningPhase.PLANNING in VALID_TRANSITIONS[ReasoningPhase.THINKING]
     assert ReasoningPhase.DONE not in VALID_TRANSITIONS[ReasoningPhase.THINKING]

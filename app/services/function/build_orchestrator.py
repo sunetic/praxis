@@ -11,8 +11,8 @@ from typing import Any
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.models import models
-from app.services.agent.build_verify_loop import (
-    BuildVerifyLoop,
+from app.services.agent.build_verification_pipeline import (
+    BuildVerificationPipeline,
     VerificationOutcome,
 )
 from app.services.function.chat_agent import FunctionChatAgent
@@ -613,13 +613,13 @@ class FunctionBuildOrchestrator:
         builder: FunctionBuilderAgent | None = None,
         verifier: FunctionVerifier | None = None,
         schema_probe: FunctionSchemaProbe | None = None,
-        runtime_kernel: BuildVerifyLoop | None = None,
+        runtime_kernel: BuildVerificationPipeline | None = None,
     ) -> None:
         self._planner = planner or FunctionPlanner()
         self._builder = builder or FunctionBuilderAgent()
         self._verifier = verifier or FunctionVerifier()
         self._schema_probe = schema_probe or FunctionSchemaProbe()
-        self._runtime_kernel = runtime_kernel or BuildVerifyLoop(max_attempts=3)
+        self._runtime_kernel = runtime_kernel or BuildVerificationPipeline(max_attempts=3)
 
     @staticmethod
     def _make_event_emitter(
@@ -804,12 +804,12 @@ Goal:
 
 Instructions:
 - Do NOT write any code.
-- Respond in JSON only.
-- If the goal is clear and scoped to a single concern, return:
+- Finish by calling complete_coding_task exactly once.
+- If the goal is clear and scoped to a single concern, call it with:
   {{"result_status": "clear", "result": "<one-sentence confirmation of what this function will do>"}}
-- If the goal is too broad, covers multiple unrelated concerns, or would require more than one function, return:
+- If the goal is too broad, covers multiple unrelated concerns, or would require more than one function, call it with:
   {{"result_status": "too_complex", "result": "<explanation + 2-3 suggested sub-goals>"}}
-- If essential information is missing (e.g. which datasource, which time range, expected output shape), return:
+- If essential information is missing (e.g. which datasource, which time range, expected output shape), call it with:
   {{"result_status": "needs_clarification", "result": "<specific questions to ask the user>"}}
 """
 
@@ -824,11 +824,11 @@ Goal:
 
 Instructions:
 - Do NOT write any code.
-- Respond in JSON only.
+- Finish by calling complete_coding_task exactly once.
 - Identify the exact tables and columns needed from the available schema.
 - Determine the output shape (what the caller expects to receive as a dict).
 - Note edge cases: empty result sets, missing datasource, permission errors.
-- Return:
+- Call it with:
   {{"result_status": "refined", "result": "<structured implementation spec as plain text>", "output_shape": "<description of the return dict>"}}
 """
 
@@ -858,10 +858,10 @@ class StagedFunctionBuildOrchestrator:
     """
     Orchestrates Function Build as a sequence of independent coding-engine calls:
 
-    Stage 1 — Complexity Assessment: engine returns JSON analysis, no code written.
+    Stage 1 — Complexity Assessment: engine returns structured analysis, no code written.
     Stage 2 — Requirement Refinement: engine returns refined spec, no code written.
-    Stage 4 — Implementation: delegates to BuildVerifyLoop (existing flow).
-    Stage 5 — Verification: part of the Kernel loop.
+    Stage 4 — Implementation: delegates to BuildVerificationPipeline.
+    Stage 5 — Verification: part of the deterministic verification pipeline.
 
     Stage 3 (implementation plan) is folded into Stage 4's initial prompt.
     """
@@ -873,13 +873,13 @@ class StagedFunctionBuildOrchestrator:
         builder: FunctionBuilderAgent | None = None,
         verifier: FunctionVerifier | None = None,
         schema_probe: FunctionSchemaProbe | None = None,
-        runtime_kernel: BuildVerifyLoop | None = None,
+        runtime_kernel: BuildVerificationPipeline | None = None,
     ) -> None:
         self._planner = planner or FunctionPlanner()
         self._builder = builder or FunctionBuilderAgent()
         self._verifier = verifier or FunctionVerifier()
         self._schema_probe = schema_probe or FunctionSchemaProbe()
-        self._runtime_kernel = runtime_kernel or BuildVerifyLoop(max_attempts=3)
+        self._runtime_kernel = runtime_kernel or BuildVerificationPipeline(max_attempts=3)
 
     def plan(
         self,

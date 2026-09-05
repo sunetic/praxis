@@ -9,7 +9,7 @@ from app.core.security import decrypt_secret, encrypt_secret, is_encrypted
 from app.models.models import PlatformSetting
 
 DEFAULT_PLATFORM_SETTINGS: dict[str, Any] = {
-    "build_engine": "pi_lite",
+    "build_engine": "reasoning",
     "external_cli_command": "",
     "external_cli_pre_flags": "",
     "external_cli_post_flags": "",
@@ -35,6 +35,12 @@ def _decode_value(key: str, value: Any) -> Any:
     return decrypt_secret(value) if is_encrypted(value) else value
 
 
+def _normalize_value(key: str, value: Any) -> Any:
+    if key == "build_engine" and value not in {"reasoning", "external_cli"}:
+        return DEFAULT_PLATFORM_SETTINGS["build_engine"]
+    return value
+
+
 def load_settings(db: Session, keys: Iterable[str] | None = None) -> dict[str, Any]:
     query = db.query(PlatformSetting)
     if keys is not None:
@@ -42,14 +48,17 @@ def load_settings(db: Session, keys: Iterable[str] | None = None) -> dict[str, A
         if not selected_keys:
             return {}
         query = query.filter(PlatformSetting.key.in_(selected_keys))
-    return {row.key: _decode_value(row.key, row.value) for row in query.all()}
+    return {
+        row.key: _normalize_value(row.key, _decode_value(row.key, row.value))
+        for row in query.all()
+    }
 
 
 def get_setting(db: Session, key: str) -> Any:
     row = db.query(PlatformSetting).filter(PlatformSetting.key == key).first()
     if row is None:
         return DEFAULT_PLATFORM_SETTINGS.get(key)
-    return _decode_value(row.key, row.value)
+    return _normalize_value(row.key, _decode_value(row.key, row.value))
 
 
 def upsert_setting(db: Session, key: str, value: Any) -> None:

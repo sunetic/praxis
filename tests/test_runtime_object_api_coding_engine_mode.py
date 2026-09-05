@@ -12,10 +12,11 @@ from app.api import functions as functions_api
 from app.api import schedules as schedules_api
 from app.db.database import Base
 from app.models import models
-from app.services.agent.build_verify_loop import (
+from app.services.agent.build_verification_pipeline import (
     BuildAttempt,
-    BuildVerifyLoop,
+    BuildVerificationPipeline,
     ReflectionDecision,
+    ReflectionPlanner,
     VerificationOutcome,
 )
 from app.services.platform.coding_engine import CodingEngineApplyResult
@@ -23,6 +24,51 @@ from app.services.platform.coding_engine import CodingEngineApplyResult
 _llm_configured = bool(
     os.getenv("PRAXIS_LLM_API_KEY") or os.getenv("LLM_API_KEY") or os.getenv("OPENAI_API_KEY")
 )
+
+
+def test_reflection_planner_uses_shared_reasoning_engine(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.delenv("PYTEST_CURRENT_TEST", raising=False)
+
+    class _ReflectionLLM:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def chat(self, *args: Any, **kwargs: Any):
+            _ = args, kwargs
+            self.calls += 1
+            yield {
+                "choices": [
+                    {
+                        "delta": {
+                            "content": (
+                                '{"action":"retry","reason":"repair",'
+                                '"next_goal":"fix the contract","missing":[]}'
+                            )
+                        },
+                        "finish_reason": "stop",
+                    }
+                ]
+            }
+
+    llm = _ReflectionLLM()
+    decision = ReflectionPlanner(llm_client=llm).decide(
+        scope="function",
+        initial_goal="build a function",
+        current_goal="build a function",
+        attempt_index=1,
+        max_attempts=3,
+        diagnostics=["contract failed"],
+        error="",
+        attempts=[],
+    )
+
+    assert llm.calls == 1
+    assert decision == ReflectionDecision(
+        action="retry",
+        reason="repair",
+        next_goal="fix the contract",
+        missing=[],
+    )
 
 
 class _FakeFunctionWorkspaceStore:
@@ -198,7 +244,9 @@ class _FailingFunctionWorkspaceStore(_FakeFunctionWorkspaceStore):
         self, *, function: models.Function, goal: str, datasource_schema=None, datasource_id=None
     ):
         _ = function, goal, datasource_schema, datasource_id
-        raise ValueError("pi-lite reached max_steps=10 without final JSON response")
+        raise ValueError(
+            "coding reasoning agent ended without a successful completion tool call"
+        )
 
 
 class _NoopFunctionWorkspaceStore(_FakeFunctionWorkspaceStore):
@@ -335,7 +383,9 @@ def test_agent_runtime_kernel_handles_complex_task_catalog():
 
     for scenario in scenarios:
         counter = {"value": 0}
-        kernel = BuildVerifyLoop(max_attempts=3, reflection_planner=_StubReflectionPlanner())
+        kernel = BuildVerificationPipeline(
+            max_attempts=3, reflection_planner=_StubReflectionPlanner()
+        )
 
         def _verify(
             build_result: Any, goal: str, attempt_index: int, attempts: list[BuildAttempt]
@@ -470,7 +520,7 @@ def test_function_chat_build_with_coding_engine_mode_returns_failed_instead_of_5
         )
         assert response["status"] == "failed"
         assert response["data"]["build_run"]["status"] == "failed"
-        assert "max_steps=10" in str(response["assistant_message"] or "")
+        assert "successful completion tool call" in str(response["assistant_message"] or "")
     finally:
         db.close()
         engine.dispose()

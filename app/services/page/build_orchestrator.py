@@ -5,9 +5,9 @@ from dataclasses import dataclass
 from typing import Any
 
 from app.models import models
-from app.services.agent.build_verify_loop import (
+from app.services.agent.build_verification_pipeline import (
     BuildAttempt,
-    BuildVerifyLoop,
+    BuildVerificationPipeline,
     VerificationOutcome,
 )
 from app.services.page.authoring_agent import (
@@ -56,11 +56,11 @@ class PageBuilderOrchestrator:
         *,
         authoring_agent: PageAuthoringAgent | None = None,
         e2e_verifier: PageE2EVerifier | None = None,
-        runtime_kernel: BuildVerifyLoop | None = None,
+        runtime_kernel: BuildVerificationPipeline | None = None,
     ) -> None:
         self._authoring_agent = authoring_agent or PageAuthoringAgent()
         self._e2e_verifier = e2e_verifier or PageE2EVerifier()
-        self._runtime_kernel = runtime_kernel or BuildVerifyLoop(max_attempts=3)
+        self._runtime_kernel = runtime_kernel or BuildVerificationPipeline(max_attempts=3)
 
     def execute(
         self,

@@ -113,7 +113,7 @@ class PageContextWriter:
             "- If the goal is clear and maps to one of the template structures, PROCEED.\n\n"
             "When the goal is too complex or needs clarification:\n"
             "- Do NOT write any code.\n"
-            '- Return a JSON result: `{"result_status": "too_complex", "result": "<explanation and suggested decomposition>"}` '
+            '- Call `complete_coding_task` with `{"result_status": "too_complex", "result": "<explanation and suggested decomposition>"}` '
             'or `{"result_status": "needs_clarification", "result": "<specific questions>"}`.\n\n'
             "### Stage 2: Requirement Refinement\n\n"
             "If the goal passes complexity assessment:\n"

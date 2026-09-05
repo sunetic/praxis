@@ -88,47 +88,23 @@ def _run_async_safely(coro: Any) -> Any:
     return result.get("value")
 
 
-class AiderLikeAdapter:
+class BuiltinReasoningAdapter:
     """
-    Minimal local adapter that applies prepared edits in a workspace directory.
-
-    This keeps integration shape close to external coding engines while we run a
-    lightweight local implementation first.
-    """
-
-    def plan_changes(
-        self,
-        *,
-        goal: str,
-        allowed_files: list[str],
-        edits: list[CodingEngineEdit],
-    ) -> CodingEnginePlan:
-        return CodingEnginePlan(goal=goal, allowed_files=allowed_files, edits=edits)
-
-    def apply_changes(
-        self, *, workspace_dir: Path, plan: CodingEnginePlan
-    ) -> CodingEngineApplyResult:
-        changed_files = _apply_prepared_edits(workspace_dir=workspace_dir, plan=plan)
-        return CodingEngineApplyResult(
-            changed_files=changed_files,
-            diff_summary=f"Applied {len(changed_files)} file change(s)",
-            tests_suggested=[],
-            risk_notes=[],
-            assistant_message="Code changes applied to workspace.",
-        )
-
-
-class PiLiteAdapter:
-    """
-    Python-native minimal coding engine adapter.
+    Python-native coding adapter backed by the shared ReasoningEngine.
 
     Behavior:
     - If `plan.edits` is provided, apply them directly (deterministic path).
-    - If `plan.edits` is empty, run a small LLM tool loop inside workspace.
+    - If `plan.edits` is empty, run the shared reasoning/tool loop in workspace.
     """
 
-    def __init__(self, *, max_steps: int = 10) -> None:
-        self.max_steps = max_steps
+    engine_name = "reasoning"
+
+    def __init__(self, *, max_iterations: int = 12) -> None:
+        self.max_iterations = max_iterations
+        self._event_callback: Any | None = None
+
+    def set_event_callback(self, callback: Any | None) -> None:
+        self._event_callback = callback
 
     def plan_changes(
         self,
@@ -152,18 +128,21 @@ class PiLiteAdapter:
                 assistant_message="Code changes applied to workspace.",
             )
 
-        from app.services.pi_lite_engine import PiLiteEngine
+        from app.services.coding.reasoning_agent import CodingReasoningAgent
 
-        engine = PiLiteEngine(max_steps=self.max_steps)
+        agent = CodingReasoningAgent(
+            max_iterations=self.max_iterations,
+            event_callback=self._event_callback,
+        )
         result = _run_async_safely(
-            engine.run(
+            agent.run(
                 goal=plan.goal,
                 workspace_dir=workspace_dir,
                 allowed_files=plan.allowed_files,
             )
         )
         if not isinstance(result, CodingEngineApplyResult):
-            raise ValueError("pi-lite adapter returned invalid result")
+            raise ValueError("reasoning coding adapter returned invalid result")
         return CodingEngineApplyResult(
             changed_files=list(result.changed_files),
             diff_summary=str(result.diff_summary),
@@ -172,4 +151,5 @@ class PiLiteAdapter:
             assistant_message=str(result.assistant_message),
             generated_title=str(result.generated_title or ""),
             generated_description=str(result.generated_description or ""),
+            result_status=str(result.result_status or "completed"),
         )

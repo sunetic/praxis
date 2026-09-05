@@ -1075,6 +1075,7 @@ def _build_function_apply_failed_run(
     *,
     function: models.Function,
     error_message: str,
+    engine_name: str = "reasoning",
 ) -> FunctionBuildRunResult:
     summary = f"Function build failed: {error_message}"
     return FunctionBuildRunResult(
@@ -1092,7 +1093,7 @@ def _build_function_apply_failed_run(
                 status="failed",
                 summary=summary,
                 created_at=_utc_now_naive().isoformat(),
-                payload={"engine": "pi_lite", "error": error_message},
+                payload={"engine": engine_name, "error": error_message},
             )
         ],
         error_summary=error_message,
@@ -1104,6 +1105,7 @@ def _build_function_verify_failed_run(
     function: models.Function,
     verification: dict[str, Any],
     changed_files: list[str],
+    engine_name: str = "reasoning",
 ) -> FunctionBuildRunResult:
     diagnostics = [
         str(item) for item in (verification.get("diagnostics") or []) if str(item).strip()
@@ -1142,7 +1144,7 @@ def _build_function_verify_failed_run(
                 summary=summary,
                 created_at=_utc_now_naive().isoformat(),
                 payload={
-                    "engine": "pi_lite",
+                    "engine": engine_name,
                     "changed_files": changed_files,
                     "verification": verification,
                 },
@@ -1254,11 +1256,12 @@ def _run_function_build_action(
     action: str = "build",
     event_sink: Callable[[dict[str, Any]], None] | None = None,
 ) -> tuple[FunctionBuildRunResult, models.FunctionBuildRun]:
+    workspace = WorkspaceStore()
+    engine_name = str(getattr(workspace, "engine_name", "reasoning") or "reasoning")
     logger.info(
         "function_build_mode_selected %s",
-        fmt_kv(function_id=function.id, action=action, engine="pi_lite"),
+        fmt_kv(function_id=function.id, action=action, engine=engine_name),
     )
-    workspace = WorkspaceStore()
     orchestrator = StagedFunctionBuildOrchestrator()
     build_applied = False
     previous_draft_code = str(function.draft_code or "")
@@ -1429,6 +1432,7 @@ def _run_function_build_action(
                 function=function,
                 verification=verification,
                 changed_files=changed_files,
+                engine_name=engine_name,
             )
             if build_run.events and isinstance(build_run.events[0].payload, dict):
                 build_run.events[0].payload["attempts"] = orchestrated.attempts
@@ -1485,7 +1489,7 @@ def _run_function_build_action(
                         "tests_suggested": result.tests_suggested,
                         "risk_notes": result.risk_notes,
                         "no_changes_applied": not build_applied,
-                        "engine": "pi_lite",
+                        "engine": engine_name,
                         "strategy_decision": strategy_decision,
                         "attempts": orchestrated.attempts,
                         "schema_probe": orchestrated.schema_probe,
@@ -1511,6 +1515,7 @@ def _run_function_build_action(
         build_run = _build_function_apply_failed_run(
             function=function,
             error_message=str(err),
+            engine_name=engine_name,
         )
         _emit_function_phase_event(
             event_sink,
