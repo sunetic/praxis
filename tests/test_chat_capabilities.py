@@ -46,15 +46,15 @@ def test_build_capability_context_includes_datasource_service_knowledge_skill_sc
         name="cluster-a-user",
         cluster_key="cluster-a",
         tenant_role="user",
-        attributes={"ocp_cluster_id": 1001, "tenant_mode": "mysql"},
+        attributes={"environment": "staging", "tenant_mode": "mysql"},
     )
-    service = SimpleNamespace(name="ocp", service_type="ocp_api")
-    knowledge = SimpleNamespace(name="OCP Docs")
+    service = SimpleNamespace(name="metrics", service_type="prometheus")
+    knowledge = SimpleNamespace(name="Monitoring Docs")
     skill = Skill(
-        name="ocp-api-guide",
+        name="telemetry-api-guide",
         version="1.0.0",
-        description="OCP monitor query playbook",
-        database="oceanbase",
+        description="External monitoring query playbook",
+        database="general",
         always_apply=False,
         prompt="prompt",
     )
@@ -67,7 +67,7 @@ def test_build_capability_context_includes_datasource_service_knowledge_skill_sc
             services=[service],
             knowledge_bases=[knowledge],
             active_skills=[skill],
-            scene_key="stats_analysis",
+            scene_key="custom_diagnosis",
             scene_focus={"type": "issue", "id": 1},
             scope_context={
                 "scope_type": "builder",
@@ -84,11 +84,11 @@ def test_build_capability_context_includes_datasource_service_knowledge_skill_sc
     assert "Available Services:" in prompt
     assert "auto_bindable" in prompt
     assert "Knowledge Resources:" in prompt
-    assert "examples=OCP Docs" in prompt
+    assert "examples=Monitoring Docs" in prompt
     assert "Active Skills:" in prompt
-    assert "ocp-api-guide" in prompt
+    assert "telemetry-api-guide" in prompt
     assert "Scene Context:" in prompt
-    assert "stats_analysis" in prompt
+    assert "custom_diagnosis" in prompt
     assert "Scope Context:" in prompt
     assert "target=page:99" in prompt
 
@@ -174,24 +174,26 @@ async def test_scheduled_runner_includes_shared_capability_prompt(tmp_path, monk
             password="secret",
             database="app_db",
             status="active",
-            attributes={"ocp_cluster_id": 1001},
+            attributes={"environment": "staging"},
         )
         agent = models.Agent(
             name="巡检 Agent",
             prompt="你是巡检助手。",
             tools=["call_praxis_service"],
-            skills=["ocp-api-guide"],
+            skills=["telemetry-api-guide"],
             status="active",
             agent_type="custom",
         )
         service = models.Service(
-            name="ocp",
-            service_type="ocp_api",
+            name="metrics",
+            service_type="prometheus",
             resource_ref="cluster:cluster-a",
             status="active",
-            config={"host": "127.0.0.1"},
+            config={"base_url": "http://127.0.0.1:9090"},
         )
-        knowledge = models.KnowledgeBase(name="OCP Docs", description="docs", tags=["ocp"])
+        knowledge = models.KnowledgeBase(
+            name="Monitoring Docs", description="docs", tags=["monitoring"]
+        )
         db.add_all([datasource, agent, service, knowledge])
         db.commit()
         db.refresh(datasource)
@@ -221,7 +223,7 @@ async def test_scheduled_runner_includes_shared_capability_prompt(tmp_path, monk
 
         async def _fake_select_dynamic_skills(conversation, messages, latest_user_input):
             return {
-                "active_skills": ["ocp-api-guide"],
+                "active_skills": ["telemetry-api-guide"],
                 "added": [],
                 "removed": [],
                 "reason": "test",

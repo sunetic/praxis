@@ -56,7 +56,7 @@ def test_candidate_retrieval_prioritizes_released_similarity(session_factory):
     try:
         _create_released_function(
             db,
-            name="slow-sql-analysis",
+            name="slow-query-report",
             description="Analyze slow SQL latency and wait events",
             release_metadata={"contract": {"output": "table"}},
         )
@@ -73,7 +73,7 @@ def test_candidate_retrieval_prioritizes_released_similarity(session_factory):
             contract={"output": "table"},
         )
         assert candidates
-        assert candidates[0]["name"] == "slow-sql-analysis"
+        assert candidates[0]["name"] == "slow-query-report"
         assert candidates[0]["score"] >= candidates[-1]["score"]
     finally:
         db.close()
@@ -84,7 +84,7 @@ def test_strategy_decision_respects_threshold_controls(session_factory):
     try:
         target = _create_released_function(
             db,
-            name="slow-sql-analysis",
+            name="slow-query-report",
             description="Analyze slow SQL latency and wait events",
         )
         decider = FunctionStrategyDecider()

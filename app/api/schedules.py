@@ -157,23 +157,6 @@ def _resolve_schedule_target(
             "function_id": None,
             "function_release_id": None,
         }
-    if target_type == "stats_analysis":
-        datasource = (
-            db.query(models.DataSource)
-            .filter(models.DataSource.id == target_id, models.DataSource.status == "active")
-            .first()
-        )
-        if datasource is None:
-            raise HTTPException(
-                status_code=400, detail=f"Datasource {target_id} not found or inactive"
-            )
-        return {
-            "target_type": "stats_analysis",
-            "target_id": datasource.id,
-            "function_id": None,
-            "function_release_id": None,
-        }
-
     if target_type == "collector":
         datasource = (
             db.query(models.DataSource)

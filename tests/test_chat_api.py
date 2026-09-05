@@ -289,11 +289,11 @@ def test_inject_service_tools_keeps_call_service_without_domain_metadata(
             attributes={},
         )
         service = models.Service(
-            name="ocp",
-            service_type="ocp_api",
+            name="metrics",
+            service_type="prometheus",
             resource_ref="cluster:cluster-a",
             status="active",
-            config={"host": "127.0.0.1"},
+            config={"base_url": "http://127.0.0.1:9090"},
         )
         db.add_all([datasource, service])
         db.commit()
@@ -319,8 +319,8 @@ def test_inject_service_tools_keeps_call_service_without_domain_metadata(
         assert "service_id" not in fn["parameters"]["required"]
         description = fn["parameters"]["properties"]["service_id"]["description"]
         assert "auto-bound to service_id" in description
-        assert "ocp_cluster_id" in description
-        assert "do not use ob_cluster_id / ob_tenant_id as OCP targetId" in description
+        assert "vendor_cluster_id" not in description
+        assert "linked knowledge-base evidence" in description
     finally:
         db.close()
         engine.dispose()
@@ -343,14 +343,14 @@ def test_inject_service_tools_injects_generic_service_binding_hint(
             password="secret",
             database="test",
             status="active",
-            attributes={"ocp_cluster_id": 2, "ocp_tenant_id": 5, "ob_cluster_id": 1001},
+            attributes={"vendor_cluster_id": 2, "vendor_tenant_id": 5},
         )
         service = models.Service(
-            name="ocp",
-            service_type="ocp_api",
+            name="metrics",
+            service_type="prometheus",
             resource_ref="cluster:cluster-a",
             status="active",
-            config={"host": "127.0.0.1"},
+            config={"base_url": "http://127.0.0.1:9090"},
         )
         db.add_all([datasource, service])
         db.commit()
@@ -375,10 +375,7 @@ def test_inject_service_tools_injects_generic_service_binding_hint(
         assert "service_id" not in fn["parameters"]["required"]
         description = fn["parameters"]["properties"]["service_id"]["description"]
         assert f"service_id={service.id}" in description
-        assert "ocp_cluster_id" in description
-        assert "target=OBCLUSTER" in description
-        assert "target=OBTENANT" in description
-        assert "ob_cluster_id=1001" not in description
+        assert "vendor_cluster_id" not in description
         assert "loaded skills" in description
     finally:
         db.close()
@@ -537,12 +534,12 @@ def test_build_agent_turn_context_renders_tpl_slots(tmp_path: Path) -> None:
             password="secret",
             database="test",
             status="active",
-            attributes={"ocp_cluster_id": 2},
+            attributes={"environment": "staging"},
         )
         kb = models.KnowledgeBase(
-            name="OCP API 文档",
-            description="OCP REST API reference",
-            tags=["ocp"],
+            name="Monitoring API 文档",
+            description="Monitoring HTTP API reference",
+            tags=["monitoring"],
         )
         conversation = models.Conversation(title="prompt-turn", datasource_id=None)
         db.add_all([datasource, kb, conversation])
@@ -572,13 +569,13 @@ def test_build_agent_turn_context_renders_tpl_slots(tmp_path: Path) -> None:
                 ],
                 handoff_payload={
                     "type": "page_handoff",
-                    "source": {"label": "Stats", "entry": "drilldown"},
+                    "source": {"label": "Monitoring", "entry": "drilldown"},
                     "summary": "summary",
                     "facts": [{"label": "sql_id", "value": "abc"}],
                     "context": {"signals": [{"key": "cpu", "severity": "warn", "summary": "high"}]},
                 },
                 scene_fallback_payload={
-                    "key": "stats_analysis",
+                    "key": "custom_diagnosis",
                     "context": {"k": "v"},
                     "focus_object": {"table": "t1"},
                 },
@@ -590,7 +587,7 @@ def test_build_agent_turn_context_renders_tpl_slots(tmp_path: Path) -> None:
         assert "Handoff First-Turn Reply Contract:" in system_prompt
         assert "Builder Scope Context:" in system_prompt
         assert "Knowledge Base (知识库):" in system_prompt
-        assert "key: stats_analysis" in system_prompt
+        assert "key: custom_diagnosis" in system_prompt
     finally:
         db.close()
         engine.dispose()
@@ -1143,16 +1140,16 @@ def test_create_get_and_consume_chat_handoff(tmp_path: Path) -> None:
         db.refresh(preferred_datasource)
 
         request = schemas.ChatHandoffCreate(
-            title="SQL Analysis · sql-2",
+            title="Monitoring · sql-2",
             datasource_id=source_datasource.id,
             preferred_execution_datasource_id=preferred_datasource.id,
             packet=schemas.ChatHandoffPacket(
-                type="sql_analysis_live",
+                type="monitoring_incident",
                 version=1,
                 source=schemas.ChatHandoffSource(
-                    page="sql_analysis",
+                    page="monitoring",
                     entry="drawer",
-                    label="SQL Analysis",
+                    label="Monitoring",
                 ),
                 title="继续分析 SQL sql-2",
                 summary="app_db · 1 个诊断信号",
@@ -1172,7 +1169,7 @@ def test_create_get_and_consume_chat_handoff(tmp_path: Path) -> None:
         created = chat_api.create_chat_handoff(request=request, db=db)
         assert created.conversation.datasource_id == preferred_datasource.id
         assert created.handoff.status == "pending"
-        assert created.handoff.packet.type == "sql_analysis_live"
+        assert created.handoff.packet.type == "monitoring_incident"
         assert (
             created.handoff.packet.context["execution"]["preferred_execution_datasource_id"]
             == preferred_datasource.id
@@ -1233,15 +1230,15 @@ def test_create_chat_handoff_resolves_preferred_execution_datasource_from_contex
         db.refresh(preferred_datasource)
 
         request = schemas.ChatHandoffCreate(
-            title="SQL Analysis · sql-3",
+            title="Monitoring · sql-3",
             datasource_id=source_datasource.id,
             packet=schemas.ChatHandoffPacket(
-                type="sql_analysis_live",
+                type="monitoring_incident",
                 version=1,
                 source=schemas.ChatHandoffSource(
-                    page="sql_analysis",
+                    page="monitoring",
                     entry="drawer",
-                    label="SQL Analysis",
+                    label="Monitoring",
                 ),
                 title="继续分析 SQL sql-3",
                 summary="app_db · 1 个诊断信号",
@@ -1325,15 +1322,15 @@ def test_create_chat_handoff_keeps_source_datasource_when_preferred_execution_ma
         db.refresh(source_datasource)
 
         request = schemas.ChatHandoffCreate(
-            title="SQL Analysis · ambiguous",
+            title="Monitoring · ambiguous",
             datasource_id=source_datasource.id,
             packet=schemas.ChatHandoffPacket(
-                type="sql_analysis_live",
+                type="monitoring_incident",
                 version=1,
                 source=schemas.ChatHandoffSource(
-                    page="sql_analysis",
+                    page="monitoring",
                     entry="drawer",
-                    label="SQL Analysis",
+                    label="Monitoring",
                 ),
                 title="继续分析 SQL ambiguous",
                 summary="shared_db · 需要确认实际租户",
@@ -1450,7 +1447,7 @@ async def test_chat_stream_does_not_override_existing_conversation_datasource(
             message=schemas.ChatStreamRequest(
                 content="继续分析这张表",
                 scene_agent=schemas.SceneAgentRequest(
-                    key="stats_analysis",
+                    key="custom_diagnosis",
                     context={
                         "datasource": {
                             "id": scene_datasource.id,
@@ -1551,9 +1548,9 @@ async def test_chat_stream_injects_and_consumes_handoff(
             payload=_normalize_json_payload(
                 {
                     "status": "pending",
-                    "type": "sql_analysis_live",
+                    "type": "monitoring_incident",
                     "version": 1,
-                    "source": {"page": "sql_analysis", "entry": "drawer", "label": "SQL Analysis"},
+                    "source": {"page": "monitoring", "entry": "drawer", "label": "Monitoring"},
                     "title": "继续分析 SQL sql-2",
                     "summary": "app_db · 1 个诊断信号",
                     "facts": [{"label": "SQL ID", "value": "sql-2"}],
@@ -1758,14 +1755,14 @@ async def test_chat_stream_persists_assistant_segments_around_tool_events(
                 "type": "assistant",
                 "phase": "responding",
                 "data": {
-                    "text": "由于当前数据源缺少 OCP 集群关联信息，"
+                    "text": "由于当前数据源未关联外部监控 Service，"
                 },
                 "meta": {},
             },
             {
                 "type": "assistant",
                 "phase": "responding",
-                "data": {"text": "无法直接调用 OCP API 获取监控数据。"},
+                "data": {"text": "无法获取历史监控数据。"},
                 "meta": {},
             },
             {
@@ -1864,7 +1861,7 @@ async def test_chat_stream_persists_assistant_segments_around_tool_events(
         assert tool_finished["tool_calls"][0]["result"]["success"] is True
 
         final_snapshot = message_snapshots[-1]
-        assert "由于当前数据源缺少 OCP 集群关联信息" in final_snapshot["content"]
+        assert "由于当前数据源未关联外部监控 Service" in final_snapshot["content"]
         assert "不过我可以尝试通过数据库查询来获取 CPU 负载信息" in final_snapshot["content"]
         all_parts = final_snapshot["content_parts"] or []
         progress_parts = [
@@ -1881,7 +1878,7 @@ async def test_chat_stream_persists_assistant_segments_around_tool_events(
         text_contents = [
             p["text"] for p in all_parts if isinstance(p, dict) and p.get("type") == "text"
         ]
-        assert any("由于当前数据源缺少 OCP 集群关联信息" in t for t in text_contents)
+        assert any("由于当前数据源未关联外部监控 Service" in t for t in text_contents)
         assert any("不过我可以尝试通过数据库查询来获取 CPU 负载信息" in t for t in text_contents)
         assert persisted_event_types == [
             "context_status",
@@ -2929,14 +2926,14 @@ async def test_general_chat_system_prompt_includes_kb_prompt_before_skill_conten
             password="secret",
             database="app_db",
             status="active",
-            attributes={"ocp_cluster_id": 2, "ocp_tenant_id": 5},
+            attributes={"environment": "staging", "region": "cn-hangzhou"},
         )
         kb = models.KnowledgeBase(
-            name="OCP API 文档",
-            description="OCP REST API reference",
-            tags=["ocp"],
+            name="Monitoring API 文档",
+            description="Monitoring HTTP API reference",
+            tags=["monitoring"],
         )
-        conversation = models.Conversation(title="ocp-cpu-query")
+        conversation = models.Conversation(title="monitoring-cpu-query")
         db.add_all([datasource, kb, conversation])
         db.commit()
         db.refresh(datasource)
@@ -2948,11 +2945,11 @@ async def test_general_chat_system_prompt_includes_kb_prompt_before_skill_conten
 
         skills_dir = tmp_path / "skills"
         skills_dir.mkdir()
-        (skills_dir / "ocp-api-guide.md").write_text(
+        (skills_dir / "telemetry-api-guide.md").write_text(
             """---
-name: ocp-api-guide
+name: telemetry-api-guide
 version: 1.0.0
-description: OCP API lookup guide
+description: External monitoring API lookup guide
 database: general
 always_apply: false
 ---
@@ -2973,10 +2970,10 @@ Use call_praxis_service after knowledge lookup.
         ) -> dict[str, Any]:
             del conversation, messages, latest_user_input
             return {
-                "active_skills": ["ocp-api-guide"],
-                "added": ["ocp-api-guide"],
+                "active_skills": ["telemetry-api-guide"],
+                "added": ["telemetry-api-guide"],
                 "removed": [],
-                "reason": "cpu query → ocp-api-guide",
+                "reason": "cpu query → telemetry-api-guide",
                 "selector_ok": True,
             }
 
@@ -3018,7 +3015,7 @@ Use call_praxis_service after knowledge lookup.
             "Knowledge Base instructions must appear before 'Loaded Skills:' so LLM reads "
             "the discovery workflow before skill API directives."
         )
-        assert "ocp-api-guide" in system_prompt
+        assert "telemetry-api-guide" in system_prompt
         assert "call_praxis_service" in system_prompt
     finally:
         db.close()

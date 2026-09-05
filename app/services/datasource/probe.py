@@ -92,7 +92,7 @@ async def probe_and_fill_ob_ids(
 ) -> dict[str, Any]:
     """
     Probe and merge ob_cluster_id / ob_tenant_id into datasource.attributes in-place.
-    Only fills missing keys — does not overwrite values set by OCP import.
+    Only fills missing keys and never overwrites caller-provided metadata.
     Returns the probed values (may be empty).
     """
     db_type = (datasource.db_type or "").strip().lower()

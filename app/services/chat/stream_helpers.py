@@ -170,16 +170,6 @@ def _normalize_string_list(value: Any, *, limit: int = 12) -> list[str]:
     return normalized
 
 
-def _infer_scene_key_from_legacy_page_agent(raw_page_agent: dict[str, Any]) -> str:
-    profile = str(raw_page_agent.get("profile") or "").strip()
-    page = str(raw_page_agent.get("page") or "").strip()
-    if profile == "stats_analysis_agent":
-        return "stats_analysis"
-    if page == "stats-analysis":
-        return "stats_analysis"
-    return ""
-
-
 def _extract_scene_agent_payload(message: dict[str, Any]) -> dict[str, Any] | None:
     raw_scene_agent = message.get("scene_agent")
     if isinstance(raw_scene_agent, dict):
@@ -196,24 +186,6 @@ def _extract_scene_agent_payload(message: dict[str, Any]) -> dict[str, Any] | No
             "source": "scene_agent",
         }
         return scene_payload if scene_payload["key"] else None
-
-    raw_page_agent = message.get("page_agent")
-    if isinstance(raw_page_agent, dict):
-        inferred_key = _infer_scene_key_from_legacy_page_agent(raw_page_agent)
-        if not inferred_key:
-            return None
-        return {
-            "key": inferred_key,
-            "context": raw_page_agent.get("context")
-            if isinstance(raw_page_agent.get("context"), dict)
-            else {},
-            "focus_object": raw_page_agent.get("focus_object")
-            if isinstance(raw_page_agent.get("focus_object"), dict)
-            else None,
-            "tools": _normalize_string_list(raw_page_agent.get("tools"), limit=64),
-            "skills": _normalize_string_list(raw_page_agent.get("skills"), limit=64),
-            "source": "page_agent_compat",
-        }
 
     return None
 

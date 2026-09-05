@@ -76,6 +76,20 @@ def init_db() -> None:
     _migrate_conversation_schema()
     _migrate_message_schema()
     _migrate_chat_event_schema()
+    _migrate_service_schema()
+
+
+def _migrate_service_schema() -> None:
+    """Keep local databases compatible with the generic HTTP Service model."""
+    inspector = inspect(engine)
+    if "services" not in set(inspector.get_table_names()):
+        return
+    existing_columns = {column["name"] for column in inspector.get_columns("services")}
+    if "secrets" in existing_columns:
+        return
+    with engine.begin() as conn:
+        conn.execute(text("ALTER TABLE services ADD COLUMN secrets TEXT"))
+    logger.info("service_schema_migration_success %s", fmt_kv(column="secrets"))
 
 
 def _migrate_agent_schema() -> None:
@@ -249,7 +263,7 @@ def _migrate_schedule_schema() -> None:
                     """
                     UPDATE schedules
                     SET kind = 'built_in'
-                    WHERE target_type IN ('stats_analysis', 'collector')
+                    WHERE target_type = 'collector'
                        OR (
                             target_type = 'function'
                             AND function_id IN (
@@ -327,7 +341,7 @@ def _rebuild_schedule_table_for_sqlite() -> None:
                     id,
                     name,
                     description,
-                    COALESCE(kind, CASE WHEN target_type IN ('stats_analysis', 'collector') THEN 'built_in' ELSE 'custom' END),
+                    COALESCE(kind, CASE WHEN target_type = 'collector' THEN 'built_in' ELSE 'custom' END),
                     status,
                     schedule_type,
                     cron_expression,

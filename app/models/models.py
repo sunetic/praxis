@@ -5,18 +5,36 @@ from typing import Any, Optional
 from sqlalchemy import (
     JSON,
     Boolean,
+    Column,
     DateTime,
-    Float,
     ForeignKey,
     Integer,
     String,
+    Table,
     Text,
     UniqueConstraint,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from app.core.security import EncryptedString
+from app.core.security import EncryptedJSON, EncryptedString
 from app.db.database import Base
+
+service_knowledge_bases = Table(
+    "service_knowledge_bases",
+    Base.metadata,
+    Column(
+        "service_id",
+        Integer,
+        ForeignKey("services.id", ondelete="CASCADE"),
+        primary_key=True,
+    ),
+    Column(
+        "knowledge_base_id",
+        Integer,
+        ForeignKey("knowledge_bases.id", ondelete="CASCADE"),
+        primary_key=True,
+    ),
+)
 
 
 class DataSource(Base):
@@ -669,147 +687,6 @@ class ObjectAuditLog(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
 
-class StatsRiskCandidate(Base):
-    __tablename__ = "stats_risk_candidates"
-    __table_args__ = (
-        UniqueConstraint(
-            "datasource_id",
-            "database_name",
-            "table_name",
-            name="uq_stats_risk_candidate_object",
-        ),
-    )
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
-    datasource_id: Mapped[int] = mapped_column(
-        Integer,
-        ForeignKey("datasources.id", ondelete="CASCADE"),
-        nullable=False,
-        index=True,
-    )
-    tenant_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    database_name: Mapped[str] = mapped_column(String(255), nullable=False)
-    table_name: Mapped[str] = mapped_column(String(255), nullable=False)
-    severity: Mapped[str] = mapped_column(String(16), nullable=False, default="low")
-    score: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
-    lifecycle_status: Mapped[str] = mapped_column(String(24), nullable=False, default="active")
-    source: Mapped[str | None] = mapped_column(String(50), nullable=True)
-    latest_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
-    first_seen_at: Mapped[datetime] = mapped_column(
-        DateTime, default=datetime.utcnow, nullable=False
-    )
-    last_seen_at: Mapped[datetime] = mapped_column(
-        DateTime, default=datetime.utcnow, nullable=False
-    )
-    expires_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
-    updated_at: Mapped[datetime] = mapped_column(
-        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
-    )
-
-    datasource: Mapped["DataSource"] = relationship()
-    tags: Mapped[list["StatsRiskCandidateTag"]] = relationship(
-        back_populates="candidate",
-        cascade="all, delete-orphan",
-    )
-    runs: Mapped[list["StatsRiskAnalysisRun"]] = relationship(
-        back_populates="candidate",
-        cascade="all, delete-orphan",
-    )
-
-
-class StatsRiskCandidateTag(Base):
-    __tablename__ = "stats_risk_candidate_tags"
-    __table_args__ = (
-        UniqueConstraint("candidate_id", "tag_key", name="uq_stats_risk_candidate_tag"),
-    )
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
-    candidate_id: Mapped[int] = mapped_column(
-        Integer,
-        ForeignKey("stats_risk_candidates.id", ondelete="CASCADE"),
-        nullable=False,
-        index=True,
-    )
-    tag_key: Mapped[str] = mapped_column(String(64), nullable=False)
-    tag_label: Mapped[str] = mapped_column(String(120), nullable=False)
-    severity: Mapped[str] = mapped_column(String(16), nullable=False, default="low")
-    score: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
-    facts: Mapped[dict | None] = mapped_column(JSON, nullable=True)
-    active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
-    first_seen_at: Mapped[datetime] = mapped_column(
-        DateTime, default=datetime.utcnow, nullable=False
-    )
-    last_seen_at: Mapped[datetime] = mapped_column(
-        DateTime, default=datetime.utcnow, nullable=False
-    )
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
-    updated_at: Mapped[datetime] = mapped_column(
-        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
-    )
-
-    candidate: Mapped["StatsRiskCandidate"] = relationship(back_populates="tags")
-
-
-class StatsRiskAnalysisRun(Base):
-    __tablename__ = "stats_risk_analysis_runs"
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
-    run_id: Mapped[str] = mapped_column(String(64), nullable=False, unique=True, index=True)
-    datasource_id: Mapped[int] = mapped_column(
-        Integer,
-        ForeignKey("datasources.id", ondelete="CASCADE"),
-        nullable=False,
-        index=True,
-    )
-    candidate_id: Mapped[int] = mapped_column(
-        Integer,
-        ForeignKey("stats_risk_candidates.id", ondelete="CASCADE"),
-        nullable=False,
-        index=True,
-    )
-    trigger_type: Mapped[str] = mapped_column(String(20), nullable=False, default="manual")
-    status: Mapped[str] = mapped_column(String(20), nullable=False, default="pending")
-    model: Mapped[str | None] = mapped_column(String(64), nullable=True)
-    summary: Mapped[str | None] = mapped_column(Text, nullable=True)
-    result_payload: Mapped[dict | None] = mapped_column(JSON, nullable=True)
-    error_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
-    started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
-    finished_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
-    updated_at: Mapped[datetime] = mapped_column(
-        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
-    )
-
-    datasource: Mapped["DataSource"] = relationship()
-    candidate: Mapped["StatsRiskCandidate"] = relationship(back_populates="runs")
-
-
-class StatsRiskCollectionRun(Base):
-    __tablename__ = "stats_risk_collection_runs"
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
-    run_id: Mapped[str] = mapped_column(String(64), nullable=False, unique=True, index=True)
-    datasource_id: Mapped[int] = mapped_column(
-        Integer,
-        ForeignKey("datasources.id", ondelete="CASCADE"),
-        nullable=False,
-        index=True,
-    )
-    trigger_type: Mapped[str] = mapped_column(String(20), nullable=False, default="manual")
-    status: Mapped[str] = mapped_column(String(20), nullable=False, default="pending")
-    summary: Mapped[str | None] = mapped_column(Text, nullable=True)
-    error_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
-    started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
-    finished_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
-    updated_at: Mapped[datetime] = mapped_column(
-        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
-    )
-
-    datasource: Mapped["DataSource"] = relationship()
-
-
 class Service(Base):
     __tablename__ = "services"
 
@@ -817,12 +694,26 @@ class Service(Base):
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     service_type: Mapped[str] = mapped_column(String(50), nullable=False)
     config: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    secrets: Mapped[dict | None] = mapped_column(EncryptedJSON, nullable=True)
     resource_ref: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
     status: Mapped[str] = mapped_column(String(50), nullable=False, default="active")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
     )
+
+    knowledge_bases: Mapped[list["KnowledgeBase"]] = relationship(
+        secondary=service_knowledge_bases,
+        back_populates="services",
+    )
+
+    @property
+    def has_credentials(self) -> bool:
+        return bool(self.secrets)
+
+    @property
+    def knowledge_base_ids(self) -> list[int]:
+        return [item.id for item in self.knowledge_bases]
 
 
 class KnowledgeBase(Base):
@@ -843,6 +734,10 @@ class KnowledgeBase(Base):
 
     documents: Mapped[list["KnowledgeDocument"]] = relationship(
         back_populates="knowledge_base", cascade="all, delete-orphan"
+    )
+    services: Mapped[list["Service"]] = relationship(
+        secondary=service_knowledge_bases,
+        back_populates="knowledge_bases",
     )
 
 

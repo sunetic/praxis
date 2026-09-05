@@ -22,8 +22,8 @@ class ChatCoreAgent:
     System Agent base class — zero domain dependencies.
 
     Provides generic chat capabilities: streaming, tool/skill resolution,
-    and prompt block injection. Domain-specific agents (FunctionChatAgent,
-    StatsAnalysisAgent, SqlAnalysisAgent, etc.) inherit this class and
+    and prompt block injection. Domain-specific agents such as FunctionChatAgent
+    inherit this class and
     override only scene-specific configuration.
     """
 

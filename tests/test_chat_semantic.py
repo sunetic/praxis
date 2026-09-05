@@ -123,16 +123,16 @@ def _find_events(events: list[dict], event_type: str) -> list[dict]:
 @pytest.mark.anyio
 async def test_plain_query_no_tool_call():
     """A knowledge query should produce text only, no tool invocations."""
-    scripted = ScriptedLLM([_text_response("OCP 的监控 API 主要包括...")])
+    scripted = ScriptedLLM([_text_response("外部监控 API 主要包括...")])
     service = ChatService(llm=scripted)
-    messages = [{"role": "user", "content": "OCP 的监控 API 接口是怎样的？"}]
+    messages = [{"role": "user", "content": "外部监控 API 接口是怎样的？"}]
 
     events = await _collect_events(service, messages, tools=[])
 
     tool_events = _find_events(events, "tool_start")
     assert len(tool_events) == 0, "Knowledge query should not trigger any tool call"
     text_events = _find_events(events, "assistant")
-    assert any("OCP" in e.get("data", {}).get("text", "") for e in text_events)
+    assert any("外部监控" in e.get("data", {}).get("text", "") for e in text_events)
 
 
 @pytest.mark.anyio

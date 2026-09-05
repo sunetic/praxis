@@ -151,7 +151,7 @@ async def test_object_crud_datasource_persists_attributes(session_factory):
         object_type="datasource",
         action="create",
         payload={
-            "name": "ocp-cluster-a/tenant-a",
+            "name": "imported-cluster-a/tenant-a",
             "host": "127.0.0.1",
             "port": 2881,
             "db_type": "oceanbase",
@@ -160,7 +160,7 @@ async def test_object_crud_datasource_persists_attributes(session_factory):
             "user": "root@tenant-a",
             "password": "secret",
             "database": "test",
-            "attributes": {"ocp_cluster_id": 1, "ocp_tenant_id": 2},
+            "attributes": {"external_cluster_id": 1, "external_tenant_id": 2},
         },
         actor="test-user",
     )
@@ -171,14 +171,18 @@ async def test_object_crud_datasource_persists_attributes(session_factory):
         object_type="datasource",
         action="update",
         object_id=datasource_id,
-        payload={"attributes": {"ocp_cluster_id": 1, "ocp_tenant_id": 3, "tenant_mode": "MYSQL"}},
+        payload={"attributes": {"external_cluster_id": 1, "external_tenant_id": 3, "tenant_mode": "MYSQL"}},
         actor="test-user",
     )
     assert updated.success is True
 
     db = session_factory()
     row = db.query(models.DataSource).filter(models.DataSource.id == datasource_id).one()
-    assert row.attributes == {"ocp_cluster_id": 1, "ocp_tenant_id": 3, "tenant_mode": "MYSQL"}
+    assert row.attributes == {
+        "external_cluster_id": 1,
+        "external_tenant_id": 3,
+        "tenant_mode": "MYSQL",
+    }
     db.close()
 
 
@@ -279,7 +283,7 @@ async def test_function_strategy_action_returns_candidate_decision(session_facto
     baseline = await crud_tool.execute(
         object_type="function",
         action="create",
-        payload={"name": "slow-sql-analysis", "draft_code": "result = {'ok': True}"},
+        payload={"name": "slow-query-report", "draft_code": "result = {'ok': True}"},
     )
     assert baseline.success is True
     baseline_id = baseline.data["id"]

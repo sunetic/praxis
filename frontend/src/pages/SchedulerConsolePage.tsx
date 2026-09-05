@@ -184,8 +184,7 @@ function resolveRunTargetMeta(
   run: ScheduleRun,
   scheduleById: Map<number, Schedule>,
   functionById: Map<number, FunctionSummary>,
-  agentById: Map<number, Agent>,
-  datasourceById: Map<number, DataSource>
+  agentById: Map<number, Agent>
 ): { scheduleName: string; scheduleId: number; type: string; name: string; id: number | null } {
   const schedule = scheduleById.get(Number(run.schedule_id))
   const scheduleId = Number(run.schedule_id || 0)
@@ -208,16 +207,6 @@ function resolveRunTargetMeta(
       scheduleId,
       type: "Agent",
       name: agent?.name || "-",
-      id: Number.isInteger(targetId) && targetId > 0 ? targetId : null,
-    }
-  }
-  if (targetType === "stats_analysis") {
-    const datasource = datasourceById.get(targetId)
-    return {
-      scheduleName: schedule?.name || "-",
-      scheduleId,
-      type: "StatsAnalysis",
-      name: datasource?.name || "-",
       id: Number.isInteger(targetId) && targetId > 0 ? targetId : null,
     }
   }
@@ -248,7 +237,7 @@ export function SchedulerConsolePage() {
   const [runs, setRuns] = useState<ScheduleRun[]>([])
   const [selectedRunId, setSelectedRunId] = useState<number | null>(null)
   const [runDrawerOpen, setRunDrawerOpen] = useState(false)
-  const [runTypeFilter, setRunTypeFilter] = useState<"all" | "function" | "agent" | "stats_analysis">("all")
+  const [runTypeFilter, setRunTypeFilter] = useState<"all" | "function" | "agent">("all")
   const [runTargetNameFilter, setRunTargetNameFilter] = useState("")
   const [runScheduleFilter, setRunScheduleFilter] = useState<"all" | string>("all")
   const [runPage, setRunPage] = useState(1)
@@ -293,22 +282,14 @@ export function SchedulerConsolePage() {
     })
     return map
   }, [agents])
-  const datasourceById = useMemo(() => {
-    const map = new Map<number, DataSource>()
-    datasources.forEach((item) => {
-      const id = Number(item?.id)
-      if (Number.isInteger(id) && id > 0) map.set(id, item)
-    })
-    return map
-  }, [datasources])
   const selectedRunSchedule = useMemo(
     () => (selectedRun ? scheduleById.get(Number(selectedRun.schedule_id)) || null : null),
     [selectedRun, scheduleById]
   )
   const selectedRunTargetMeta = useMemo(() => {
     if (!selectedRun) return { scheduleName: "-", scheduleId: 0, type: "-", name: "-", id: null as number | null }
-    return resolveRunTargetMeta(selectedRun, scheduleById, functionById, agentById, datasourceById)
-  }, [selectedRun, scheduleById, functionById, agentById, datasourceById])
+    return resolveRunTargetMeta(selectedRun, scheduleById, functionById, agentById)
+  }, [selectedRun, scheduleById, functionById, agentById])
   const selectedRunOutputText = useMemo(
     () => formatJsonLike(selectedRun?.output_payload ?? selectedRun?.output_summary ?? selectedRun?.error_summary ?? "-", "-"),
     [selectedRun]
@@ -328,7 +309,7 @@ export function SchedulerConsolePage() {
     const keyword = runTargetNameFilter.trim().toLowerCase()
     return runs.filter((run) => {
       if (runScheduleFilter !== "all" && String(run.schedule_id) !== runScheduleFilter) return false
-      const meta = resolveRunTargetMeta(run, scheduleById, functionById, agentById, datasourceById)
+      const meta = resolveRunTargetMeta(run, scheduleById, functionById, agentById)
       const runType = String(run.target_type || meta.type || "").toLowerCase()
       if (runTypeFilter !== "all" && runType !== runTypeFilter) return false
       if (keyword) {
@@ -337,7 +318,7 @@ export function SchedulerConsolePage() {
       }
       return true
     })
-  }, [runs, runTypeFilter, runTargetNameFilter, runScheduleFilter, scheduleById, functionById, agentById, datasourceById])
+  }, [runs, runTypeFilter, runTargetNameFilter, runScheduleFilter, scheduleById, functionById, agentById])
   const visibleSchedules = useMemo(() => {
     const keyword = search.trim().toLowerCase()
     if (!keyword) return schedules
@@ -754,7 +735,7 @@ export function SchedulerConsolePage() {
   const targetPlaceholder = () => {
     if (form.target_type === "function" && releasedFunctions.length === 0) return t("scheduler.target.noAvailable")
     if (form.target_type === "agent" && activeAgents.length === 0) return t("scheduler.target.noAvailable")
-    if ((form.target_type === "stats_analysis" || form.target_type === "collector") && schedulableDatasources.length === 0) return t("scheduler.target.noAvailable")
+    if (form.target_type === "collector" && schedulableDatasources.length === 0) return t("scheduler.target.noAvailable")
     return t("scheduler.target.selectTarget")
   }
 
@@ -781,7 +762,7 @@ export function SchedulerConsolePage() {
                 ))}
               </SelectContent>
             </Select>
-            <Select value={runTypeFilter} onValueChange={(v) => setRunTypeFilter(v as "all" | "function" | "agent" | "stats_analysis")}>
+            <Select value={runTypeFilter} onValueChange={(v) => setRunTypeFilter(v as "all" | "function" | "agent")}>
               <SelectTrigger className="w-36 bg-card"><SelectValue /></SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">{t("scheduler.filter.allTypes")}</SelectItem>
@@ -970,7 +951,7 @@ export function SchedulerConsolePage() {
                 </TableRow>
               ) : (
                 filteredRuns.map((run, index) => {
-                  const meta = resolveRunTargetMeta(run, scheduleById, functionById, agentById, datasourceById)
+                  const meta = resolveRunTargetMeta(run, scheduleById, functionById, agentById)
                   return (
                     <TableRow
                       key={run.id}

@@ -11,7 +11,6 @@ import { FunctionListPage } from "@/pages/FunctionListPage"
 import { FunctionBuildPage } from "@/pages/FunctionBuildPage"
 import { SchedulerConsolePage } from "@/pages/SchedulerConsolePage"
 import { ChannelConsolePage } from "@/pages/ChannelConsolePage"
-import { SqlAnalysisPage } from "@/pages/SqlAnalysisPage"
 import { CapabilitiesPage } from "@/pages/CapabilitiesPage"
 import { KnowledgeListPage } from "@/pages/KnowledgeListPage"
 import { KnowledgeDetailPage } from "@/pages/KnowledgeDetailPage"
@@ -20,9 +19,6 @@ import { ServicesPage } from "@/pages/ServicesPage"
 import { PageListPage } from "@/pages/PageListPage"
 import { PageConsolePage } from "@/pages/PageConsolePage"
 import { PagePublishedPage } from "@/pages/PagePublishedPage"
-import { StatsAnalysisPage } from "@/pages/StatsAnalysisPage"
-import { SessionTransactionPage } from "@/pages/SessionTransactionPage"
-import { StatsAnalysisTemplatePage } from "@/pages/StatsAnalysisTemplatePage"
 import { OnboardingPage } from "@/pages/OnboardingPage"
 import { ShellI18nProvider } from "@/i18n/shellI18n"
 import { EditionProvider } from "@/context/EditionContext"
@@ -86,7 +82,6 @@ function App() {
             <Route path="function" element={<FunctionListPage />} />
             <Route path="function/:functionId/build" element={<FunctionBuildPage />} />
             <Route path="function/:functionId" element={<FunctionLegacyRedirect />} />
-            <Route path="sql-analysis" element={<SqlAnalysisPage />} />
             <Route path="scheduler" element={<SchedulerConsolePage />} />
             <Route path="scheduler/:schedulerId" element={<SchedulerConsolePage />} />
             <Route path="channel" element={<ChannelConsolePage />} />
@@ -95,9 +90,6 @@ function App() {
             <Route path="page" element={<PageListPage />} />
             <Route path="page/workspace/:pageId" element={<PageConsolePage />} />
             <Route path="page/:pageId" element={<PagePublishedPage />} />
-            <Route path="stats-analysis" element={<StatsAnalysisPage />} />
-            <Route path="stats-template" element={<StatsAnalysisTemplatePage />} />
-            <Route path="session-analysis" element={<SessionTransactionPage />} />
             <Route path="capabilities" element={<CapabilitiesPage />} />
             <Route path="settings" element={<SettingsPage />} />
             <Route path="*" element={<Navigate to="/chat" replace />} />

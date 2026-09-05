@@ -23,8 +23,8 @@ from app.api import (
     knowledge_packs,
     onboarding,
     schedules,
+    services,
     skills,
-    sql_analysis,
 )
 from app.api import settings as settings_api
 from app.core.config import get_settings
@@ -100,20 +100,6 @@ async def startup():
         register_builtin_knowledge_packs()
     except Exception as exc:
         logger.warning("builtin_knowledge_packs_bootstrap_failed error=%s", exc)
-    # EE: stats_analysis schedule bootstrap
-    try:
-        from app.api import stats_analysis
-
-        outcome = stats_analysis.ensure_stats_analysis_schedule_singleton()
-        logger.info(
-            "stats_analysis_schedule_bootstrap_done created=%s removed_legacy=%s",
-            outcome.get("created", 0),
-            outcome.get("removed_legacy", 0),
-        )
-    except ImportError:
-        pass
-    except Exception as exc:
-        logger.warning("stats_analysis_schedule_bootstrap_failed error=%s", exc)
     onboarding_done = False
     if settings.scheduler_autostart:
         try:
@@ -189,7 +175,7 @@ app.include_router(chat_agent_draft.router, prefix="/api/v1")
 app.include_router(functions.router, prefix="/api/v1")
 app.include_router(schedules.router, prefix="/api/v1")
 app.include_router(channels.router, prefix="/api/v1")
-app.include_router(sql_analysis.router, prefix="/api/v1")
+app.include_router(services.router, prefix="/api/v1")
 app.include_router(capabilities.router, prefix="/api/v1")
 app.include_router(onboarding.router, prefix="/api/v1")
 app.include_router(settings_api.router, prefix="/api/v1")
@@ -198,10 +184,6 @@ app.include_router(settings_api.router, prefix="/api/v1")
 _ee_api_modules = [
     "collector",
     "pages",
-    "services",
-    "sessions",
-    "sql_analysis_monitor",
-    "stats_analysis",
     "traces",
 ]
 for _mod_name in _ee_api_modules:
@@ -234,6 +216,8 @@ if _FRONTEND_DIST.is_dir():
 
     @app.get("/{full_path:path}")
     async def _spa_fallback(full_path: str):
+        if full_path == "api" or full_path.startswith("api/"):
+            return JSONResponse(status_code=404, content={"detail": "Not Found"})
         file = _FRONTEND_DIST / full_path
         if file.is_file():
             return _FR(str(file))

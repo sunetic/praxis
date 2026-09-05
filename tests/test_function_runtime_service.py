@@ -741,18 +741,18 @@ def test_runtime_platform_capability_allows_datasource_attributes_payload(sessio
         object_type="datasource",
         action="create",
         payload={
-            "name": "ocp-import-ds",
+            "name": "external-import-ds",
             "host": "127.0.0.1",
             "port": 2881,
             "db_type": "oceanbase",
-            "cluster_key": "cluster-ocp",
+            "cluster_key": "cluster-external",
             "tenant_role": "user",
             "user": "root@tenant-a",
             "password": "secret",
             "database": "test",
             "attributes": {
-                "ocp_cluster_id": 101,
-                "ocp_tenant_id": 202,
+                "external_cluster_id": 101,
+                "external_tenant_id": 202,
             },
         },
     )
@@ -762,8 +762,8 @@ def test_runtime_platform_capability_allows_datasource_attributes_payload(sessio
     verify_db = session_factory()
     row = verify_db.query(models.DataSource).filter(models.DataSource.id == created["id"]).one()
     assert row.attributes == {
-        "ocp_cluster_id": 101,
-        "ocp_tenant_id": 202,
+        "external_cluster_id": 101,
+        "external_tenant_id": 202,
     }
     verify_db.close()
 

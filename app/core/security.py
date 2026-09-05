@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import base64
+import json
+from typing import Any
 
 from cryptography.fernet import Fernet, InvalidToken
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
-from sqlalchemy import String
+from sqlalchemy import String, Text
 from sqlalchemy.types import TypeDecorator
 
 _FERNET_TOKEN_PREFIX = b"gAAAAA"
@@ -86,3 +88,30 @@ class EncryptedString(TypeDecorator):
         if not is_encrypted(value):
             return value
         return decrypt_secret(value)
+
+
+class EncryptedJSON(TypeDecorator):
+    """Store a JSON object as one encrypted text value.
+
+    Service credentials can include tokens and provider-specific secret headers,
+    so encrypting the complete object avoids maintaining a growing list of
+    sensitive keys in the database schema.
+    """
+
+    impl = Text
+    cache_ok = True
+
+    def process_bind_param(self, value: dict[str, Any] | None, dialect) -> str | None:
+        if value is None:
+            return None
+        serialized = json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+        return encrypt_secret(serialized)
+
+    def process_result_value(self, value: str | None, dialect) -> dict[str, Any] | None:
+        if value is None:
+            return None
+        serialized = decrypt_secret(value) if is_encrypted(value) else value
+        parsed = json.loads(serialized)
+        if not isinstance(parsed, dict):
+            raise ValueError("Encrypted JSON value must decode to an object")
+        return parsed

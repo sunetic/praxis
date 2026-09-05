@@ -1,8 +1,8 @@
 # Services
 
-A service registers an external control plane and associates it with a cluster or datasource. It differs from a datasource: a datasource connects directly to a database, while a service connects to a management API.
+A service registers an external HTTP API and associates it with a cluster or datasource. It differs from a datasource: a datasource connects directly to a database, while a service connects to monitoring, alerting, management, or another supporting API.
 
-The current interface supports OCP API services. Enter the address, port, and authentication information, then test the connection before saving or from the service list. Associate the service with either a cluster identifier or an existing datasource.
+Enter the base URL, authentication information, health-check path, and optional headers, then test the connection before saving or from the service list. Associate the service with either a cluster identifier or an existing datasource, and link the relevant API documentation knowledge base.
 
 ## Guidance
 

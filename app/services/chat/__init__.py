@@ -513,6 +513,7 @@ class ChatService:
 
         from app.db.database import SessionLocal
         from app.models import models
+        from app.services.integration.bindings import list_bound_services
 
         with SessionLocal() as db:
             datasource = (
@@ -525,32 +526,19 @@ class ChatService:
                     None,
                     f"Datasource {default_datasource_id} not found; cannot auto-resolve PraxisService.",
                 )
-            if not datasource.cluster_key:
-                return (
-                    None,
-                    "The current datasource is missing cluster_key; cannot auto-resolve PraxisService.",
-                )
-
-            services = (
-                db.query(models.Service)
-                .filter(
-                    models.Service.resource_ref == f"cluster:{datasource.cluster_key}",
-                    models.Service.status == "active",
-                )
-                .order_by(models.Service.id.asc())
-                .all()
-            )
+            services = list_bound_services(db, datasource)
             if len(services) == 1:
                 return int(services[0].id), None
             if not services:
                 return (
                     None,
-                    f"No active PraxisService is bound to the current datasource cluster_key={datasource.cluster_key}.",
+                    "No active external Service is bound directly to the current datasource "
+                    f"or its cluster_key={datasource.cluster_key}.",
                 )
             service_ids = ", ".join(str(item.id) for item in services[:5])
             return (
                 None,
-                "Multiple active PraxisServices are associated with the current datasource; cannot auto-determine service_id: "
+                "Multiple active external Services are associated with the current datasource; cannot auto-determine service_id: "
                 f"{service_ids}. Please specify service_id explicitly.",
             )
 

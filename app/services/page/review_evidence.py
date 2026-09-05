@@ -33,7 +33,6 @@ _COMPONENT_HINT_CANDIDATES = (
     "Card",
     "ListTable",
     "PaginationFooter",
-    "StatsOverviewCards",
     "SceneAgentChatShell",
     "Badge",
 )
@@ -578,8 +577,6 @@ def _build_repo_review_scope_source(source_code: str) -> str:
         "renderDiagnosisPanel",
         "renderDeepCheckPanel",
         "renderTenantConfigPanel",
-        "StatsDrawerHeader",
-        "StatsDrawerStatusStrip",
     ):
         block = _extract_function_block(lines, name=fn_name)
         if block:

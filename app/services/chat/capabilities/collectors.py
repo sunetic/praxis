@@ -110,30 +110,28 @@ def _collect_datasource_capabilities(datasource: Any | None) -> list[CapabilityS
 def _collect_service_capabilities(services: list[Any]) -> list[CapabilitySummary]:
     if not services:
         return []
-    if len(services) == 1:
-        service = services[0]
-        return [
+    summaries: list[CapabilitySummary] = []
+    for service in services:
+        knowledge_bases = list(getattr(service, "knowledge_bases", None) or [])
+        kb_ids = [str(getattr(item, "id", "")) for item in knowledge_bases if getattr(item, "id", None)]
+        hints = [
+            f"service_id={getattr(service, 'id', 'unknown')}",
+            f"service_type={getattr(service, 'service_type', 'unknown')}",
+        ]
+        if kb_ids:
+            hints.append(f"linked_kb_ids={','.join(kb_ids)}")
+        summaries.append(
             CapabilitySummary(
                 kind="service",
-                name=str(getattr(service, "name", "PraxisService") or "PraxisService"),
-                purpose="Platform-registered service callable in the current context",
+                name=str(getattr(service, "name", "Service") or "Service"),
+                purpose="Registered external HTTP API callable with call_praxis_service",
                 availability="available",
-                status="auto_bindable",
-                hints=(f"service_type={getattr(service, 'service_type', 'unknown')}",),
+                status="auto_bindable" if len(services) == 1 else "candidate",
+                hints=tuple(hints),
                 source="service_binding",
             )
-        ]
-    return [
-        CapabilitySummary(
-            kind="service",
-            name="PraxisService",
-            purpose="Multiple platform-registered services callable in the current context",
-            availability="available",
-            status="multiple_candidates",
-            hints=(f"count={len(services)}",),
-            source="service_binding",
         )
-    ]
+    return summaries
 
 
 def _collect_knowledge_capabilities(knowledge_bases: list[Any]) -> list[CapabilitySummary]:

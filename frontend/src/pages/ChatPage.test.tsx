@@ -161,9 +161,9 @@ describe("ChatPage workspace boundary and handoff", () => {
       status: "pending",
       created_at: "2026-03-14T00:00:00Z",
       packet: {
-        type: "sql_analysis_live",
+        type: "monitoring_incident",
         version: 1,
-        source: { page: "sql_analysis", entry: "drawer", label: "SQL Analysis" },
+        source: { page: "monitoring", entry: "drawer", label: "Monitoring" },
         title: "继续分析 SQL sql-2",
         summary: "app_db · 1 个诊断信号",
         facts: [
@@ -396,7 +396,7 @@ describe("ChatPage workspace boundary and handoff", () => {
         role: "assistant",
         agent_name: "ChatAgent",
         created_at: "2026-03-14T00:00:02.000000",
-        payload: { content: "由于当前数据源缺少 OCP 集群关联信息，无法直接调用 OCP API 获取监控数据。", event_kind: "assistant_text" },
+        payload: { content: "由于当前数据源未关联外部监控 Service，无法获取历史监控数据。", event_kind: "assistant_text" },
       },
       {
         id: 103,
@@ -441,7 +441,7 @@ describe("ChatPage workspace boundary and handoff", () => {
     )
 
     const leading = await screen.findByText(
-      "由于当前数据源缺少 OCP 集群关联信息，无法直接调用 OCP API 获取监控数据。"
+      "由于当前数据源未关联外部监控 Service，无法获取历史监控数据。"
     )
     expect(leading).toBeInTheDocument()
     const toolLabel = await screen.findByText(/工具调用：execute_sql/)
@@ -453,7 +453,7 @@ describe("ChatPage workspace boundary and handoff", () => {
 
     const text = container.textContent || ""
     expect(
-      text.indexOf("由于当前数据源缺少 OCP 集群关联信息，无法直接调用 OCP API 获取监控数据。")
+      text.indexOf("由于当前数据源未关联外部监控 Service，无法获取历史监控数据。")
     ).toBeLessThan(text.indexOf("工具调用：execute_sql"))
     expect(text.indexOf("工具调用：execute_sql")).toBeLessThan(
       text.indexOf("不过我可以尝试通过数据库查询来获取 CPU 负载信息。")
@@ -599,7 +599,7 @@ describe("ChatPage workspace boundary and handoff", () => {
     )
 
     expect(await screen.findByText("继续分析 SQL sql-2")).toBeInTheDocument()
-    expect(screen.getByText("来自：SQL Analysis")).toBeInTheDocument()
+    expect(screen.getByText("来自：Monitoring")).toBeInTheDocument()
 
     await userEvent.click(screen.getByRole("button", { name: "继续分析这条 SQL 的主要风险" }))
 
@@ -831,7 +831,7 @@ describe("ChatPage workspace boundary and handoff", () => {
             id: 9,
             title: "SQL 分析 · sql-2",
             category: "scene",
-            scene_key: "sql_analysis",
+            scene_key: "monitoring",
             read_only: true,
           }),
         ]
@@ -849,7 +849,7 @@ describe("ChatPage workspace boundary and handoff", () => {
     expect(await screen.findByText("普通对话")).toBeInTheDocument()
     expect(await screen.findByText("其他页面历史（只读）")).toBeInTheDocument()
     expect(await screen.findByText("SQL 分析 · sql-2")).toBeInTheDocument()
-    expect(await screen.findByText("sql_analysis")).toBeInTheDocument()
+    expect(await screen.findByText("monitoring")).toBeInTheDocument()
     expect(conversationsApi.list).toHaveBeenCalledWith({ category: "primary" })
     expect(conversationsApi.list).toHaveBeenCalledWith({ category: "scene" })
   })
@@ -862,7 +862,7 @@ describe("ChatPage workspace boundary and handoff", () => {
             id: 9,
             title: "统计分析历史",
             category: "scene",
-            scene_key: "stats_analysis",
+            scene_key: "custom_diagnosis",
             read_only: true,
           }),
         ]

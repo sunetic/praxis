@@ -19,8 +19,6 @@ function inferSceneKey(adapter: SceneBusinessAgentAdapter): string {
   if (adapter.sceneKey && adapter.sceneKey.trim()) return adapter.sceneKey.trim()
   if (adapter.profile === "page_chat_agent") return "page_build"
   if (adapter.page === "page-console") return "page_build"
-  if (adapter.profile === "stats_analysis_agent") return "stats_analysis"
-  if (adapter.page === "stats-analysis") return "stats_analysis"
   return ""
 }
 

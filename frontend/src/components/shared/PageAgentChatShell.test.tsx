@@ -89,7 +89,7 @@ describe("PageAgentChatShell", () => {
         turn_seq: 1,
         part_seq: 1,
         role: "assistant",
-        agent_name: "StatsAnalysisAgent",
+        agent_name: "PageChatAgent",
         created_at: "2026-03-14T00:00:03Z",
         payload: { content: "这是诊断结论。", event_kind: "assistant_text" },
       },
@@ -107,18 +107,18 @@ describe("PageAgentChatShell", () => {
         conversation_id: 101,
         role: "assistant",
         content: "这是诊断结论。",
-        agent_name: "StatsAnalysisAgent",
+        agent_name: "PageChatAgent",
         created_at: "2026-03-14T00:00:03Z",
       },
     ])
     render(
       <PageAgentChatShell
         adapter={{
-          page: "stats-analysis",
-          profile: "stats_analysis_agent",
-          sceneKey: "stats_analysis",
+          page: "page-console",
+          profile: "page_chat_agent",
+          sceneKey: "page_build",
           tools: ["execute_sql"],
-          skills: ["stats-analysis"],
+          skills: ["page-console"],
           buildContext: () => ({ mode: "test" }),
         }}
         datasourceId={11}
@@ -138,7 +138,7 @@ describe("PageAgentChatShell", () => {
       expect.objectContaining({
         runDatasourceIds: [11],
         sceneAgent: expect.objectContaining({
-          key: "stats_analysis",
+          key: "page_build",
         }),
       })
     )
@@ -149,7 +149,7 @@ describe("PageAgentChatShell", () => {
     const onJump = vi.fn()
     render(
       <PageAgentChatShell
-        adapter={{ page: "stats-analysis", profile: "stats_analysis_agent" }}
+        adapter={{ page: "page-console", profile: "page_chat_agent" }}
         datasourceId={11}
         focusObject={{ type: "risk_candidate", candidate_id: 1 }}
         suggestedPrompt="请继续分析"
@@ -171,7 +171,7 @@ describe("PageAgentChatShell", () => {
 
     const { rerender } = render(
       <PageAgentChatShell
-        adapter={{ page: "stats-analysis", profile: "stats_analysis_agent" }}
+        adapter={{ page: "page-console", profile: "page_chat_agent" }}
         datasourceId={11}
         focusObject={{ type: "issue", issue_id: "failed:11" }}
         freshSessionKey="ds:11:issue:failed:11"
@@ -186,7 +186,7 @@ describe("PageAgentChatShell", () => {
 
     rerender(
       <PageAgentChatShell
-        adapter={{ page: "stats-analysis", profile: "stats_analysis_agent" }}
+        adapter={{ page: "page-console", profile: "page_chat_agent" }}
         datasourceId={11}
         focusObject={{ type: "issue", issue_id: "dml:11" }}
         freshSessionKey="ds:11:issue:dml:11"
@@ -211,7 +211,7 @@ describe("PageAgentChatShell", () => {
 
     render(
       <PageAgentChatShell
-        adapter={{ page: "stats-analysis", profile: "stats_analysis_agent", sceneKey: "stats_analysis" }}
+        adapter={{ page: "page-console", profile: "page_chat_agent", sceneKey: "page_build" }}
         datasourceId={11}
       />
     )
@@ -266,7 +266,7 @@ describe("PageAgentChatShell", () => {
         turn_seq: 1,
         part_seq: 2,
         role: "assistant",
-        agent_name: "StatsAnalysisAgent",
+        agent_name: "PageChatAgent",
         created_at: "2026-03-14T00:00:03Z",
         payload: { content: "这是诊断结论。", event_kind: "assistant_text" },
       },
@@ -284,7 +284,7 @@ describe("PageAgentChatShell", () => {
         conversation_id: 101,
         role: "assistant",
         content: "这是诊断结论。",
-        agent_name: "StatsAnalysisAgent",
+        agent_name: "PageChatAgent",
         created_at: "2026-03-14T00:00:03Z",
       },
     ])
@@ -307,7 +307,7 @@ describe("PageAgentChatShell", () => {
 
     render(
       <PageAgentChatShell
-        adapter={{ page: "stats-analysis", profile: "stats_analysis_agent" }}
+        adapter={{ page: "page-console", profile: "page_chat_agent" }}
         datasourceId={11}
       />
     )
@@ -350,7 +350,7 @@ describe("PageAgentChatShell", () => {
         conversation_id: 101,
         role: "assistant",
         content: "这是诊断结论。",
-        agent_name: "StatsAnalysisAgent",
+        agent_name: "PageChatAgent",
         created_at: "2026-03-14T00:00:03Z",
       },
     ])
@@ -373,7 +373,7 @@ describe("PageAgentChatShell", () => {
 
     render(
       <PageAgentChatShell
-        adapter={{ page: "stats-analysis", profile: "stats_analysis_agent" }}
+        adapter={{ page: "page-console", profile: "page_chat_agent" }}
         datasourceId={11}
       />
     )
@@ -406,7 +406,7 @@ describe("PageAgentChatShell", () => {
 
     render(
       <PageAgentChatShell
-        adapter={{ page: "stats-analysis", profile: "stats_analysis_agent" }}
+        adapter={{ page: "page-console", profile: "page_chat_agent" }}
         datasourceId={11}
       />
     )
@@ -452,7 +452,7 @@ describe("PageAgentChatShell", () => {
 
     render(
       <PageAgentChatShell
-        adapter={{ page: "stats-analysis", profile: "stats_analysis_agent" }}
+        adapter={{ page: "page-console", profile: "page_chat_agent" }}
         datasourceId={11}
       />
     )
@@ -531,7 +531,7 @@ describe("PageAgentChatShell", () => {
 
     render(
       <PageAgentChatShell
-        adapter={{ page: "stats-analysis", profile: "stats_analysis_agent" }}
+        adapter={{ page: "page-console", profile: "page_chat_agent" }}
         datasourceId={11}
       />
     )
@@ -558,10 +558,10 @@ describe("PageAgentChatShell", () => {
     render(
       <PageAgentChatShell
         adapter={{
-          page: "stats-analysis",
-          profile: "stats_analysis_agent",
-          sceneKey: "stats_analysis",
-          skills: ["stats-analysis"],
+          page: "page-console",
+          profile: "page_chat_agent",
+          sceneKey: "page_build",
+          skills: ["page-console"],
         }}
         datasourceId={11}
       />
@@ -576,16 +576,16 @@ describe("PageAgentChatShell", () => {
         "继续分析",
         expect.objectContaining({
           runDatasourceIds: [11],
-          sceneAgent: expect.objectContaining({ key: "stats_analysis" }),
+          sceneAgent: expect.objectContaining({ key: "page_build" }),
         })
       )
     })
     expect(conversationsApi.create).toHaveBeenCalledWith(
       expect.objectContaining({
-        title: "stats-analysis · Agent Chat",
+        title: "page-console · Agent Chat",
         datasource_id: 11,
         category: "scene",
-        scene_key: "stats_analysis",
+        scene_key: "page_build",
         read_only: true,
       })
     )
@@ -595,7 +595,7 @@ describe("PageAgentChatShell", () => {
     render(
       <StrictMode>
         <PageAgentChatShell
-          adapter={{ page: "stats-analysis", profile: "stats_analysis_agent", sceneKey: "stats_analysis" }}
+          adapter={{ page: "page-console", profile: "page_chat_agent", sceneKey: "page_build" }}
           datasourceId={11}
           suggestedPrompt="请继续分析"
           autoSendSuggestedPrompt={true}
@@ -629,7 +629,7 @@ describe("PageAgentChatShell", () => {
         turn_seq: 1,
         part_seq: 1,
         role: "assistant",
-        agent_name: "StatsAnalysisAgent",
+        agent_name: "PageChatAgent",
         created_at: "2026-03-14T00:00:03Z",
         payload: { content: "这是最终结论。", event_kind: "assistant_text" },
       },
@@ -647,7 +647,7 @@ describe("PageAgentChatShell", () => {
         conversation_id: 101,
         role: "assistant",
         content: "这是最终结论。",
-        agent_name: "StatsAnalysisAgent",
+        agent_name: "PageChatAgent",
         created_at: "2026-03-14T00:00:03Z",
       },
     ])
@@ -661,7 +661,7 @@ describe("PageAgentChatShell", () => {
 
     render(
       <PageAgentChatShell
-        adapter={{ page: "stats-analysis", profile: "stats_analysis_agent" }}
+        adapter={{ page: "page-console", profile: "page_chat_agent" }}
         datasourceId={11}
       />
     )
@@ -693,7 +693,7 @@ describe("PageAgentChatShell", () => {
         turn_seq: 1,
         part_seq: 1,
         role: "assistant",
-        agent_name: "StatsAnalysisAgent",
+        agent_name: "PageChatAgent",
         created_at: "2026-03-14T00:00:03Z",
         payload: { content: "处理完成。", event_kind: "assistant_text" },
       },
@@ -711,7 +711,7 @@ describe("PageAgentChatShell", () => {
         conversation_id: 101,
         role: "assistant",
         content: "处理完成。",
-        agent_name: "StatsAnalysisAgent",
+        agent_name: "PageChatAgent",
         created_at: "2026-03-14T00:00:03Z",
       },
     ])
@@ -724,7 +724,7 @@ describe("PageAgentChatShell", () => {
 
     render(
       <PageAgentChatShell
-        adapter={{ page: "stats-analysis", profile: "stats_analysis_agent" }}
+        adapter={{ page: "page-console", profile: "page_chat_agent" }}
         datasourceId={11}
       />
     )
@@ -769,7 +769,7 @@ describe("PageAgentChatShell", () => {
         turn_seq: 1,
         part_seq: 2,
         role: "assistant",
-        agent_name: "StatsAnalysisAgent",
+        agent_name: "PageChatAgent",
         created_at: "2026-03-14T00:00:03Z",
         payload: { content: "已完成只读检查。", event_kind: "assistant_text" },
       },
@@ -787,7 +787,7 @@ describe("PageAgentChatShell", () => {
         conversation_id: 101,
         role: "assistant",
         content: "已完成只读检查。",
-        agent_name: "StatsAnalysisAgent",
+        agent_name: "PageChatAgent",
         created_at: "2026-03-14T00:00:03Z",
       },
     ])
@@ -810,7 +810,7 @@ describe("PageAgentChatShell", () => {
 
     render(
       <PageAgentChatShell
-        adapter={{ page: "stats-analysis", profile: "stats_analysis_agent" }}
+        adapter={{ page: "page-console", profile: "page_chat_agent" }}
         datasourceId={11}
       />
     )

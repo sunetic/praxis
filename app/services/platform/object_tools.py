@@ -641,15 +641,17 @@ class ObjectToolService:
             )
 
         def _serialize(svc: models.Service) -> dict[str, Any]:
-            config = svc.config or {}
-            safe_config = {k: v for k, v in config.items() if k != "password"}
+            from app.services.integration.http_service import public_service_config
+
             return {
                 "id": svc.id,
                 "name": svc.name,
                 "service_type": svc.service_type,
-                "config": safe_config,
+                "config": public_service_config(svc.config),
                 "resource_ref": svc.resource_ref,
                 "status": svc.status,
+                "has_credentials": svc.has_credentials,
+                "knowledge_base_ids": svc.knowledge_base_ids,
             }
 
         if action == "list":

@@ -6,6 +6,7 @@ BUILTIN_DIR = str(Path(__file__).resolve().parents[1] / "data" / "skills")
 
 EXPECTED_SKILLS = {
     "database-claim-provenance": ("general", False, "built_in"),
+    "external-observability-correlation": ("general", False, "built_in"),
     "mysql-connection-diagnosis": ("mysql", False, "built_in"),
     "mysql-innodb-health": ("mysql", False, "built_in"),
     "mysql-lock-diagnosis": ("mysql", False, "built_in"),

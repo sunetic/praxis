@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest"
 
 import { ServicesPage } from "./ServicesPage"
 
-const { servicesApi, datasourcesApi, toast } = vi.hoisted(() => ({
+const { servicesApi, datasourcesApi, knowledgeApi, toast } = vi.hoisted(() => ({
   servicesApi: {
     list: vi.fn(),
     create: vi.fn(),
@@ -16,6 +16,9 @@ const { servicesApi, datasourcesApi, toast } = vi.hoisted(() => ({
   datasourcesApi: {
     list: vi.fn(),
   },
+  knowledgeApi: {
+    list: vi.fn(),
+  },
   toast: {
     success: vi.fn(),
     error: vi.fn(),
@@ -25,6 +28,7 @@ const { servicesApi, datasourcesApi, toast } = vi.hoisted(() => ({
 vi.mock("@/lib/api", () => ({
   servicesApi,
   datasourcesApi,
+  knowledgeApi,
 }))
 
 vi.mock("sonner", () => ({
@@ -39,9 +43,11 @@ describe("ServicesPage", () => {
       {
         id: 1,
         name: "cluster-service",
-        service_type: "ocp_api",
+        service_type: "prometheus",
         resource_ref: "cluster:cluster-a",
-        config: null,
+        config: { base_url: "http://prometheus:9090" },
+        has_credentials: false,
+        knowledge_base_ids: [],
         status: "active",
         created_at: "2026-05-11T00:00:00Z",
         updated_at: "2026-05-11T00:00:00Z",
@@ -49,9 +55,11 @@ describe("ServicesPage", () => {
       {
         id: 2,
         name: "datasource-service",
-        service_type: "ocp_api",
+        service_type: "prometheus",
         resource_ref: "datasource:101",
-        config: null,
+        config: { base_url: "http://prometheus:9090" },
+        has_credentials: false,
+        knowledge_base_ids: [],
         status: "active",
         created_at: "2026-05-11T00:00:00Z",
         updated_at: "2026-05-11T00:00:00Z",
@@ -59,9 +67,11 @@ describe("ServicesPage", () => {
       {
         id: 3,
         name: "stale-cluster-service",
-        service_type: "ocp_api",
+        service_type: "prometheus",
         resource_ref: "cluster:stale-cluster",
-        config: null,
+        config: { base_url: "http://prometheus:9090" },
+        has_credentials: false,
+        knowledge_base_ids: [],
         status: "active",
         created_at: "2026-05-11T00:00:00Z",
         updated_at: "2026-05-11T00:00:00Z",
@@ -69,9 +79,11 @@ describe("ServicesPage", () => {
       {
         id: 4,
         name: "stale-datasource-service",
-        service_type: "ocp_api",
+        service_type: "prometheus",
         resource_ref: "datasource:999",
-        config: null,
+        config: { base_url: "http://prometheus:9090" },
+        has_credentials: false,
+        knowledge_base_ids: [],
         status: "active",
         created_at: "2026-05-11T00:00:00Z",
         updated_at: "2026-05-11T00:00:00Z",
@@ -79,9 +91,11 @@ describe("ServicesPage", () => {
       {
         id: 5,
         name: "unbound-service",
-        service_type: "ocp_api",
+        service_type: "prometheus",
         resource_ref: null,
-        config: null,
+        config: { base_url: "http://prometheus:9090" },
+        has_credentials: false,
+        knowledge_base_ids: [],
         status: "active",
         created_at: "2026-05-11T00:00:00Z",
         updated_at: "2026-05-11T00:00:00Z",
@@ -105,6 +119,7 @@ describe("ServicesPage", () => {
         updated_at: "2026-05-11T00:00:00Z",
       },
     ])
+    knowledgeApi.list.mockResolvedValue([])
   })
 
   it("renders valid relation resources and hides stale references", async () => {
@@ -126,9 +141,9 @@ describe("ServicesPage", () => {
 
     expect(within(clusterRow as HTMLElement).getByText("cluster-a")).toBeInTheDocument()
     expect(within(datasourceRow as HTMLElement).getByText("orders-ds")).toBeInTheDocument()
-    expect(within(staleClusterRow as HTMLElement).getByText("无")).toBeInTheDocument()
-    expect(within(staleDatasourceRow as HTMLElement).getByText("无")).toBeInTheDocument()
-    expect(within(unboundRow as HTMLElement).getByText("无")).toBeInTheDocument()
+    expect(within(staleClusterRow as HTMLElement).getByText("引用已失效")).toBeInTheDocument()
+    expect(within(staleDatasourceRow as HTMLElement).getByText("引用已失效")).toBeInTheDocument()
+    expect(within(unboundRow as HTMLElement).getByText("未关联")).toBeInTheDocument()
   })
 
   it("filters by resolved relation resource instead of raw resource_ref", async () => {
@@ -137,7 +152,7 @@ describe("ServicesPage", () => {
 
     await screen.findByText("cluster-service")
 
-    await user.type(screen.getByPlaceholderText("搜索服务..."), "orders-ds")
+    await user.type(screen.getByPlaceholderText("搜索名称、地址或关联资源"), "orders-ds")
 
     await waitFor(() => {
       expect(screen.getByText("datasource-service")).toBeInTheDocument()

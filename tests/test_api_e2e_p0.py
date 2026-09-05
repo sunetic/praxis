@@ -708,16 +708,16 @@ def test_p0_conversation_source_defaults_and_category_filter(api_client):
     scene = client.post(
         "/api/v1/conversations",
         json={
-            "title": "sql-analysis-scene",
+            "title": "custom-scene",
             "category": "scene",
-            "scene_key": "sql_analysis",
+            "scene_key": "custom_diagnosis",
             "read_only": True,
         },
     )
     assert scene.status_code == 201, scene.text
     scene_payload = scene.json()
     assert scene_payload["category"] == "scene"
-    assert scene_payload["scene_key"] == "sql_analysis"
+    assert scene_payload["scene_key"] == "custom_diagnosis"
     assert scene_payload["read_only"] is True
 
     all_conversations = client.get("/api/v1/conversations")
@@ -735,7 +735,7 @@ def test_p0_conversation_source_defaults_and_category_filter(api_client):
     assert scene_only.status_code == 200, scene_only.text
     assert [item["id"] for item in scene_only.json()] == [scene_payload["id"]]
 
-    scene_key_match = client.get("/api/v1/conversations", params={"scene_key": "sql_analysis"})
+    scene_key_match = client.get("/api/v1/conversations", params={"scene_key": "custom_diagnosis"})
     assert scene_key_match.status_code == 200, scene_key_match.text
     assert [item["id"] for item in scene_key_match.json()] == [scene_payload["id"]]
 
@@ -998,202 +998,6 @@ def test_p0_datasource_test_and_agent_reference(api_client, monkeypatch: pytest.
     assert run.json()["conversation"]["datasource_id"] == ds["id"]
 
 
-def test_p0_live_sql_analysis_endpoints(api_client, monkeypatch: pytest.MonkeyPatch):
-    client, _ = api_client
-
-    class _FakePool:
-        async def execute_query(self, datasource, sql, role="user", params=None):  # noqa: ARG002
-            normalized_sql = " ".join(sql.split()).lower()
-            if "sql_analysis_live:db_names" in normalized_sql:
-                return {
-                    "columns": [],
-                    "rows": [
-                        {"db_name": "app_db"},
-                        {"db_name": "biz_db"},
-                    ],
-                    "row_count": 2,
-                }
-            if "sql_analysis_live:recent_sql_metadata" in normalized_sql:
-                return {
-                    "columns": [],
-                    "rows": [
-                        {
-                            "tenant_id": 1002,
-                            "sql_id": "live-top-1",
-                            "db_name": "app_db",
-                            "user_name": "root",
-                            "sql_text": "select * from t_top",
-                            "latest_request_time_us": 1711616400000000,
-                        }
-                    ],
-                    "row_count": 1,
-                }
-            if "sql_analysis_live:recent_sql" in normalized_sql:
-                return {
-                    "columns": [],
-                    "rows": [
-                        {
-                            "tenant_id": 1002,
-                            "sql_id": "live-top-1",
-                            "db_name": "app_db",
-                            "user_name": None,
-                            "sql_text": "select * from t_top",
-                            "latest_last_active_time": "2026-03-28 09:00:00.000000",
-                            "plan_count": None,
-                        }
-                    ],
-                    "row_count": 1,
-                }
-            if "sql_analysis_live:sql_detail_mysql" in normalized_sql:
-                return {
-                    "columns": [],
-                    "rows": [
-                        {
-                            "tenant_id": None,
-                            "sql_id": "live-top-1",
-                            "db_name": "app_db",
-                            "user_name": None,
-                            "sql_text": "select * from t_top",
-                            "executions": 12,
-                            "avg_elapsed_time_us": 10000,
-                            "avg_execute_time_us": 7000,
-                            "max_elapsed_time_us": 30000,
-                            "latest_request_time_us": 100,
-                            "plan_count": None,
-                        }
-                    ],
-                    "row_count": 1,
-                }
-            if "from performance_schema.events_statements_history" in normalized_sql:
-                return {"columns": [], "rows": [], "row_count": 0}
-            raise AssertionError(f"unexpected sql: {sql}")
-
-    class _FakeLiveSqlExplainLLM:
-        async def chat(self, *args, **kwargs):  # noqa: ARG002
-            yield {
-                "choices": [
-                    {
-                        "message": {
-                            "content": json.dumps(
-                                {
-                                    "summary": "This is a live view with insufficient historical evidence.",
-                                    "risk_points": ["Plan history is unavailable"],
-                                    "investigation_steps": [
-                                        "Inspect the current query and indexes"
-                                    ],
-                                    "optimization_directions": [
-                                        "Validate index coverage with production evidence"
-                                    ],
-                                },
-                                ensure_ascii=False,
-                            )
-                        }
-                    }
-                ]
-            }
-
-    monkeypatch.setattr("app.db.connection.get_db_pool", lambda: _FakePool())
-    monkeypatch.setattr(
-        "app.services.sql_analysis.live.context.get_llm_client", lambda: _FakeLiveSqlExplainLLM()
-    )
-
-    created_sys = client.post(
-        "/api/v1/datasources",
-        json={
-            **_datasource_payload("live-sqla-sys", cluster_key="cluster-live"),
-            "port": 3306,
-            "db_type": "mysql",
-            "tenant_role": "user",
-            "user": "root",
-            "database": "mysql",
-        },
-    )
-    assert created_sys.status_code == 201, created_sys.text
-    source_datasource_id = created_sys.json()["id"]
-
-    created_user = client.post(
-        "/api/v1/datasources",
-        json={
-            **_datasource_payload("live-sqla-user", cluster_key="cluster-live"),
-            "port": 3306,
-            "db_type": "mysql",
-            "tenant_role": "user",
-            "user": "app",
-            "database": "app_db",
-        },
-    )
-    assert created_user.status_code == 201, created_user.text
-    preferred_datasource_id = created_user.json()["id"]
-
-    base_params = {
-        "datasource_id": source_datasource_id,
-        "start_time_us": 60_000_000,
-        "end_time_us": 120_000_000,
-        "tenant_id": 1002,
-    }
-
-    db_names = client.get("/api/v1/sql-analysis/live/db-names", params=base_params)
-    assert db_names.status_code == 200, db_names.text
-    assert db_names.json()["items"] == ["app_db", "biz_db"]
-
-    discovery = client.get("/api/v1/sql-analysis/live/discovery", params=base_params)
-    assert discovery.status_code == 200, discovery.text
-    assert discovery.json()["items"][0]["sql_id"] == "live-top-1"
-    assert discovery.json()["items"][0]["plan_count"] is None
-    assert discovery.json()["items"][0]["sql_text"] == "select * from t_top"
-    assert discovery.json()["items"][0]["db_name"] == "app_db"
-    assert discovery.json()["items"][0]["user_name"] is None
-    assert discovery.json()["items"][0]["source_datasource_id"] == source_datasource_id
-    assert (
-        discovery.json()["items"][0]["preferred_execution_datasource_id"] == preferred_datasource_id
-    )
-
-    context = client.get(
-        "/api/v1/sql-analysis/live/build-context",
-        params={**base_params, "sql_id": "live-top-1"},
-    )
-    assert context.status_code == 200, context.text
-    context_payload = context.json()
-    assert context_payload["window_plan_total"] == 0
-    assert context_payload["current_plan_id"] is None
-    assert context_payload["facts"]["current_plan"]["plan_id"] is None
-    assert {item["key"] for item in context_payload["signals"]} >= {
-        "plan_cache_missing",
-        "plan_explain_unavailable",
-        "history_unavailable",
-    }
-    assert context_payload["facts"]["unavailable_dimensions"][0]["key"] == "executions"
-    assert context_payload["plan_explain"]["source"] == "unavailable"
-
-    explanation = client.post(
-        "/api/v1/sql-analysis/live/explain-with-ai",
-        params={**base_params, "sql_id": "live-top-1"},
-    )
-    assert explanation.status_code == 200, explanation.text
-    explanation_payload = explanation.json()
-    assert "live view" in explanation_payload["summary"]
-    assert explanation_payload["risk_points"] == ["Plan history is unavailable"]
-    assert (
-        explanation_payload["context"]["facts"]["current_plan"]["explain_source"] == "unavailable"
-    )
-
-
-def test_p0_live_sql_rejects_unsupported_database(api_client):
-    client, _ = api_client
-    datasource = _create_datasource(client, "live-sqla-unsupported")
-
-    response = client.get(
-        "/api/v1/sql-analysis/live/db-names",
-        params={
-            "datasource_id": datasource["id"],
-            "start_time_us": 60_000_000,
-            "end_time_us": 120_000_000,
-        },
-    )
-
-    assert response.status_code == 400
-    assert response.json()["detail"] == "SQL analysis is not supported for db_type 'oceanbase'"
-
 
 # ---------------------------------------------------------------------------
 # Cross-domain smoke tests — verify every API domain is reachable and returns
@@ -1307,6 +1111,15 @@ def test_p0_channels_list(api_client):
     resp = client.get("/api/v1/channels")
     assert resp.status_code == 200
     assert isinstance(resp.json(), list)
+
+
+def test_p0_unknown_api_is_not_handled_by_spa_fallback(api_client):
+    client, _ = api_client
+
+    resp = client.get("/api/v1/removed-feature")
+
+    assert resp.status_code == 404
+    assert resp.json() == {"detail": "Not Found"}
 
 
 def test_p0_chat_handoff_create_get_consume(api_client):

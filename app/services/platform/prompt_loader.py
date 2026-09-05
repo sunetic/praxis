@@ -30,8 +30,8 @@ class PromptLoader:
     as empty strings.
 
     Usage:
-        PromptLoader.render("chat/prompts/scene_agents/sql_analysis.tpl",
-                            key="sql_analysis", context_json="{}", ...)
+        PromptLoader.render("chat/prompts/scene_agents/default.tpl",
+                            key="custom_scene", context_json="{}", ...)
     """
 
     _cache: dict[str, Template] = {}

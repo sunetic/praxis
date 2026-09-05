@@ -1133,12 +1133,12 @@ describe("Function and Scheduler consoles", () => {
 
   it("uses apply invoke for write-type builtin functions from the list page without rendering generic confirmation UI", async () => {
     functionsApi.list.mockResolvedValueOnce([
-      { id: 7, name: "OCP 集群租户导入", slug: "fn-ocp-import", kind: "built_in", status: "released" },
+      { id: 7, name: "外部资产导入", slug: "fn-external-import", kind: "built_in", status: "released" },
     ])
     functionsApi.get.mockResolvedValueOnce({
       id: 7,
-      name: "OCP 集群租户导入",
-      slug: "fn-ocp-import",
+      name: "外部资产导入",
+      slug: "fn-external-import",
       kind: "built_in",
       status: "released",
       draft_code: "def main(payload, context):\n    return {}\n",
@@ -1153,7 +1153,7 @@ describe("Function and Scheduler consoles", () => {
     functionsApi.invoke.mockResolvedValueOnce({
       status: "success",
       duration_ms: 42,
-      run_id: "invoke-ocp-1",
+      run_id: "invoke-external-1",
       output: { summary: "created=1, updated=0, skipped=0" },
       error_message: null,
       error_code: null,
@@ -1168,8 +1168,8 @@ describe("Function and Scheduler consoles", () => {
       </MemoryRouter>
     )
 
-    await screen.findByText("OCP 集群租户导入")
-    await userEvent.click(screen.getByRole("button", { name: "执行 OCP 集群租户导入" }))
+    await screen.findByText("外部资产导入")
+    await userEvent.click(screen.getByRole("button", { name: "执行 外部资产导入" }))
     expect(screen.queryByText("当前执行会直接修改平台对象。")).not.toBeInTheDocument()
     expect(screen.queryByRole("checkbox")).not.toBeInTheDocument()
 
@@ -1186,12 +1186,12 @@ describe("Function and Scheduler consoles", () => {
 
   it("formats object-like invoke errors instead of rendering object object", async () => {
     functionsApi.list.mockResolvedValueOnce([
-      { id: 8, name: "OCP 集群租户导入", slug: "fn-ocp-import", kind: "built_in", status: "released" },
+      { id: 8, name: "外部资产导入", slug: "fn-external-import", kind: "built_in", status: "released" },
     ])
     functionsApi.get.mockResolvedValueOnce({
       id: 8,
-      name: "OCP 集群租户导入",
-      slug: "fn-ocp-import",
+      name: "外部资产导入",
+      slug: "fn-external-import",
       kind: "built_in",
       status: "released",
       draft_code: "def main(payload, context):\n    return {}\n",
@@ -1224,8 +1224,8 @@ describe("Function and Scheduler consoles", () => {
       </MemoryRouter>
     )
 
-    await screen.findByText("OCP 集群租户导入")
-    await userEvent.click(screen.getByRole("button", { name: "执行 OCP 集群租户导入" }))
+    await screen.findByText("外部资产导入")
+    await userEvent.click(screen.getByRole("button", { name: "执行 外部资产导入" }))
     await userEvent.click(screen.getByRole("button", { name: "执行" }))
 
     expect(await screen.findByText(/"blocked_action": "datasource.create"/)).toBeInTheDocument()

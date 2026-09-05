@@ -169,7 +169,7 @@ def test_get_db_pool_returns_distinct_instances_per_group(monkeypatch):
 
     default_pool = get_db_pool()
     same_default_pool = get_db_pool("default")
-    live_pool = get_db_pool("sql_analysis_live")
+    live_pool = get_db_pool("reporting")
 
     assert default_pool is same_default_pool
     assert live_pool is not default_pool
@@ -188,11 +188,11 @@ async def test_close_db_pools_closes_and_unregisters_all_groups(monkeypatch):
 
     pools = {
         "default": TrackedPool("default"),
-        "sql_analysis_live": TrackedPool("sql_analysis_live"),
+        "reporting": TrackedPool("reporting"),
     }
     monkeypatch.setattr(connection_module, "_db_pools", pools)
 
     await close_db_pools()
 
-    assert closed == ["default", "sql_analysis_live"]
+    assert closed == ["default", "reporting"]
     assert pools == {}

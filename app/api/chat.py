@@ -234,16 +234,6 @@ async def chat_stream(
             conversation.datasource_id = inferred_datasource.id
             db.add(conversation)
             db.flush()
-    if scene_agent_payload and scene_agent_payload.get("source") == "page_agent_compat":
-        logger.info(
-            "chat_scene_agent_compat_used %s",
-            fmt_kv(
-                conversation_id=conversation_id,
-                trace_id=trace_id,
-                key=scene_agent_payload.get("key"),
-            ),
-        )
-
     handoff_id: int | None = (
         message.handoff_id if (message.handoff_id and message.handoff_id > 0) else None
     )

@@ -12,6 +12,7 @@ from app.models import models
 from app.services.chat.capabilities import (
     normalize_declared_tool_names as capability_normalize_declared_tool_names,
 )
+from app.services.integration.bindings import list_bound_services
 from app.tools.registry import registry
 
 settings = get_settings()
@@ -87,17 +88,9 @@ def inject_service_tools(tools: list[dict], datasource_id: int | None, db: Sessi
     if datasource_id is None:
         return tools
     datasource = db.query(models.DataSource).filter(models.DataSource.id == datasource_id).first()
-    if not datasource or not datasource.cluster_key:
+    if not datasource:
         return tools
-    resource_ref = f"cluster:{datasource.cluster_key}"
-    services = (
-        db.query(models.Service)
-        .filter(
-            models.Service.resource_ref == resource_ref,
-            models.Service.status == "active",
-        )
-        .all()
-    )
+    services = list_bound_services(db, datasource)
     if not services:
         return tools
     tool_names = {t.get("function", {}).get("name") for t in tools}
@@ -117,36 +110,23 @@ def inject_service_tools(tools: list[dict], datasource_id: int | None, db: Sessi
             svc = services[0]
             description = (
                 f"Service ID (auto-bound to service_id={svc.id}; can be omitted). "
-                "Determine domain parameters based on datasource_attributes, loaded skills, and knowledge base evidence."
+                f"The bound service is '{svc.name}' (service_type={svc.service_type}). "
+                "Determine the API path and parameters from loaded skills and linked knowledge-base evidence."
             )
-            attrs = (
-                datasource.attributes
-                if isinstance(getattr(datasource, "attributes", None), dict)
-                else {}
-            )
-            ocp_cluster_id = attrs.get("ocp_cluster_id")
-            ocp_tenant_id = attrs.get("ocp_tenant_id")
-            if svc.service_type == "ocp_api":
-                description += (
-                    " OCP parameter mapping rules: OCP `{clusterId}` must use datasource_attributes.ocp_cluster_id; "
-                    "OCP `{tenantId}` must use datasource_attributes.ocp_tenant_id. "
-                    "In monitoring interfaces, when target=OBCLUSTER, targetId must use ocp_cluster_id; "
-                    "when target=OBTENANT, targetId must use ocp_tenant_id; "
-                    "do not use ob_cluster_id / ob_tenant_id as OCP targetId."
-                )
-                if ocp_cluster_id is not None:
-                    description += f" Current ocp_cluster_id={ocp_cluster_id}."
-                if ocp_tenant_id is not None:
-                    description += f" Current ocp_tenant_id={ocp_tenant_id}."
+            kb_ids = [str(item.id) for item in svc.knowledge_bases]
+            if kb_ids:
+                description += f" Linked knowledge base IDs: {', '.join(kb_ids)}."
             props["service_id"]["description"] = description
             req = fn.get("parameters", {}).get("required", [])
             if isinstance(req, list) and "service_id" in req:
                 fn["parameters"]["required"] = [x for x in req if x != "service_id"]
         else:
-            candidate_ids = ", ".join(str(item.id) for item in services[:5])
+            candidates = ", ".join(
+                f"{item.id}:{item.name}({item.service_type})" for item in services[:8]
+            )
             props["service_id"]["description"] = (
-                "Multiple PraxisServices are associated with the current datasource; auto-binding is not possible. "
-                f"Please specify service_id explicitly. Candidate IDs: {candidate_ids}"
+                "Multiple external Services are associated with the current datasource. "
+                f"Choose the documented provider and specify service_id. Candidates: {candidates}"
             )
     return patched
 

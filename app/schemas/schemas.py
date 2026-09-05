@@ -1,7 +1,7 @@
 import re
 from datetime import datetime
-from enum import Enum
 from typing import Any, Literal
+from urllib.parse import urlsplit
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -84,23 +84,213 @@ class DataSourceResponse(DataSourceBase):
 # ---------------------------------------------------------------------------
 
 
+class ServiceHttpConfig(BaseModel):
+    base_url: str
+    auth_type: Literal["none", "basic", "bearer", "api_key"] = "none"
+    api_key_header: str = "X-API-Key"
+    default_headers: dict[str, str] = Field(default_factory=dict)
+    health_check_path: str = "/-/ready"
+    health_check_method: Literal["GET", "POST"] = "GET"
+    response_format: Literal["auto", "json", "text"] = "auto"
+    timeout_seconds: float = Field(default=30.0, ge=1.0, le=120.0)
+    verify_tls: bool = True
+    use_environment_proxy: bool = False
+    max_response_bytes: int = Field(default=262_144, ge=1_024, le=1_048_576)
+
+    @field_validator("base_url")
+    @classmethod
+    def validate_base_url(cls, value: str) -> str:
+        normalized = value.strip().rstrip("/")
+        parsed = urlsplit(normalized)
+        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+            raise ValueError("base_url must be an absolute HTTP(S) URL")
+        if parsed.username or parsed.password or parsed.query or parsed.fragment:
+            raise ValueError("base_url cannot contain credentials, query parameters, or fragments")
+        return normalized
+
+    @field_validator("health_check_path")
+    @classmethod
+    def validate_health_check_path(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized.startswith("/") or normalized.startswith("//"):
+            raise ValueError("health_check_path must be a relative API path beginning with /")
+        return normalized
+
+    @field_validator("api_key_header")
+    @classmethod
+    def validate_api_key_header(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("api_key_header cannot be empty")
+        return normalized
+
+    @field_validator("default_headers")
+    @classmethod
+    def validate_default_headers(cls, value: dict[str, str]) -> dict[str, str]:
+        sensitive_names = {
+            "authorization",
+            "proxy-authorization",
+            "cookie",
+            "set-cookie",
+            "x-api-key",
+        }
+        normalized = _validate_service_headers(value)
+        exposed = sorted(name for name in normalized if name.lower() in sensitive_names)
+        if exposed:
+            raise ValueError(
+                "Sensitive headers must be stored in secrets.headers: "
+                + ", ".join(exposed)
+            )
+        return normalized
+
+
+class ServiceSecretConfig(BaseModel):
+    username: str = ""
+    password: str = ""
+    bearer_token: str = ""
+    api_key: str = ""
+    headers: dict[str, str] = Field(default_factory=dict)
+
+    @field_validator("headers")
+    @classmethod
+    def validate_headers(cls, value: dict[str, str]) -> dict[str, str]:
+        return _validate_service_headers(value)
+
+    def has_values(self) -> bool:
+        return any(
+            [self.username, self.password, self.bearer_token, self.api_key, self.headers]
+        )
+
+
+def _validate_service_headers(value: dict[str, str]) -> dict[str, str]:
+    normalized: dict[str, str] = {}
+    for raw_name, raw_value in value.items():
+        name = raw_name.strip()
+        if not name or "\r" in name or "\n" in name:
+            raise ValueError("HTTP header names must be non-empty single-line values")
+        if "\r" in raw_value or "\n" in raw_value:
+            raise ValueError(f"HTTP header {name} must be a single-line value")
+        normalized[name] = raw_value
+    return normalized
+
+
+def _translate_legacy_service_payload(data: Any) -> Any:
+    if not isinstance(data, dict):
+        return data
+    translated = dict(data)
+    raw_config = translated.get("config")
+    if not isinstance(raw_config, dict) or "base_url" in raw_config:
+        return translated
+
+    host = str(raw_config.get("host") or "").strip()
+    if not host:
+        return translated
+    scheme = str(raw_config.get("scheme") or "http").strip().lower()
+    port = int(raw_config.get("port") or 8080)
+    config = {
+        "base_url": f"{scheme}://{host}:{port}",
+        "auth_type": "basic" if raw_config.get("user") else "none",
+        "health_check_path": str(raw_config.get("health_check_path") or "/api/v2/time"),
+        "response_format": "json",
+    }
+    translated["config"] = config
+    if "secrets" not in translated and (raw_config.get("user") or raw_config.get("password")):
+        translated["secrets"] = {
+            "username": str(raw_config.get("user") or ""),
+            "password": str(raw_config.get("password") or ""),
+        }
+    return translated
+
+
 class ServiceBase(BaseModel):
     name: str
     service_type: str
-    config: dict | None = None
+    config: ServiceHttpConfig
     resource_ref: str | None = None
+
+    @field_validator("name")
+    @classmethod
+    def validate_name(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("Service name cannot be empty")
+        return normalized
+
+    @field_validator("service_type")
+    @classmethod
+    def validate_service_type(cls, value: str) -> str:
+        normalized = value.strip().lower().replace("-", "_")
+        if not re.fullmatch(r"[a-z][a-z0-9_.]{1,49}", normalized):
+            raise ValueError("service_type must be a lowercase identifier")
+        return normalized
+
+    @field_validator("resource_ref")
+    @classmethod
+    def validate_resource_ref(cls, value: str | None) -> str | None:
+        if value is None or not value.strip():
+            return None
+        normalized = value.strip()
+        prefix, separator, identifier = normalized.partition(":")
+        if separator != ":" or prefix not in {"cluster", "datasource"} or not identifier:
+            raise ValueError("resource_ref must use cluster:<key> or datasource:<id>")
+        if prefix == "datasource" and not identifier.isdigit():
+            raise ValueError("datasource resource_ref must contain a numeric ID")
+        return normalized
 
 
 class ServiceCreate(ServiceBase):
-    pass
+    secrets: ServiceSecretConfig | None = None
+    knowledge_base_ids: list[int] = Field(default_factory=list)
+
+    @model_validator(mode="before")
+    @classmethod
+    def translate_legacy_payload(cls, data: Any) -> Any:
+        return _translate_legacy_service_payload(data)
 
 
 class ServiceUpdate(BaseModel):
     name: str | None = None
     service_type: str | None = None
-    config: dict | None = None
+    config: ServiceHttpConfig | None = None
+    secrets: ServiceSecretConfig | None = None
     resource_ref: str | None = None
     status: str | None = None
+    knowledge_base_ids: list[int] | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def translate_legacy_payload(cls, data: Any) -> Any:
+        return _translate_legacy_service_payload(data)
+
+    @field_validator("name")
+    @classmethod
+    def validate_optional_name(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("Service name cannot be empty")
+        return normalized
+
+    @field_validator("service_type")
+    @classmethod
+    def validate_optional_service_type(cls, value: str | None) -> str | None:
+        return None if value is None else ServiceBase.validate_service_type(value)
+
+    @field_validator("resource_ref")
+    @classmethod
+    def validate_optional_resource_ref(cls, value: str | None) -> str | None:
+        return ServiceBase.validate_resource_ref(value)
+
+    @field_validator("status")
+    @classmethod
+    def validate_status(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = value.strip().lower()
+        if normalized not in {"active", "inactive"}:
+            raise ValueError("status must be active or inactive")
+        return normalized
 
 
 class ServiceResponse(ServiceBase):
@@ -108,8 +298,16 @@ class ServiceResponse(ServiceBase):
 
     id: int
     status: str
+    has_credentials: bool = False
+    knowledge_base_ids: list[int] = Field(default_factory=list)
     created_at: datetime
     updated_at: datetime
+
+
+class ServiceTestResponse(BaseModel):
+    success: bool
+    message: str
+    http_status: int | None = None
 
 
 class KnowledgeBaseBase(BaseModel):
@@ -185,334 +383,6 @@ class KnowledgePackInstallStatus(BaseModel):
     progress_message: str | None = None
     kb_id: int | None = None
     error_message: str | None = None
-
-
-class MonitorContractTableStatus(BaseModel):
-    logical_name: str
-    table_name: str
-    present: bool
-
-
-class MonitorContractColumnStatus(BaseModel):
-    table_name: str
-    column_name: str
-    present: bool
-
-
-class MonitorContractProbeResponse(BaseModel):
-    connection_ok: bool
-    message: str | None = None
-    required_tables: list[MonitorContractTableStatus]
-    missing_tables: list[str]
-    required_columns: list[MonitorContractColumnStatus]
-    missing_columns: list[str]
-    supported_features: dict[str, bool]
-
-
-class SqlMonitorCategory(str, Enum):  # noqa: UP042
-    TOP_SQL = "top_sql"
-    SLOW_SQL = "slow_sql"
-    NEW_SQL = "new_sql"
-    REGRESSED_SQL = "regressed_sql"
-    PLAN_CHANGED_SQL = "plan_changed_sql"
-
-
-class SqlMonitorCategoryItem(BaseModel):
-    datasource_id: int | None = None
-    ob_tenant_id: int | None = None
-    tenant_name: str | None = None
-    ob_db_id: int | None = None
-    sql_id: str | None = None
-    sql_text: str | None = None
-    db_name: str | None = None
-    executions: float | None = None
-    exec_ps: float | None = None
-    sum_elapsed_time_us: float | None = None
-    avg_elapsed_time_us: float | None = None
-    avg_cpu_time_us: float | None = None
-    max_elapsed_time_us: float | None = None
-    regression_ratio: float | None = None
-    plan_count: int | None = None
-    current_plan_union_hash: str | None = None
-    baseline_plan_union_hash: str | None = None
-
-
-class SqlMonitorCategoryResponse(BaseModel):
-    category: SqlMonitorCategory
-    datasource_id: int | None
-    start_time_us: int
-    end_time_us: int
-    compare_start_time_us: int | None = None
-    compare_end_time_us: int | None = None
-    limit: int
-    items: list[SqlMonitorCategoryItem]
-    next_cursor: str | None = None
-    has_more: bool = False
-
-
-class SqlTrendPoint(BaseModel):
-    bucket_start_us: int
-    executions: int
-    avg_elapsed_time_us: float
-    total_elapsed_time_us: int
-    avg_execute_time_us: float | None = None
-
-
-class SqlDetailResponse(BaseModel):
-    datasource_id: int
-    sql_id: str
-    start_time_us: int
-    end_time_us: int
-    db_name: str | None = None
-    user_name: str | None = None
-    sql_text: str | None = None
-    executions: int
-    avg_elapsed_time_us: float
-    avg_execute_time_us: float | None = None
-    max_elapsed_time_us: int
-    latest_request_time_us: int | None = None
-    plan_count: int | None = None
-
-
-class SqlPlanHistoryItem(BaseModel):
-    tenant_id: int
-    sql_id: str
-    plan_id: int
-    plan_hash: int | None = None
-    executions: int | None = None
-    avg_exe_usec: float | None = None
-    elapsed_time: int | None = None
-    execute_time: int | None = None
-    table_scan: int | None = None
-    last_active_time: str
-    query_sql: str | None = None
-
-
-class SqlPlanExplainItem(BaseModel):
-    operator: str
-    object_name: str | None = None
-    cost: int | None = None
-    cardinality: int | None = None
-    plan_line_id: int | None = None
-    parent_id: int | None = None
-    depth: int | None = None
-    property: str | None = None
-
-
-class SqlPlanExplainResponse(BaseModel):
-    datasource_id: int
-    sql_id: str
-    plan_id: int | None = None
-    source: str
-    items: list[SqlPlanExplainItem]
-
-
-class SqlFactWindow(BaseModel):
-    start_time_us: int
-    end_time_us: int
-
-
-class SqlFactOwnership(BaseModel):
-    datasource_id: int | None = None
-    ob_tenant_id: int | None = None
-    tenant_name: str | None = None
-    db_name: str | None = None
-    user_name: str | None = None
-
-
-class SqlExecutionFact(BaseModel):
-    executions: int
-    avg_elapsed_time_us: float
-    max_elapsed_time_us: int
-    latest_request_time_us: int | None = None
-
-
-class SqlResourceFact(BaseModel):
-    avg_cpu_time_us: float | None = None
-    total_elapsed_time_us: int
-    total_cpu_time_us: int | None = None
-
-
-class SqlPlanFact(BaseModel):
-    plan_count: int = 0
-    latest_plan_id: int | None = None
-    latest_plan_hash: int | None = None
-    latest_plan_last_active_time: str | None = None
-    latest_table_scan: int | None = None
-    explain_source: str
-    explain_item_count: int
-
-
-class SqlFactsResponse(BaseModel):
-    datasource_id: int
-    sql_id: str
-    window: SqlFactWindow
-    ownership: SqlFactOwnership
-    sql_text: str | None = None
-    execution: SqlExecutionFact
-    resource: SqlResourceFact
-    plan: SqlPlanFact
-
-
-class SqlRollupBucket(BaseModel):
-    bucket_start_us: int
-    executions: int
-    avg_elapsed_time_us: float
-    total_elapsed_time_us: int
-    avg_cpu_time_us: float | None = None
-
-
-class SqlRollupSummary(BaseModel):
-    source_bucket_count: int
-    sampled_bucket_count: int
-    total_executions: int
-    total_elapsed_time_us: int
-    total_cpu_time_us: int | None = None
-    avg_elapsed_time_us: float
-    avg_cpu_time_us: float | None = None
-    max_avg_elapsed_time_us: float
-    latest_avg_elapsed_time_us: float
-
-
-class SqlRollupResponse(BaseModel):
-    datasource_id: int
-    sql_id: str
-    window: SqlFactWindow
-    sampling_strategy: str
-    sample_limit: int
-    summary: SqlRollupSummary
-    buckets: list[SqlRollupBucket]
-
-
-class SqlAnalysisSignal(BaseModel):
-    key: str
-    severity: str
-    summary: str
-    evidence: str | None = None
-
-
-class SqlAnalysisContextResponse(BaseModel):
-    datasource_id: int
-    sql_id: str
-    category: SqlMonitorCategory
-    start_time_us: int
-    end_time_us: int
-    ob_tenant_id: int | None = None
-    matched_categories: list[str]
-    signals: list[SqlAnalysisSignal]
-    facts: SqlFactsResponse | None = None
-    rollup: SqlRollupResponse | None = None
-    detail: SqlDetailResponse | None = None
-    trend: list[SqlTrendPoint]
-    plan_history: list[SqlPlanHistoryItem]
-    plan_explain: SqlPlanExplainResponse
-
-
-class SqlAnalysisAiExplainResponse(BaseModel):
-    datasource_id: int
-    sql_id: str
-    category: SqlMonitorCategory
-    context: SqlAnalysisContextResponse
-    summary: str
-    risk_points: list[str]
-    investigation_steps: list[str]
-    optimization_directions: list[str]
-
-
-class SqlLiveDiscoveryItem(BaseModel):
-    source_datasource_id: int | None = None
-    preferred_execution_datasource_id: int | None = None
-    tenant_id: int | None = None
-    tenant_name: str | None = None
-    db_name: str | None = None
-    user_name: str | None = None
-    sql_id: str
-    sql_text: str | None = None
-    latest_request_time_us: int | None = None
-    plan_count: int | None = None
-
-
-class SqlLiveDiscoveryResponse(BaseModel):
-    datasource_id: int
-    start_time_us: int
-    end_time_us: int
-    limit: int
-    items: list[SqlLiveDiscoveryItem]
-
-
-class SqlLiveDbNamesResponse(BaseModel):
-    datasource_id: int
-    start_time_us: int
-    end_time_us: int
-    items: list[str]
-
-
-class SqlUnavailableDimension(BaseModel):
-    key: str
-    label: str
-    reason: str
-
-
-class SqlLiveCurrentPlanFact(BaseModel):
-    plan_id: int | None = None
-    plan_hash: int | None = None
-    last_active_time: str | None = None
-    table_scan: int | None = None
-    explain_source: str
-    explain_item_count: int
-
-
-class SqlLiveFactsResponse(BaseModel):
-    datasource_id: int
-    sql_id: str
-    start_time_us: int
-    end_time_us: int
-    cluster_key: str | None = None
-    tenant_id: int | None = None
-    db_name: str | None = None
-    user_name: str | None = None
-    sql_text: str | None = None
-    latest_request_time_us: int | None = None
-    current_plan: SqlLiveCurrentPlanFact
-    current_plans: list[SqlPlanHistoryItem]
-    window_plan_total: int = 0
-    current_plan_id: int | None = None
-    objects: list[str]
-    unavailable_dimensions: list[SqlUnavailableDimension]
-
-
-class SqlLivePlanDetailResponse(BaseModel):
-    plan_id: int | None = None
-    plan_hash: int | None = None
-    last_active_time: str | None = None
-    table_scan: int | None = None
-    explain_source: str
-    objects: list[str]
-    explain_items: list[SqlPlanExplainItem]
-
-
-class SqlLiveAnalysisContextResponse(BaseModel):
-    datasource_id: int
-    sql_id: str
-    start_time_us: int
-    end_time_us: int
-    facts: SqlLiveFactsResponse
-    signals: list[SqlAnalysisSignal]
-    current_plans: list[SqlPlanHistoryItem]
-    window_plan_total: int = 0
-    current_plan_id: int | None = None
-    plan_explain: SqlPlanExplainResponse
-    plan_details: list[SqlLivePlanDetailResponse] = Field(default_factory=list)
-
-
-class SqlLiveAnalysisAiExplainResponse(BaseModel):
-    datasource_id: int
-    sql_id: str
-    context: SqlLiveAnalysisContextResponse
-    summary: str
-    risk_points: list[str]
-    investigation_steps: list[str]
-    optimization_directions: list[str]
 
 
 _VALID_CONVERSATION_CATEGORIES = {"primary", "scene", "agent_run", "scheduler_run"}
@@ -971,66 +841,6 @@ class ToolExecutionResponse(ToolExecutionBase):
     created_at: datetime
 
 
-# ── Session & Transaction Analysis ──────────────────────────────────────────
-
-
-class LiveSession(BaseModel):
-    datasource_id: int
-    session_id: int
-    user: str
-    identity_label: str
-    tenant_name: str | None
-    client_ip: str | None
-    db: str | None
-    command: str
-    time_seconds: int
-    state: str
-    current_sql: str | None
-    ob_tenant_id: int | None
-
-
-class LiveSessionListResponse(BaseModel):
-    datasource_id: int | None
-    total: int
-    active: int
-    sessions: list[LiveSession]
-
-
-class LiveTransaction(BaseModel):
-    datasource_id: int
-    trans_hash: str
-    session_id: int | None
-    tenant_id: int | None
-    trans_type: str
-    state: str
-    elapsed_seconds: int
-    participants: int
-    sql_list: list[str]
-
-
-class LiveTransactionListResponse(BaseModel):
-    datasource_id: int | None
-    long_transactions: list[LiveTransaction]
-    pending_transactions: list[LiveTransaction]
-
-
-class SessionKillResponse(BaseModel):
-    session_id: int
-    killed: bool
-    message: str
-
-
-class SessionSnapshotForAI(BaseModel):
-    total: int
-    active: int
-    long_transaction_count: int
-    pending_transaction_count: int
-    user_distribution: dict[str, int]
-    ip_distribution: dict[str, int]
-    long_transactions: list[dict]
-
-
-# ---------------------------------------------------------------------------
 # Chat Stream
 # ---------------------------------------------------------------------------
 
@@ -1057,14 +867,6 @@ class ChatStreamRequest(BaseModel):
     def _normalize_resume_action_token(cls, value: str | None) -> str | None:
         normalized = str(value or "").strip()
         return normalized or None
-
-    @model_validator(mode="before")
-    @classmethod
-    def _legacy_page_agent(cls, data):
-        if isinstance(data, dict) and "page_agent" in data and "scene_agent" not in data:
-            data["scene_agent"] = data.pop("page_agent")
-        return data
-
 
 class ChatCompleteRequest(BaseModel):
     content: str = ""

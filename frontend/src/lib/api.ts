@@ -44,206 +44,6 @@ export function filterConnectableDatasources(datasources: DataSource[]): DataSou
   return datasources
 }
 
-export type SqlAnalysisCategory =
-  | "top_sql"
-  | "slow_sql"
-  | "new_sql"
-  | "regressed_sql"
-  | "plan_changed_sql"
-
-export type SqlAnalysisListItem = {
-  datasource_id?: number | null
-  ob_tenant_id?: number | null
-  tenant_name?: string | null
-  ob_db_id?: number | null
-  sql_id: string
-  db_name?: string | null
-  sql_text?: string | null
-  executions?: number
-  exec_ps?: number
-  sum_elapsed_time_us?: number
-  avg_elapsed_time_us?: number
-  avg_cpu_time_us?: number
-  max_elapsed_time_us?: number
-  plan_count?: number
-  baseline_plan_union_hash?: string | null
-  current_plan_union_hash?: string | null
-  regression_ratio?: number
-}
-
-export type SqlAnalysisCategoryResponse = {
-  category: SqlAnalysisCategory
-  datasource_id: number | null
-  start_time_us: number
-  end_time_us: number
-  compare_start_time_us?: number | null
-  compare_end_time_us?: number | null
-  limit: number
-  items: SqlAnalysisListItem[]
-  next_cursor?: string | null
-  has_more: boolean
-}
-
-export type SqlTrendPoint = {
-  bucket_start_us: number
-  executions: number
-  avg_elapsed_time_us: number
-  total_elapsed_time_us: number
-  avg_execute_time_us?: number | null
-}
-
-export type SqlDetail = {
-  datasource_id: number
-  sql_id: string
-  start_time_us: number
-  end_time_us: number
-  db_name?: string | null
-  user_name?: string | null
-  sql_text?: string | null
-  executions: number
-  avg_elapsed_time_us: number
-  avg_execute_time_us?: number | null
-  max_elapsed_time_us: number
-  latest_request_time_us?: number | null
-  plan_count?: number | null
-}
-
-export type SqlPlanHistoryItem = {
-  tenant_id: number
-  sql_id: string
-  plan_id: number
-  plan_hash?: number | null
-  executions: number
-  avg_exe_usec: number
-  elapsed_time: number
-  execute_time: number
-  table_scan: number
-  last_active_time: string
-  query_sql?: string | null
-}
-
-export type SqlPlanExplainItem = {
-  operator: string
-  object_name?: string | null
-  cost?: number | null
-  cardinality?: number | null
-  plan_line_id?: number | null
-  parent_id?: number | null
-  depth?: number | null
-  property?: string | null
-}
-
-export type SqlPlanExplainResponse = {
-  datasource_id: number
-  sql_id: string
-  plan_id?: number | null
-  source: string
-  items: SqlPlanExplainItem[]
-}
-
-export type SqlAnalysisSignal = {
-  key: string
-  severity: string
-  summary: string
-  evidence?: string | null
-}
-
-export type SqlLiveDiscoveryItem = {
-  source_datasource_id?: number | null
-  preferred_execution_datasource_id?: number | null
-  tenant_id?: number | null
-  tenant_name?: string | null
-  db_name?: string | null
-  user_name?: string | null
-  sql_id: string
-  sql_text?: string | null
-  latest_request_time_us?: number | null
-  plan_count?: number | null
-}
-
-export type SqlLiveDiscoveryResponse = {
-  datasource_id: number
-  start_time_us: number
-  end_time_us: number
-  limit: number
-  items: SqlLiveDiscoveryItem[]
-}
-
-export type SqlLiveDbNamesResponse = {
-  datasource_id: number
-  start_time_us: number
-  end_time_us: number
-  items: string[]
-}
-
-export type SqlUnavailableDimension = {
-  key: string
-  label: string
-  reason: string
-}
-
-export type SqlLiveCurrentPlanFact = {
-  plan_id?: number | null
-  plan_hash?: number | null
-  last_active_time?: string | null
-  table_scan?: number | null
-  explain_source: string
-  explain_item_count: number
-}
-
-export type SqlLiveFacts = {
-  datasource_id: number
-  sql_id: string
-  start_time_us: number
-  end_time_us: number
-  cluster_key?: string | null
-  tenant_id?: number | null
-  db_name?: string | null
-  user_name?: string | null
-  sql_text?: string | null
-  latest_request_time_us?: number | null
-  current_plan: SqlLiveCurrentPlanFact
-  current_plans: SqlPlanHistoryItem[]
-  window_plan_total: number
-  current_plan_id?: number | null
-  objects: string[]
-  unavailable_dimensions: SqlUnavailableDimension[]
-}
-
-export type SqlLivePlanDetail = {
-  plan_id?: number | null
-  plan_hash?: number | null
-  last_active_time?: string | null
-  table_scan?: number | null
-  explain_source: string
-  objects: string[]
-  explain_items: SqlPlanExplainItem[]
-}
-
-export type SqlLiveAnalysisContext = {
-  datasource_id: number
-  sql_id: string
-  start_time_us: number
-  end_time_us: number
-  facts: SqlLiveFacts
-  signals: SqlAnalysisSignal[]
-  current_plans: SqlPlanHistoryItem[]
-  window_plan_total: number
-  current_plan_id?: number | null
-  plan_explain: SqlPlanExplainResponse
-  plan_details: SqlLivePlanDetail[]
-}
-
-export type SqlLiveAnalysisAiExplainResponse = {
-  datasource_id: number
-  sql_id: string
-  context: SqlLiveAnalysisContext
-  summary: string
-  risk_points: string[]
-  investigation_steps: string[]
-  optimization_directions: string[]
-}
-
 export type Agent = {
   id: number;
   name: string;
@@ -262,7 +62,7 @@ export type AgentRunResult = {
   datasource_ids: number[];
 }
 
-export type ScheduleTargetType = "function" | "agent" | "stats_analysis" | "collector"
+export type ScheduleTargetType = "function" | "agent" | "collector"
 export type UserScheduleTargetType = "function" | "agent"
 
 export type Schedule = {
@@ -648,8 +448,10 @@ export type Service = {
   id: number;
   name: string;
   service_type: string;
-  config?: Record<string, unknown> | null;
+  config: ServiceHTTPConfig;
   resource_ref?: string | null;
+  has_credentials: boolean;
+  knowledge_base_ids: number[];
   status: string;
   created_at: string;
   updated_at: string;
@@ -658,8 +460,32 @@ export type Service = {
 export type ServiceInput = {
   name: string;
   service_type: string;
-  config?: Record<string, unknown> | null;
+  config: ServiceHTTPConfig;
+  secrets?: ServiceSecretConfig | null;
   resource_ref?: string | null;
+  knowledge_base_ids?: number[];
+}
+
+export type ServiceHTTPConfig = {
+  base_url: string;
+  auth_type: "none" | "basic" | "bearer" | "api_key";
+  api_key_header: string;
+  default_headers: Record<string, string>;
+  health_check_path: string;
+  health_check_method: "GET" | "POST";
+  response_format: "auto" | "json" | "text";
+  timeout_seconds: number;
+  verify_tls: boolean;
+  use_environment_proxy: boolean;
+  max_response_bytes: number;
+}
+
+export type ServiceSecretConfig = {
+  username?: string;
+  password?: string;
+  bearer_token?: string;
+  api_key?: string;
+  headers?: Record<string, string>;
 }
 
 export type ServiceUpdateInput = Partial<ServiceInput> & { status?: string }
@@ -673,9 +499,11 @@ export const servicesApi = {
     api.patch<Service>(`/services/${id}`, data).then(res => res.data),
   delete: (id: number) => api.delete(`/services/${id}`),
   test: (id: number) =>
-    api.post<{success: boolean; message: string}>(`/services/${id}/test`).then(res => res.data),
+    api.post<{success: boolean; message: string; http_status?: number | null}>(`/services/${id}/test`).then(res => res.data),
   testConfig: (data: ServiceInput) =>
-    api.post<{success: boolean; message: string}>('/services/test-config', data).then(res => res.data),
+    api.post<{success: boolean; message: string; http_status?: number | null}>('/services/test-config', data).then(res => res.data),
+  testUpdateConfig: (id: number, data: ServiceUpdateInput) =>
+    api.post<{success: boolean; message: string; http_status?: number | null}>(`/services/${id}/test-config`, data).then(res => res.data),
 };
 
 export type KnowledgeBase = {
@@ -776,88 +604,6 @@ export const knowledgePackApi = {
     api.get<KnowledgePackInstallStatus>(`/knowledge-packs/${packId}/status`).then(res => res.data),
   uninstall: (packId: string) => api.delete(`/knowledge-packs/${packId}`),
 };
-
-export const sqlAnalysisApi = {
-  listLiveDbNames: (params: {
-    datasource_id: number
-    start_time_us: number
-    end_time_us: number
-    tenant_id?: number
-    tenant_name?: string
-  }) => api.get<SqlLiveDbNamesResponse>("/sql-analysis/live/db-names", { params }).then((res) => res.data),
-  listLiveDiscovery: (params: {
-    datasource_id: number
-    start_time_us: number
-    end_time_us: number
-    tenant_id?: number
-    tenant_name?: string
-    db_name?: string
-    sql_id?: string
-    keyword?: string
-    limit?: number
-  }) => api.get<SqlLiveDiscoveryResponse>("/sql-analysis/live/discovery", { params }).then((res) => res.data),
-  listLiveCategory: (params: {
-    category: SqlAnalysisCategory
-    datasource_id: number
-    start_time_us: number
-    end_time_us: number
-    tenant_id?: number
-    tenant_name?: string
-    db_name?: string
-    sql_id?: string
-    keyword?: string
-    limit?: number
-    slow_threshold_us?: number
-  }) =>
-    api
-      .get<SqlAnalysisCategoryResponse>(`/sql-analysis/live/categories/${params.category}`, { params })
-      .then((res) => res.data),
-  getLiveSqlDetail: (params: {
-    datasource_id: number
-    sql_id: string
-    start_time_us: number
-    end_time_us: number
-    tenant_id?: number
-  }) => api.get<SqlDetail>("/sql-analysis/live/sql-detail", { params }).then((res) => res.data),
-  getLiveSqlTrend: (params: {
-    datasource_id: number
-    sql_id: string
-    start_time_us: number
-    end_time_us: number
-    tenant_id?: number
-    interval_seconds?: number
-  }) => api.get<SqlTrendPoint[]>("/sql-analysis/live/sql-trend", { params }).then((res) => res.data),
-  listLivePlanHistory: (params: {
-    datasource_id: number
-    sql_id: string
-    tenant_id?: number
-    limit?: number
-  }) => api.get<SqlPlanHistoryItem[]>("/sql-analysis/live/plan-history", { params }).then((res) => res.data),
-  getLivePlanExplain: (params: {
-    datasource_id: number
-    sql_id: string
-    plan_id?: number
-    sql_text?: string
-    db_name?: string
-  }) => {
-    const { sql_text, db_name, ...queryParams } = params
-    return api.post<SqlPlanExplainResponse>("/sql-analysis/live/plan-explain", { sql_text, db_name }, { params: queryParams }).then((res) => res.data)
-  },
-  buildLiveContext: (params: {
-    datasource_id: number
-    sql_id: string
-    start_time_us: number
-    end_time_us: number
-    tenant_id?: number
-  }) => api.get<SqlLiveAnalysisContext>("/sql-analysis/live/build-context", { params }).then((res) => res.data),
-  explainLiveSqlWithAi: (params: {
-    datasource_id: number
-    sql_id: string
-    start_time_us: number
-    end_time_us: number
-    tenant_id?: number
-  }) => api.post<SqlLiveAnalysisAiExplainResponse>("/sql-analysis/live/explain-with-ai", null, { params }).then((res) => res.data),
-}
 
 export const agentsApi = {
   list: () => api.get<Agent[]>('/agents').then(res => res.data),
@@ -1276,424 +1022,6 @@ export const schedulesApi = {
     api.post<ScheduleRun>(`/schedules/${scheduleId}/runs/${runId}/repair`, {}).then((res) => res.data),
 }
 
-// ---------------------------------------------------------------------------
-// Stats Analysis (OB statistics health)
-// ---------------------------------------------------------------------------
-
-export type StatsTaskSummary = {
-  total_tasks: number
-  success_tasks: number
-  failed_tasks: number
-  failed_task_ratio_pct: number
-  total_tables_planned: number
-  total_tables_failed: number
-}
-
-export type StatsSchedulerWindow = {
-  job_name: string
-  enabled: boolean
-  last_start_date?: string | null
-  next_run_date?: string | null
-  failure_count?: number | null
-  datasource_id?: number | null
-  cluster_key?: string | null
-}
-
-export type StatsOverviewResponse = {
-  task_summary: StatsTaskSummary
-  scheduler_windows: StatsSchedulerWindow[]
-}
-
-export type StatsFailedTableItem = {
-  tenant_name?: string | null
-  owner?: string | null
-  table_name?: string | null
-  task_start_time?: string | null
-  task_end_time?: string | null
-  gather_seconds?: number | null
-  memory_used?: number | null
-  stat_refresh_failed_list?: string | null
-  status?: string | null
-  datasource_id?: number | null
-  cluster_key?: string | null
-}
-
-export type StatsStaleTableItem = {
-  tenant_name?: string | null
-  owner?: string | null
-  table_name?: string | null
-  last_analyzed?: string | null
-  stats_state?: string | null
-  datasource_id?: number | null
-  cluster_key?: string | null
-}
-
-export type StatsDmlChangeItem = {
-  tenant_name?: string | null
-  database_name?: string | null
-  table_name?: string | null
-  row_change_delta?: number | null
-  datasource_id?: number | null
-  cluster_key?: string | null
-}
-
-export type StatsTrendPoint = {
-  date: string
-  avg_duration_min: number
-  max_duration_min: number
-  failed_tables: number
-  total_tasks: number
-}
-
-export type StatsCollectionDaySummary = {
-  date: string
-  task_type: string
-  total_tasks: number
-  success_tasks: number
-  failed_tasks: number
-  total_tables: number
-  success_tables: number
-  failed_tables: number
-  avg_duration_min: number
-  max_duration_min: number
-  cluster_key?: string | null
-  tenant_name?: string | null
-  datasource_id?: number | null
-}
-
-export type StatsCollectionDailySummaryResponse = {
-  datasource_id: number | null
-  items: StatsCollectionDaySummary[]
-}
-
-export type StatsDailyTaskItem = {
-  task_id?: string | null
-  task_type?: string | null
-  status?: string | null
-  start_time?: string | null
-  end_time?: string | null
-  duration_seconds?: number | null
-  table_count?: number | null
-  failed_count?: number | null
-  cluster_key?: string | null
-  tenant_name?: string | null
-  datasource_id?: number | null
-}
-
-export type StatsDailyTasksResponse = {
-  datasource_id: number | null
-  date: string
-  items: StatsDailyTaskItem[]
-  total: number
-  page: number
-  page_size: number
-}
-
-export type StatsDailyFailedTableItem = {
-  owner?: string | null
-  table_name?: string | null
-  failure_count: number
-  latest_status?: string | null
-  latest_error?: string | null
-  latest_gather_seconds?: number | null
-  latest_task_start_time?: string | null
-  cluster_key?: string | null
-  tenant_name?: string | null
-  datasource_id?: number | null
-}
-
-export type StatsDailyFailedTablesResponse = {
-  datasource_id: number | null
-  date: string
-  items: StatsDailyFailedTableItem[]
-}
-
-export type StatsColStatItem = {
-  owner?: string | null
-  table_name?: string | null
-  column_name?: string | null
-  num_distinct?: number | null
-  num_buckets?: number | null
-  histogram?: string | null
-  sample_size?: number | null
-  last_analyzed?: string | null
-}
-
-export type StatsHistogramItem = {
-  owner?: string | null
-  table_name?: string | null
-  column_name?: string | null
-  bucket_cnt?: number | null
-  max_bucket_repeat?: number | null
-  total_repeat?: number | null
-  top_bucket_ratio?: number | null
-}
-
-export type StatsWorkbenchCard = {
-  key: string
-  title: string
-  value: string
-  status: "healthy" | "warning" | "critical" | "info"
-  hint?: string | null
-}
-
-export type StatsIssueItem = {
-  issue_id: string
-  kind: "scheduling" | "failed_table" | "stale_stats" | "dml_change"
-  severity: "high" | "medium" | "low"
-  title: string
-  summary: string
-  datasource_id?: number | null
-  cluster_key?: string | null
-  tenant_name?: string | null
-  database_name?: string | null
-  table_name?: string | null
-  facts: Record<string, unknown>
-}
-
-export type StatsTenantConfigCheck = {
-  tenant_name: string
-  datasource_id: number
-  auto_gather_enabled?: boolean | null
-  enabled_windows: number
-  total_windows: number
-  recent_task_count: number
-  issue_type: "auto_gather_disabled" | "no_windows" | "partial_windows" | "no_recent_tasks" | "unreachable" | "healthy"
-  issue_label: string
-  suggestion_sql: string
-}
-
-export type StatsWorkbenchResponse = {
-  datasource_id: number | null
-  cluster_key: string
-  overview: StatsOverviewResponse
-  cards: StatsWorkbenchCard[]
-  issues: StatsIssueItem[]
-  warnings: string[]
-  tenant_config_checks: StatsTenantConfigCheck[]
-}
-
-export type StatsDiagnosisEvidence = {
-  label: string
-  value: string
-  source?: string | null
-}
-
-export type StatsDiagnosisAction = {
-  title: string
-  rationale?: string | null
-  risk?: string | null
-  execution_window?: string | null
-}
-
-export type StatsDiagnosisResult = {
-  headline: string
-  verdict: string
-  reasoning: string
-  evidence: StatsDiagnosisEvidence[]
-  next_actions: StatsDiagnosisAction[]
-  missing_facts: string[]
-  diagnosis_path: string[]
-  risks: string[]
-}
-
-
-export type StatsRiskCandidateTagItem = {
-  tag_key: string
-  tag_label: string
-  severity: "high" | "medium" | "low"
-  score: number
-  summary?: string | null
-  facts: Record<string, unknown>
-}
-
-export type StatsRiskCandidateItem = {
-  candidate_id: number
-  datasource_id: number
-  cluster_key: string
-  tenant_name?: string | null
-  database_name: string
-  table_name: string
-  severity: "high" | "medium" | "low"
-  score: number
-  lifecycle_status: "active" | "expired" | "resolved"
-  source?: string | null
-  latest_summary?: string | null
-  last_seen_at: string
-  tags: StatsRiskCandidateTagItem[]
-}
-
-export type StatsRiskCandidatesResponse = {
-  datasource_id: number
-  items: StatsRiskCandidateItem[]
-}
-
-export type StatsRiskCollectResponse = {
-  datasource_id: number
-  collected_tables: number
-  active_candidates: number
-  expired_candidates: number
-}
-
-export type StatsRiskAnalyzeSubmitResponse = {
-  run_id: string
-  status: "pending" | "running" | "ready" | "degraded" | "needs_clarification" | "error"
-}
-
-export type StatsRiskAnalyzeStatusResponse = {
-  run_id: string
-  status: "pending" | "running" | "ready" | "degraded" | "needs_clarification" | "error"
-  result?: StatsDiagnosisResult | null
-  error_summary?: string | null
-}
-
-export type StatsRiskAnalysisStreamEvent =
-  | { type: "phase"; data: { phase: string; run_id: string; status: string } }
-  | { type: "delta"; data: { run_id: string; chunk: string } }
-  | { type: "done"; data: { run_id: string; status: "pending" | "running" | "ready" | "degraded" | "needs_clarification" | "error"; result?: StatsDiagnosisResult | null } }
-  | { type: "error"; data: { message: string } }
-
-export type StatsRiskCollectionRunItem = {
-  run_id: string
-  datasource_id: number
-  trigger_type: string
-  status: string
-  summary?: string | null
-  error_summary?: string | null
-  started_at?: string | null
-  finished_at?: string | null
-}
-
-export type StatsRiskCollectionRunsResponse = {
-  datasource_id: number
-  items: StatsRiskCollectionRunItem[]
-}
-
-export type StatsDrawerDetailField = {
-  label: string
-  value: string
-  source?: string | null
-}
-
-export type StatsDrawerDetailSection = {
-  key: string
-  title: string
-  description?: string | null
-  fields: StatsDrawerDetailField[]
-}
-
-export type StatsDrawerHistoryRow = {
-  task_id?: string | null
-  owner?: string | null
-  table_name?: string | null
-  status?: string | null
-  ret_code?: string | null
-  start_time?: string | null
-  end_time?: string | null
-  gather_seconds?: number | null
-  memory_used?: number | null
-  trigger_type?: string | null
-  stat_refresh_failed_list?: string | null
-  properties?: string | null
-  task_table_count?: number | null
-  task_failed_count?: number | null
-}
-
-export type StatsDrawerDetailResponse = {
-  datasource_id: number
-  title: string
-  object_kind: string
-  severity: "high" | "medium" | "low"
-  summary: string
-  subtitle?: string | null
-  sections: StatsDrawerDetailSection[]
-  history_rows: StatsDrawerHistoryRow[]
-  history_source?: string | null
-  missing_facts: string[]
-  chat_context: Record<string, unknown>
-}
-
-export const statsAnalysisApi = {
-  getWorkbench: (params: { datasource_id?: number | null; cluster_key?: string | null; lookback_days?: number; stale_days?: number }) =>
-    api.get<StatsWorkbenchResponse>('/stats-analysis/workbench', { params }).then((res) => res.data),
-  getOverview: (params: { datasource_id: number; tenant_name?: string; lookback_days?: number }) =>
-    api.get<StatsOverviewResponse>('/stats-analysis/overview', { params }).then((res) => res.data),
-  getFailedTables: (params: { datasource_id: number; tenant_name?: string; lookback_days?: number }) =>
-    api.get<{ items: StatsFailedTableItem[] }>('/stats-analysis/failed-tables', { params }).then((res) => res.data),
-  getStaleTables: (params: { datasource_id: number; tenant_name?: string; stale_days?: number }) =>
-    api.get<{ items: StatsStaleTableItem[] }>('/stats-analysis/stale-tables', { params }).then((res) => res.data),
-  getDmlChanges: (params: { datasource_id: number; tenant_name?: string }) =>
-    api.get<{ items: StatsDmlChangeItem[] }>('/stats-analysis/dml-changes', { params }).then((res) => res.data),
-  getTrend: (params: { datasource_id: number; lookback_days?: number }) =>
-    api.get<{ points: StatsTrendPoint[] }>('/stats-analysis/trend', { params }).then((res) => res.data),
-  getDailyCollectionSummary: (params: { datasource_id?: number | null; cluster_key?: string | null; lookback_days?: number }) =>
-    api.get<StatsCollectionDailySummaryResponse>('/stats-analysis/daily-collection-summary', { params }).then((res) => res.data),
-  getDailyFailedTables: (params: { datasource_id?: number | null; cluster_key?: string | null; date: string }) =>
-    api.get<StatsDailyFailedTablesResponse>('/stats-analysis/daily-failed-tables', { params }).then((res) => res.data),
-  getDailyTasks: (params: { datasource_id?: number | null; cluster_key?: string | null; date: string; page?: number; page_size?: number; task_type?: string | null; status?: string | null }) =>
-    api.get<StatsDailyTasksResponse>('/stats-analysis/daily-tasks', { params }).then((res) => res.data),
-  getColStats: (params: { datasource_id: number; db_name: string; table_name: string }) =>
-    api.get<{ items: StatsColStatItem[] }>('/stats-analysis/col-stats', { params }).then((res) => res.data),
-  getHistogram: (params: { datasource_id: number; db_name: string; table_name: string }) =>
-    api.get<{ items: StatsHistogramItem[] }>('/stats-analysis/histogram', { params }).then((res) => res.data),
-  collectRiskCandidates: (payload: { datasource_id: number; lookback_days?: number; stale_days?: number }) =>
-    api.post<StatsRiskCollectResponse>('/stats-analysis/risk-candidates/collect', payload).then((res) => res.data),
-  listRiskCandidates: (params: { datasource_id: number; include_inactive?: boolean; lifecycle_status?: string; limit?: number }) =>
-    api.get<StatsRiskCandidatesResponse>('/stats-analysis/risk-candidates', { params }).then((res) => res.data),
-  listRiskCollectionRuns: (params: { datasource_id: number; limit?: number }) =>
-    api.get<StatsRiskCollectionRunsResponse>('/stats-analysis/risk-candidates/collect-runs', { params }).then((res) => res.data),
-  getRiskCandidate: (params: { datasource_id: number; candidate_id: number }) =>
-    api.get<StatsRiskCandidateItem>(`/stats-analysis/risk-candidates/${params.candidate_id}`, { params: { datasource_id: params.datasource_id } }).then((res) => res.data),
-  getDrawerDetail: (payload: { datasource_id: number; issue?: StatsIssueItem; risk_candidate?: StatsRiskCandidateItem }) =>
-    api.post<StatsDrawerDetailResponse>('/stats-analysis/drawer-detail', payload).then((res) => res.data),
-  submitRiskAnalysis: (params: { datasource_id: number; candidate_id: number }) =>
-    api.post<StatsRiskAnalyzeSubmitResponse>(`/stats-analysis/risk-candidates/${params.candidate_id}/analysis`, null, {
-      params: { datasource_id: params.datasource_id },
-    }).then((res) => res.data),
-  streamRiskAnalysis: async (
-    params: { datasource_id: number; candidate_id: number },
-    handlers: {
-      onEvent?: (event: StatsRiskAnalysisStreamEvent) => void
-    } = {}
-  ) => {
-    const query = new URLSearchParams({ datasource_id: String(params.datasource_id) }).toString()
-    const response = await fetch(`${API_BASE_URL}/stats-analysis/risk-candidates/${params.candidate_id}/analysis/stream?${query}`, {
-      method: "POST",
-      headers: {
-        Accept: "text/event-stream",
-      },
-    })
-    if (!response.ok || !response.body) {
-      throw new Error("Stats analysis stream initialization failed")
-    }
-    const reader = response.body.getReader()
-    const decoder = new TextDecoder("utf-8")
-    let buffer = ""
-    while (true) {
-      const { done, value } = await reader.read()
-      if (done) break
-      buffer += decoder.decode(value, { stream: true })
-      const chunks = buffer.split("\n\n")
-      buffer = chunks.pop() || ""
-      for (const chunk of chunks) {
-        const line = chunk
-          .split("\n")
-          .map((item) => item.trim())
-          .find((item) => item.startsWith("data:"))
-        if (!line) continue
-        try {
-          const payload = JSON.parse(line.slice(5).trim()) as StatsRiskAnalysisStreamEvent
-          handlers.onEvent?.(payload)
-        } catch {
-          // ignore malformed stream item
-        }
-      }
-    }
-  },
-  getRiskAnalysis: (runId: string) =>
-    api.get<StatsRiskAnalyzeStatusResponse>(`/stats-analysis/risk-candidates/analysis/${runId}`).then((res) => res.data),
-}
-
 export const channelsApi = {
   list: (params?: { provider?: ChannelProvider; status?: ChannelStatus }) =>
     api.get<Channel[]>('/channels', { params }).then((res) => res.data),
@@ -1725,87 +1053,6 @@ export const channelsApi = {
     }
   ) => api.post<any>(`/channels/${id}/send-test`, data ?? {}).then((res) => res.data),
 }
-
-// ── Session & Transaction Analysis ──────────────────────────────────────────
-
-export type LiveSession = {
-  datasource_id: number
-  session_id: number
-  user: string
-  identity_label: string
-  tenant_name: string | null
-  client_ip: string | null
-  db: string | null
-  command: string
-  time_seconds: number
-  state: "ACTIVE" | "SLEEP"
-  current_sql: string | null
-  ob_tenant_id: number | null
-}
-
-export type LiveSessionListResponse = {
-  datasource_id: number | null
-  total: number
-  active: number
-  sessions: LiveSession[]
-}
-
-export type LiveTransaction = {
-  datasource_id: number
-  trans_hash: string
-  session_id: number | null
-  tenant_id: number | null
-  trans_type: string
-  state: "ACTIVE" | "PENDING_COMMIT"
-  elapsed_seconds: number
-  participants: number
-  sql_list: string[]
-}
-
-export type LiveTransactionListResponse = {
-  datasource_id: number | null
-  long_transactions: LiveTransaction[]
-  pending_transactions: LiveTransaction[]
-}
-
-export type SessionSnapshotForAI = {
-  total: number
-  active: number
-  long_transaction_count: number
-  pending_transaction_count: number
-  user_distribution: Record<string, number>
-  ip_distribution: Record<string, number>
-  long_transactions: Array<{
-    trans_type: string
-    elapsed_seconds: number
-    sql_list: string[]
-  }>
-}
-
-export const sessionAnalysisApi = {
-  listSessions: (params: { datasource_id?: number | null; cluster_key?: string | null; tenant_id?: number; tenant_name?: string }) =>
-    api.get<LiveSessionListResponse>('/session-analysis/live/sessions', { params }).then((res) => res.data),
-
-  listTransactions: (params: { datasource_id?: number | null; cluster_key?: string | null; tenant_id?: number; tenant_name?: string }) =>
-    api.get<LiveTransactionListResponse>('/session-analysis/live/transactions', { params }).then((res) => res.data),
-
-  killSession: (datasource_id: number, session_id: number) =>
-    api.post<{ session_id: number; killed: boolean; message: string }>(
-      `/session-analysis/live/sessions/${session_id}/kill`,
-      null,
-      { params: { datasource_id } }
-    ).then((res) => res.data),
-
-  analyzeStream: (snapshot: SessionSnapshotForAI, signal?: AbortSignal): Promise<Response> =>
-    fetch(`${API_BASE_URL}/session-analysis/live/analyze`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(snapshot),
-      signal,
-    }),
-}
-
-// ── Settings API ────────────────────────────────────────────────────────
 
 export type PlatformSettings = {
   build_engine: "pi_lite" | "external_cli"

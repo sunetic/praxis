@@ -796,24 +796,25 @@ class ObjectOperateTool(BaseTool):
 class CallServiceTool(BaseTool):
     name = "call_praxis_service"
     description = (
-        "Call a registered PraxisService. Retrieves the target PraxisService's address and authentication info by service_id, "
-        "sends a request to the specified path, and returns the JSON response. Suitable for registered PraxisServices such as OCP API."
+        "Call a registered external HTTP Service using its stored base URL, authentication, "
+        "TLS, timeout, and response settings. Use linked knowledge-base documentation to choose "
+        "the API path and provider-specific parameters."
     )
     parameters = {
         "type": "object",
         "properties": {
             "service_id": {
                 "type": "integer",
-                "description": "PraxisService ID",
+                "description": "Registered Service ID",
             },
             "method": {
                 "type": "string",
-                "enum": ["GET", "POST", "PUT", "DELETE"],
+                "enum": ["GET", "POST", "PUT", "PATCH", "DELETE"],
                 "description": "HTTP method",
             },
             "path": {
                 "type": "string",
-                "description": "API path (e.g. /api/v2/ob/clusters)",
+                "description": "Relative API path beginning with /",
             },
             "query_params": {
                 "type": "object",
@@ -821,18 +822,11 @@ class CallServiceTool(BaseTool):
             },
             "body": {
                 "type": "object",
-                "description": "Request body (used for POST/PUT)",
+                "description": "JSON request body (used for POST/PUT/PATCH)",
             },
         },
         "required": ["service_id", "method", "path"],
     }
-
-    _AUTH_BUILDERS: dict[str, str] = {
-        "ocp_api": "_auth_basic",
-    }
-
-    def _auth_basic(self, config: dict) -> tuple[str, str]:
-        return (config.get("user", ""), config.get("password", ""))
 
     async def execute(
         self,
@@ -843,10 +837,9 @@ class CallServiceTool(BaseTool):
         body: dict[str, Any] | None = None,
         **params: object,
     ) -> ToolResult:
-        import httpx
-
         from app.db.database import SessionLocal
         from app.models import models
+        from app.services.integration.http_service import ServiceHTTPError, call_http_service
 
         del params
         with SessionLocal() as db:
@@ -857,86 +850,24 @@ class CallServiceTool(BaseTool):
                     error={"code": "not_found", "message": f"Service {service_id} not found"},
                 )
 
-            config = svc.config or {}
-            base_url = f"http://{config.get('host', '')}:{config.get('port', 8080)}"
-            auth_method_name = self._AUTH_BUILDERS.get(svc.service_type)
-
-        if not auth_method_name:
-            return ToolResult(
-                success=False,
-                error={
-                    "code": "unsupported_service_type",
-                    "message": f"service_type '{svc.service_type}' has no auth builder",
-                },
-            )
-
-        auth_builder = getattr(self, auth_method_name)
-        auth = auth_builder(config)
-        url = f"{base_url}{path}"
-        method_upper = method.upper()
+            service_type = svc.service_type
+            config = dict(svc.config or {})
+            secrets = dict(svc.secrets or {})
 
         try:
-            async with httpx.AsyncClient(timeout=30.0) as client:
-                resp = await client.request(
-                    method_upper,
-                    url,
-                    params=query_params,
-                    json=body if method_upper in ("POST", "PUT") else None,
-                    auth=auth,
-                    headers={"Content-Type": "application/json"},
-                )
-                resp_data: dict[str, Any] = {}
-                parsed_json = False
-                try:
-                    resp_data = resp.json()
-                    parsed_json = True
-                except Exception:
-                    resp_data = {"raw_text": resp.text[:2000]}
-
-                content_type = str((resp.headers or {}).get("content-type") or "").lower()
-                raw_text = (
-                    str(resp_data.get("raw_text") or "") if isinstance(resp_data, dict) else ""
-                )
-                raw_text_lstrip = raw_text.lstrip().lower()
-                looks_like_html = raw_text_lstrip.startswith(
-                    "<!doctype html"
-                ) or raw_text_lstrip.startswith("<html")
-                expects_json = True
-
-                if resp.status_code >= 400:
-                    return ToolResult(
-                        success=False,
-                        error={
-                            "code": "api_error",
-                            "http_status": resp.status_code,
-                            "message": resp_data.get("error", {}).get("message", "")
-                            if isinstance(resp_data.get("error"), dict)
-                            else str(resp_data),
-                            "response": resp_data,
-                        },
-                    )
-                if expects_json and (
-                    not parsed_json
-                    or looks_like_html
-                    or (content_type and "json" not in content_type)
-                ):
-                    return ToolResult(
-                        success=False,
-                        error={
-                            "code": "unexpected_response_format",
-                            "message": "Service returned non-JSON content for an API call.",
-                            "content_type": content_type or None,
-                            "response_preview": raw_text[:500] if raw_text else None,
-                        },
-                    )
-        except httpx.TimeoutException:
-            return ToolResult(
-                success=False, error={"code": "timeout", "message": f"Request to {url} timed out"}
+            response = await call_http_service(
+                service_id=service_id,
+                service_type=service_type,
+                raw_config=config,
+                raw_secrets=secrets,
+                method=method,
+                path=path,
+                query_params=query_params,
+                body=body,
             )
-        except Exception as e:
-            return ToolResult(success=False, error={"code": "connection_error", "message": str(e)})
-
-        return ToolResult(success=True, data=resp_data)
+        except ServiceHTTPError as exc:
+            return ToolResult(success=False, error=exc.to_dict())
+        return ToolResult(success=True, data=response)
 
 
 class ExecCommandTool(BaseTool):
@@ -1171,7 +1102,7 @@ class SkillReferenceTool(BaseTool):
         "properties": {
             "skill_name": {
                 "type": "string",
-                "description": "Skill name (e.g. ob-stats-ops, ocp-api-guide)",
+                "description": "Skill name (e.g. ob-stats-ops, external-observability-correlation)",
             },
             "section": {
                 "type": "string",

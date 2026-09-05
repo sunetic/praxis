@@ -1,7 +1,7 @@
 from copy import deepcopy
 from datetime import datetime
 from typing import Any
-from unittest.mock import AsyncMock, Mock
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -560,6 +560,8 @@ class _FakeHttpxResponse:
         self.status_code = status_code
         self._json_data = json_data
         self.text = text
+        self.content = text.encode()
+        self.encoding = "utf-8"
         self.headers = headers or {}
 
     def json(self) -> Any:
@@ -635,11 +637,16 @@ async def test_call_service_tool_treats_html_success_response_as_failure(
     db = factory()
     try:
         service = models.Service(
-            name="ocp",
-            service_type="ocp_api",
+            name="monitoring",
+            service_type="http_api",
             resource_ref="cluster:test",
             status="active",
-            config={"host": "127.0.0.1", "port": 8080, "user": "admin", "password": "secret"},
+            config={
+                "base_url": "http://127.0.0.1:8080",
+                "auth_type": "basic",
+                "response_format": "json",
+            },
+            secrets={"username": "admin", "password": "secret"},
         )
         db.add(service)
         db.commit()
@@ -647,9 +654,7 @@ async def test_call_service_tool_treats_html_success_response_as_failure(
     finally:
         db.close()
 
-    fake_httpx = Mock()
-    fake_httpx.TimeoutException = TimeoutError
-    fake_httpx.AsyncClient = lambda timeout=30.0: _FakeAsyncClient(
+    fake_client_factory = lambda **kwargs: _FakeAsyncClient(  # noqa: E731
         _FakeHttpxResponse(
             200,
             json_data=None,
@@ -657,7 +662,9 @@ async def test_call_service_tool_treats_html_success_response_as_failure(
             headers={"content-type": "text/html; charset=utf-8"},
         )
     )
-    monkeypatch.setitem(__import__("sys").modules, "httpx", fake_httpx)
+    monkeypatch.setattr(
+        "app.services.integration.http_service.httpx.AsyncClient", fake_client_factory
+    )
 
     service_id = service.id
     monkeypatch.setattr("app.db.database.SessionLocal", factory)

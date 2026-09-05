@@ -5,8 +5,6 @@ from collections.abc import Iterable
 from app.services.chat.agent import ChatCoreAgent
 from app.services.function.chat_agent import FunctionChatAgent
 
-from .sql_analysis import SqlAnalysisAgent
-
 _extra_agents: list[ChatCoreAgent] = []
 
 
@@ -19,7 +17,7 @@ class SceneAgentRegistry:
         if agents is None:
             from app.services.skill.skill_builder_agent import SkillBuilderAgent
 
-            agents = [FunctionChatAgent(), SqlAnalysisAgent(), SkillBuilderAgent(), *_extra_agents]
+            agents = [FunctionChatAgent(), SkillBuilderAgent(), *_extra_agents]
         resolved_agents = list(agents)
         self._agent_map = {agent.key: agent for agent in resolved_agents if agent.key}
 

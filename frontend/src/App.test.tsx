@@ -4,6 +4,13 @@ import { Outlet } from "react-router-dom"
 
 import App from "./App"
 
+vi.mock("@/lib/api", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/api")>()),
+  onboardingApi: {
+    getStatus: vi.fn().mockResolvedValue({ completed: true }),
+  },
+}))
+
 vi.mock("@/layouts/AppLayout", () => ({
   AppLayout: () => (
     <div>
@@ -21,7 +28,6 @@ vi.mock("@/pages/FunctionListPage", () => ({ FunctionListPage: () => <div>FUNCTI
 vi.mock("@/pages/FunctionBuildPage", () => ({ FunctionBuildPage: () => <div>FUNCTION_BUILD_PAGE</div> }))
 vi.mock("@/pages/SchedulerConsolePage", () => ({ SchedulerConsolePage: () => <div>SCHEDULER_CONSOLE_PAGE</div> }))
 vi.mock("@/pages/ChannelConsolePage", () => ({ ChannelConsolePage: () => <div>CHANNEL_CONSOLE_PAGE</div> }))
-vi.mock("@/pages/SqlAnalysisPage", () => ({ SqlAnalysisPage: () => <div>SQL_ANALYSIS_PAGE</div> }))
 
 describe("App routes", () => {
   it("redirects root to /chat", async () => {
@@ -60,9 +66,4 @@ describe("App routes", () => {
     expect(await screen.findByText("CHANNEL_CONSOLE_PAGE")).toBeInTheDocument()
   })
 
-  it("keeps sql analysis route available", async () => {
-    window.history.pushState({}, "", "/sql-analysis")
-    render(<App />)
-    expect(await screen.findByText("SQL_ANALYSIS_PAGE")).toBeInTheDocument()
-  })
 })
