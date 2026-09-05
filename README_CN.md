@@ -118,6 +118,18 @@ npm run dev        # Vite 开发服务 :5173
 make docker-build  # 构建 praxis:latest
 ```
 
+### 首次体验监控分析
+
+独立的演示 Compose 可通过一条命令启动 Praxis、MySQL、MySQL Exporter、
+Prometheus 及自动初始化程序：
+
+```bash
+./deployments/demo/start.sh
+```
+
+它与默认部署相互独立。预置数据源、Prometheus Service、可下载知识包及 Chat
+体验场景参见[演示指南](deployments/demo/README.md)。
+
 ### 文档
 
 ```bash

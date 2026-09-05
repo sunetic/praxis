@@ -118,6 +118,19 @@ npm run dev        # Vite dev server at :5173
 make docker-build  # builds praxis:latest
 ```
 
+### First-run observability demo
+
+The standalone demo Compose project starts Praxis, MySQL, MySQL Exporter,
+Prometheus, and an automatic initializer with one command:
+
+```bash
+./deployments/demo/start.sh
+```
+
+It is separate from the default deployment. See the
+[demo guide](deployments/demo/README.md) for the preconfigured datasource,
+Prometheus Service, downloadable knowledge pack, and Chat scenario.
+
 ### Documentation
 
 ```bash

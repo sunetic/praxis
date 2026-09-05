@@ -2645,7 +2645,7 @@ def test_load_action_resume_context_restores_terminal_result_and_task_state(
             )
         )
         task_state = {
-            "task_run_id": "task-resume-terminal-result",
+            "task_run_id": "run-resume-terminal-result",
             "status": "awaiting_confirmation",
             "contract": {
                 "objective": "Complete the database change and verify the outcome.",

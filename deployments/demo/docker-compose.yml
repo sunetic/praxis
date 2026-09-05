@@ -1,0 +1,111 @@
+name: ${PRAXIS_DEMO_PROJECT:-praxis-demo}
+
+services:
+  praxis-demo:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    image: praxis-demo:local
+    ports:
+      - "127.0.0.1:${PRAXIS_DEMO_PORT:-8000}:8000"
+    volumes:
+      - praxis_demo_data:/app/data
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)"
+      interval: 5s
+      timeout: 5s
+      retries: 30
+    restart: unless-stopped
+
+  mysql-demo:
+    image: mysql:8.4.11
+    command: ["--max-connections=24", "--performance-schema=ON"]
+    environment:
+      MYSQL_ROOT_PASSWORD: ${DEMO_MYSQL_ROOT_PASSWORD:?Run deployments/demo/start.sh}
+      MYSQL_DATABASE: app
+      MYSQL_USER: app
+      MYSQL_PASSWORD: ${DEMO_MYSQL_APP_PASSWORD:?Run deployments/demo/start.sh}
+      DEMO_EXPORTER_PASSWORD: ${DEMO_EXPORTER_PASSWORD:?Run deployments/demo/start.sh}
+    ports:
+      - "127.0.0.1:${DEMO_MYSQL_PORT:-3308}:3306"
+    volumes:
+      - mysql_demo_data:/var/lib/mysql
+      - ./mysql-init.sh:/docker-entrypoint-initdb.d/10-demo.sh:ro
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p$${MYSQL_ROOT_PASSWORD} --silent"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+    restart: unless-stopped
+
+  mysql-exporter-demo:
+    image: prom/mysqld-exporter:v0.19.0
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        umask 077
+        printf '[client]\nuser=exporter\npassword=%s\nhost=mysql-demo\nport=3306\n' \
+          "$${DEMO_EXPORTER_PASSWORD}" > /tmp/.my.cnf
+        exec /bin/mysqld_exporter --config.my-cnf=/tmp/.my.cnf
+    environment:
+      DEMO_EXPORTER_PASSWORD: ${DEMO_EXPORTER_PASSWORD:?Run deployments/demo/start.sh}
+    ports:
+      - "127.0.0.1:${DEMO_EXPORTER_PORT:-9104}:9104"
+    depends_on:
+      mysql-demo:
+        condition: service_healthy
+    restart: unless-stopped
+
+  prometheus-demo:
+    image: prom/prometheus:v3.13.2
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=2h
+    ports:
+      - "127.0.0.1:${DEMO_PROMETHEUS_PORT:-9090}:9090"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./alerts.yml:/etc/prometheus/alerts.yml:ro
+      - prometheus_demo_data:/prometheus
+    depends_on:
+      - mysql-exporter-demo
+    restart: unless-stopped
+
+  mysql-load-demo:
+    image: mysql:8.4.11
+    environment:
+      MYSQL_PWD: ${DEMO_MYSQL_APP_PASSWORD:?Run deployments/demo/start.sh}
+    command: ["/bin/bash", "/demo/connection-pressure.sh"]
+    volumes:
+      - ./connection-pressure.sh:/demo/connection-pressure.sh:ro
+    depends_on:
+      mysql-demo:
+        condition: service_healthy
+    restart: unless-stopped
+
+  demo-init:
+    image: python:3.13-alpine
+    command: ["python", "/demo/init.py"]
+    environment:
+      PRAXIS_API_URL: http://praxis-demo:8000/api/v1
+      DEMO_MYSQL_APP_PASSWORD: ${DEMO_MYSQL_APP_PASSWORD:?Run deployments/demo/start.sh}
+    volumes:
+      - ./init.py:/demo/init.py:ro
+    depends_on:
+      praxis-demo:
+        condition: service_healthy
+      mysql-demo:
+        condition: service_healthy
+      prometheus-demo:
+        condition: service_started
+    restart: "no"
+
+volumes:
+  praxis_demo_data:
+  mysql_demo_data:
+  prometheus_demo_data:
