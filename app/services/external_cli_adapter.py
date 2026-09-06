@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import os
 import re
 import subprocess
 import threading
@@ -11,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from app.core.logging import fmt_kv, get_logger
+from app.core.shell import resolve_login_shell
 from app.services.platform.coding_engine import (
     CodingEngineApplyResult,
     CodingEngineEdit,
@@ -21,7 +21,6 @@ from app.services.platform.coding_engine import (
 logger = get_logger("services.external_cli_adapter")
 
 _DEFAULT_TIMEOUT_SECONDS = 300
-_LOGIN_SHELL = os.environ.get("SHELL", "/bin/zsh")
 _ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]")
 _SPINNER_PREFIX_RE = re.compile(r"^(?:[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏*●○◦•·▪▸▶→➜✓✔✗✘-]+\s*)+")
 _TIMESTAMP_PREFIX_RE = re.compile(r"^(?:\[\d{2}:\d{2}:\d{2}\]\s*|\d{2}:\d{2}:\d{2}\s+)")
@@ -253,7 +252,7 @@ class ExternalCliAdapter:
     ) -> tuple[str, str, int]:
         """Run command via Popen, streaming stdout lines as events."""
         process = subprocess.Popen(
-            [_LOGIN_SHELL, "-lic", command],
+            [resolve_login_shell(), "-lic", command],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,

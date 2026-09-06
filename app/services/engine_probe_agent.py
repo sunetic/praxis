@@ -1,20 +1,17 @@
 from __future__ import annotations
 
-import os
 import subprocess
 from dataclasses import dataclass, field
 from typing import Any
 
 from app.core.logging import fmt_kv, get_logger
+from app.core.shell import resolve_login_shell
 from app.services.llm import LLMClient, get_llm_client
 
 logger = get_logger("services.engine_probe_agent")
 
 _HELP_TIMEOUT_SECONDS = 10
 _TEST_TIMEOUT_SECONDS = 60
-
-# Use the user's login shell so CLI tools see the same env as the user's terminal.
-_LOGIN_SHELL = os.environ.get("SHELL", "/bin/zsh")
 
 _SYSTEM_PROMPT = """\
 You are an expert at CLI tools. Given the --help output of a CLI tool, identify the flags \
@@ -54,7 +51,7 @@ def _run_in_login_shell(
     terminal — regardless of how the server process was started.
     """
     return subprocess.run(
-        [_LOGIN_SHELL, "-lic", command],
+        [resolve_login_shell(), "-lic", command],
         capture_output=True,
         text=True,
         timeout=timeout,
