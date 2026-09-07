@@ -351,11 +351,13 @@ const AssistantActionBar: FC = () => {
           </AuiIf>
         </TooltipIconButton>
       </ActionBarPrimitive.Copy>
-      <ActionBarPrimitive.Reload asChild>
-        <TooltipIconButton tooltip={t("thread.regenerate")}>
-          <RefreshCwIcon />
-        </TooltipIconButton>
-      </ActionBarPrimitive.Reload>
+      <AuiIf condition={(s) => s.thread.capabilities.reload}>
+        <ActionBarPrimitive.Reload asChild>
+          <TooltipIconButton tooltip={t("thread.regenerate")}>
+            <RefreshCwIcon />
+          </TooltipIconButton>
+        </ActionBarPrimitive.Reload>
+      </AuiIf>
       <ActionBarMorePrimitive.Root>
         <ActionBarMorePrimitive.Trigger asChild>
           <TooltipIconButton

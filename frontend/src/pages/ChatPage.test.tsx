@@ -807,6 +807,23 @@ describe("ChatPage workspace boundary and handoff", () => {
     expect(screen.queryByRole("button", { name: "保存为新页面" })).not.toBeInTheDocument()
   })
 
+  it("hides regenerate when the external chat runtime cannot reload messages", async () => {
+    messagesApi.list.mockResolvedValueOnce([
+      {
+        id: 11,
+        conversation_id: 1,
+        role: "assistant",
+        content: "运行失败，请重试。",
+        created_at: "2026-03-14T00:00:02Z",
+      },
+    ])
+
+    render(<MemoryRouter initialEntries={["/chat"]}><ChatPage /></MemoryRouter>)
+
+    expect(await screen.findByText("运行失败，请重试。")).toBeInTheDocument()
+    expect(screen.queryByRole("button", { name: /regenerate/i })).not.toBeInTheDocument()
+  })
+
   it("saves agent in chat and then navigates to agent editor", async () => {
     messagesApi.list.mockResolvedValueOnce([
       {
