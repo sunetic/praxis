@@ -125,9 +125,7 @@ def resolve_preferred_execution_datasource(
         .all()
     )
     user_candidates = [
-        item
-        for item in siblings
-        if datasource_access_level(item) == USER_ACCESS_LEVEL
+        item for item in siblings if datasource_access_level(item) == USER_ACCESS_LEVEL
     ]
     if not user_candidates:
         current_access_level = datasource_access_level(source)
@@ -212,9 +210,7 @@ def _active_same_engine_siblings(
         .order_by(models.DataSource.id.asc())
         .all()
     )
-    return [
-        item for item in rows if normalize_database_family(item.db_type) == current_family
-    ]
+    return [item for item in rows if normalize_database_family(item.db_type) == current_family]
 
 
 def list_available_access_levels(
@@ -304,9 +300,7 @@ def resolve_datasource_by_access_level(
         )
 
     user_candidates = [
-        item
-        for item in siblings
-        if datasource_access_level(item) == USER_ACCESS_LEVEL
+        item for item in siblings if datasource_access_level(item) == USER_ACCESS_LEVEL
     ]
     if not user_candidates:
         raise DataSourceRoutingError(
@@ -319,9 +313,7 @@ def resolve_datasource_by_access_level(
 
     if current_ob_tenant_id := _ob_tenant_id(current):
         exact_match = [
-            item
-            for item in user_candidates
-            if _ob_tenant_id(item) == current_ob_tenant_id
+            item for item in user_candidates if _ob_tenant_id(item) == current_ob_tenant_id
         ]
         if exact_match:
             selected = sorted(exact_match, key=lambda item: item.id)[0]
@@ -334,9 +326,7 @@ def resolve_datasource_by_access_level(
 
     current_database = _normalize_match_text(current.database)
     database_matches = [
-        item
-        for item in user_candidates
-        if _normalize_match_text(item.database) == current_database
+        item for item in user_candidates if _normalize_match_text(item.database) == current_database
     ]
     if len(database_matches) == 1:
         selected = database_matches[0]

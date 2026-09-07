@@ -13,7 +13,7 @@ class _LegacyCompletionLLM:
     async def chat(self, messages, tools=None, stream=True, **_kwargs):
         _ = stream
         response = await self._chat_completion(messages, tools or [])
-        message = ((response.get("choices") or [{}])[0].get("message") or {})
+        message = (response.get("choices") or [{}])[0].get("message") or {}
         tool_calls = message.get("tool_calls") or []
         content = str(message.get("content") or "")
         if not tool_calls and content:
@@ -37,11 +37,7 @@ class _LegacyCompletionLLM:
                 ]
                 content = ""
         if content:
-            yield {
-                "choices": [
-                    {"delta": {"content": content}, "finish_reason": "stop"}
-                ]
-            }
+            yield {"choices": [{"delta": {"content": content}, "finish_reason": "stop"}]}
             return
         for index, call in enumerate(tool_calls):
             function = call.get("function") or {}

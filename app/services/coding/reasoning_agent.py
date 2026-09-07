@@ -72,9 +72,7 @@ class _CodingToolExecutor:
 
     def _complete(self, arguments: dict[str, Any]) -> dict[str, Any]:
         if self._agent._requires_page_preview_sync(self._allowed, self._state):
-            return self._completion_error(
-                "main.tsx changed without a matching preview.html update"
-            )
+            return self._completion_error("main.tsx changed without a matching preview.html update")
         if self._state.probe_required:
             detail = self._state.last_probe_error or "function_runtime_probe has not passed"
             hint = self._agent._build_probe_repair_hint(detail)
@@ -214,8 +212,7 @@ class CodingReasoningAgent:
         return CodingEngineApplyResult(
             changed_files=sorted(state.changed_files),
             diff_summary=str(
-                final.get("diff_summary")
-                or f"Applied {len(state.changed_files)} file change(s)"
+                final.get("diff_summary") or f"Applied {len(state.changed_files)} file change(s)"
             ),
             tests_suggested=self._normalize_string_list(final.get("tests_suggested")),
             risk_notes=self._normalize_string_list(final.get("risk_notes")),
@@ -588,9 +585,7 @@ class CodingReasoningAgent:
     def _requires_function_runtime_probe(self, allowed: set[str]) -> bool:
         return "main.py" in allowed
 
-    def _requires_page_preview_sync(
-        self, allowed: set[str], state: _CodingWorkspaceState
-    ) -> bool:
+    def _requires_page_preview_sync(self, allowed: set[str], state: _CodingWorkspaceState) -> bool:
         if not {"main.tsx", "preview.html"}.issubset(allowed):
             return False
         if "main.tsx" not in state.changed_files:

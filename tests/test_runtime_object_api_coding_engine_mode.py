@@ -244,9 +244,7 @@ class _FailingFunctionWorkspaceStore(_FakeFunctionWorkspaceStore):
         self, *, function: models.Function, goal: str, datasource_schema=None, datasource_id=None
     ):
         _ = function, goal, datasource_schema, datasource_id
-        raise ValueError(
-            "coding reasoning agent ended without a successful completion tool call"
-        )
+        raise ValueError("coding reasoning agent ended without a successful completion tool call")
 
 
 class _NoopFunctionWorkspaceStore(_FakeFunctionWorkspaceStore):

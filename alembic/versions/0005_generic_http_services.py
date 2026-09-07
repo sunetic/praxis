@@ -24,9 +24,7 @@ def upgrade() -> None:
         sa.Column("service_id", sa.Integer(), nullable=False),
         sa.Column("knowledge_base_id", sa.Integer(), nullable=False),
         sa.ForeignKeyConstraint(["service_id"], ["services.id"], ondelete="CASCADE"),
-        sa.ForeignKeyConstraint(
-            ["knowledge_base_id"], ["knowledge_bases.id"], ondelete="CASCADE"
-        ),
+        sa.ForeignKeyConstraint(["knowledge_base_id"], ["knowledge_bases.id"], ondelete="CASCADE"),
         sa.PrimaryKeyConstraint("service_id", "knowledge_base_id"),
     )
 

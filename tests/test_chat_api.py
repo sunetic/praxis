@@ -1754,9 +1754,7 @@ async def test_chat_stream_persists_assistant_segments_around_tool_events(
             {
                 "type": "assistant",
                 "phase": "responding",
-                "data": {
-                    "text": "由于当前数据源未关联外部监控 Service，"
-                },
+                "data": {"text": "由于当前数据源未关联外部监控 Service，"},
                 "meta": {},
             },
             {

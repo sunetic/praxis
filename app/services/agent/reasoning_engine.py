@@ -670,9 +670,9 @@ class ReasoningEngine:
                     },
                 )
 
-                if (
-                    require_explicit_terminal_signal or cfg.terminal_result_required
-                ) and not plan["tool_calls"]:
+                if (require_explicit_terminal_signal or cfg.terminal_result_required) and not plan[
+                    "tool_calls"
+                ]:
                     terminal_signal_misses += 1
                     candidate_text = str(plan.get("assistant_text") or "").strip()
                     if candidate_text:
@@ -735,14 +735,10 @@ class ReasoningEngine:
                         plan["tool_calls"] = domain_calls
                     elif terminal_calls:
                         terminal = terminal_calls[0]
-                        terminal_arguments = (
-                            terminal["arguments"] if terminal.get("ok") else {}
-                        )
+                        terminal_arguments = terminal["arguments"] if terminal.get("ok") else {}
                         outcome = str(terminal_arguments.get("outcome") or "").strip()
                         reason = str(terminal_arguments.get("reason") or "").strip()
-                        final_response = str(
-                            terminal_arguments.get("final_response") or ""
-                        ).strip()
+                        final_response = str(terminal_arguments.get("final_response") or "").strip()
                         if (
                             outcome not in {"completed", "blocked"}
                             or not reason

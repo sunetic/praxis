@@ -222,8 +222,7 @@ async def test_successful_domain_terminal_result_finishes_shared_loop() -> None:
     assert llm.call_count == 1
     assert any(
         event.get("type") == "assistant"
-        and (event.get("data") or {}).get("text")
-        == "Finished through the shared engine."
+        and (event.get("data") or {}).get("text") == "Finished through the shared engine."
         for event in events
     )
     assert events[-1]["type"] == "done"
@@ -1193,9 +1192,7 @@ async def test_confirmed_action_failure_resumes_agent_with_evidence_and_tools() 
         resumed_execution=resumed_execution,
     )
 
-    first_resume_context = "\n".join(
-        str(message.get("content") or "") for message in llm.calls[0]
-    )
+    first_resume_context = "\n".join(str(message.get("content") or "") for message in llm.calls[0])
     final_state = [event["data"] for event in events if event["type"] == "task_state"][-1]
     assert "The requested resource already exists." in first_resume_context
     assert "Do NOT repeat the exact same failed tool call" in first_resume_context
@@ -1335,9 +1332,7 @@ async def test_resumed_action_does_not_accept_narrated_future_work_as_completion
     )
 
     visible_text = "".join(
-        event["data"].get("text", "")
-        for event in events
-        if event["type"] == "assistant"
+        event["data"].get("text", "") for event in events if event["type"] == "assistant"
     )
     assert executed_sql == ["SELECT COUNT(*) AS remaining FROM sample"]
     assert llm.call_count == 3

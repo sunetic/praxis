@@ -240,9 +240,7 @@ class ReflectionPlanner:
         )
         content_parts: list[str] = []
         async for event in engine.run(
-            messages=[
-                {"role": "user", "content": json.dumps(payload, ensure_ascii=False)}
-            ],
+            messages=[{"role": "user", "content": json.dumps(payload, ensure_ascii=False)}],
             tools=[],
             system_prompt=system_prompt,
         ):

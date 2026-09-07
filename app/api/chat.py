@@ -391,9 +391,8 @@ async def chat_stream(
             ),
             scene_agent_payload=scene_agent_payload,
         )
-    latest_user_input = (
-        incoming_content
-        or (resume_context.user_request if resume_context is not None else "")
+    latest_user_input = incoming_content or (
+        resume_context.user_request if resume_context is not None else ""
     )
     skill_selection = await _select_dynamic_skills(
         conversation=conversation,

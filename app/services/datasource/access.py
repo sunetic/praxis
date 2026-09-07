@@ -36,7 +36,9 @@ def normalize_access_level(value: str | None) -> str:
         return _ACCESS_LEVEL_ALIASES[normalized]
     except KeyError as exc:
         supported = ", ".join(SUPPORTED_ACCESS_LEVELS)
-        raise ValueError(f"Unsupported datasource access level '{value}'. Use: {supported}.") from exc
+        raise ValueError(
+            f"Unsupported datasource access level '{value}'. Use: {supported}."
+        ) from exc
 
 
 def datasource_access_level(datasource: Any) -> str:

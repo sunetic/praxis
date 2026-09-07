@@ -31,7 +31,9 @@ def service_api(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
             db.close()
 
     app.dependency_overrides[get_db] = override_db
-    call = AsyncMock(return_value={"http_status": 200, "content_type": "text/plain", "data": "ready"})
+    call = AsyncMock(
+        return_value={"http_status": 200, "content_type": "text/plain", "data": "ready"}
+    )
     monkeypatch.setattr(services_api, "call_http_service", call)
     try:
         yield TestClient(app), factory, engine, call
@@ -128,13 +130,9 @@ def test_service_connection_test_uses_configured_health_path(service_api) -> Non
         },
     )
     assert edited.status_code == 200
-    assert call.await_args.kwargs["raw_config"]["base_url"] == (
-        "http://prometheus-preview:9090"
-    )
+    assert call.await_args.kwargs["raw_config"]["base_url"] == ("http://prometheus-preview:9090")
     assert call.await_args.kwargs["path"] == "/preview-ready"
-    assert call.await_args.kwargs["raw_secrets"]["bearer_token"] == (
-        "replacement-token"
-    )
+    assert call.await_args.kwargs["raw_secrets"]["bearer_token"] == ("replacement-token")
 
 
 def test_service_rejects_invalid_url_and_missing_knowledge_base(service_api) -> None:

@@ -171,7 +171,13 @@ async def test_object_crud_datasource_persists_attributes(session_factory):
         object_type="datasource",
         action="update",
         object_id=datasource_id,
-        payload={"attributes": {"external_cluster_id": 1, "external_tenant_id": 3, "tenant_mode": "MYSQL"}},
+        payload={
+            "attributes": {
+                "external_cluster_id": 1,
+                "external_tenant_id": 3,
+                "tenant_mode": "MYSQL",
+            }
+        },
         actor="test-user",
     )
     assert updated.success is True

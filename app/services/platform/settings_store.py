@@ -49,8 +49,7 @@ def load_settings(db: Session, keys: Iterable[str] | None = None) -> dict[str, A
             return {}
         query = query.filter(PlatformSetting.key.in_(selected_keys))
     return {
-        row.key: _normalize_value(row.key, _decode_value(row.key, row.value))
-        for row in query.all()
+        row.key: _normalize_value(row.key, _decode_value(row.key, row.value)) for row in query.all()
     }
 
 

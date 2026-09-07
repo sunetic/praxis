@@ -57,13 +57,8 @@ def validate_request_path(path: str) -> str:
 
 
 def _build_headers(config: dict[str, Any], secrets: dict[str, Any]) -> dict[str, str]:
-    headers = {
-        str(key): str(value)
-        for key, value in (config.get("default_headers") or {}).items()
-    }
-    headers.update(
-        {str(key): str(value) for key, value in (secrets.get("headers") or {}).items()}
-    )
+    headers = {str(key): str(value) for key, value in (config.get("default_headers") or {}).items()}
+    headers.update({str(key): str(value) for key, value in (secrets.get("headers") or {}).items()})
     auth_type = str(config.get("auth_type") or "none")
     if auth_type == "bearer" and secrets.get("bearer_token"):
         headers["Authorization"] = f"Bearer {secrets['bearer_token']}"
@@ -146,7 +141,9 @@ async def call_http_service(
     create_client = client_factory or httpx.AsyncClient
     logger.info(
         "service_http_call_start %s",
-        fmt_kv(service_id=service_id, service_type=service_type, method=method_upper, path=request_path),
+        fmt_kv(
+            service_id=service_id, service_type=service_type, method=method_upper, path=request_path
+        ),
     )
     try:
         async with create_client(

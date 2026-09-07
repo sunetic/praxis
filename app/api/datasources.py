@@ -48,9 +48,7 @@ def _ensure_cluster_access_invariants(
 
     requested_family = normalize_database_family(db_type)
     incompatible = [
-        item
-        for item in siblings
-        if normalize_database_family(item.db_type) != requested_family
+        item for item in siblings if normalize_database_family(item.db_type) != requested_family
     ]
     if incompatible:
         raise HTTPException(

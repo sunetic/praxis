@@ -113,7 +113,9 @@ def _collect_service_capabilities(services: list[Any]) -> list[CapabilitySummary
     summaries: list[CapabilitySummary] = []
     for service in services:
         knowledge_bases = list(getattr(service, "knowledge_bases", None) or [])
-        kb_ids = [str(getattr(item, "id", "")) for item in knowledge_bases if getattr(item, "id", None)]
+        kb_ids = [
+            str(getattr(item, "id", "")) for item in knowledge_bases if getattr(item, "id", None)
+        ]
         hints = [
             f"service_id={getattr(service, 'id', 'unknown')}",
             f"service_type={getattr(service, 'service_type', 'unknown')}",

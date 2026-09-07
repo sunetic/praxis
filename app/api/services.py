@@ -43,11 +43,7 @@ def _resolve_knowledge_bases(db: Session, ids: list[int]) -> list[models.Knowled
     unique_ids = list(dict.fromkeys(ids))
     if not unique_ids:
         return []
-    records = (
-        db.query(models.KnowledgeBase)
-        .filter(models.KnowledgeBase.id.in_(unique_ids))
-        .all()
-    )
+    records = db.query(models.KnowledgeBase).filter(models.KnowledgeBase.id.in_(unique_ids)).all()
     found = {item.id for item in records}
     missing = [item for item in unique_ids if item not in found]
     if missing:
@@ -131,9 +127,7 @@ def update_service(
     elif payload.config is not None and payload.config.auth_type == "none":
         db_service.secrets = None
     if "knowledge_base_ids" in payload.model_fields_set:
-        db_service.knowledge_bases = _resolve_knowledge_bases(
-            db, payload.knowledge_base_ids or []
-        )
+        db_service.knowledge_bases = _resolve_knowledge_bases(db, payload.knowledge_base_ids or [])
 
     db.commit()
     db.refresh(db_service)

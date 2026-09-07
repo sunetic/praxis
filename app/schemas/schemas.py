@@ -178,8 +178,7 @@ class ServiceHttpConfig(BaseModel):
         exposed = sorted(name for name in normalized if name.lower() in sensitive_names)
         if exposed:
             raise ValueError(
-                "Sensitive headers must be stored in secrets.headers: "
-                + ", ".join(exposed)
+                "Sensitive headers must be stored in secrets.headers: " + ", ".join(exposed)
             )
         return normalized
 
@@ -197,9 +196,7 @@ class ServiceSecretConfig(BaseModel):
         return _validate_service_headers(value)
 
     def has_values(self) -> bool:
-        return any(
-            [self.username, self.password, self.bearer_token, self.api_key, self.headers]
-        )
+        return any([self.username, self.password, self.bearer_token, self.api_key, self.headers])
 
 
 def _validate_service_headers(value: dict[str, str]) -> dict[str, str]:
@@ -907,6 +904,7 @@ class ChatStreamRequest(BaseModel):
     def _normalize_resume_action_token(cls, value: str | None) -> str | None:
         normalized = str(value or "").strip()
         return normalized or None
+
 
 class ChatCompleteRequest(BaseModel):
     content: str = ""
