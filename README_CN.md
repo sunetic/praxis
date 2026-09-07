@@ -124,11 +124,12 @@ make docker-build  # 构建 praxis:latest
 Prometheus 及自动初始化程序：
 
 ```bash
-./deployments/demo/start.sh
+docker compose -f deployments/demo/docker-compose.yml up -d --build
 ```
 
-它与默认部署相互独立。预置数据源、Prometheus Service、可下载知识包及 Chat
-体验场景参见[演示指南](deployments/demo/README.md)。
+它使用仅限本机演示的固定测试密码，不可作为生产部署模板；初始化容器会随
+Compose 自动运行。预置数据源、Prometheus Service、可下载知识包及 Chat 体验
+场景参见[演示指南](deployments/demo/README.md)。
 
 ### 文档
 

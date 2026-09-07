@@ -12,6 +12,7 @@ from urllib.request import ProxyHandler, Request, build_opener
 API_URL = os.getenv("PRAXIS_API_URL", "http://praxis-demo:8000/api/v1").rstrip("/")
 MYSQL_PASSWORD = os.environ["DEMO_MYSQL_APP_PASSWORD"]
 CLUSTER_KEY = "mysql-prometheus-demo"
+PROMETHEUS_PACK_ID = "prometheus-http-api"
 OPENER = build_opener(ProxyHandler({}))
 
 
@@ -84,7 +85,7 @@ def ensure_datasource() -> dict[str, Any]:
     )
 
 
-def ensure_service() -> dict[str, Any]:
+def ensure_service(knowledge_base_id: int) -> dict[str, Any]:
     """Create the cluster-bound Prometheus Service once."""
     services = api_request("GET", "/services")
     existing = next(
@@ -97,6 +98,14 @@ def ensure_service() -> dict[str, Any]:
         None,
     )
     if existing:
+        knowledge_base_ids = list(existing.get("knowledge_base_ids") or [])
+        if knowledge_base_id not in knowledge_base_ids:
+            knowledge_base_ids.append(knowledge_base_id)
+            return api_request(
+                "PATCH",
+                f"/services/{existing['id']}",
+                {"knowledge_base_ids": knowledge_base_ids},
+            )
         return existing
     return api_request(
         "POST",
@@ -116,7 +125,7 @@ def ensure_service() -> dict[str, Any]:
                 "max_response_bytes": 262144,
             },
             "resource_ref": f"cluster:{CLUSTER_KEY}",
-            "knowledge_base_ids": [],
+            "knowledge_base_ids": [knowledge_base_id],
         },
     )
 
@@ -135,32 +144,47 @@ def wait_for_connections(datasource_id: int, service_id: int, timeout_seconds: i
     raise DemoInitError(f"Demo connections did not become ready: {last_results!r}")
 
 
-def verify_knowledge_pack() -> dict[str, Any]:
-    """Confirm that the bundled Prometheus pack is visible for download."""
+def ensure_knowledge_pack(timeout_seconds: int = 120) -> dict[str, Any]:
+    """Install the bundled Prometheus pack and return its knowledge-base ID."""
     packs = api_request("GET", "/knowledge-packs")
-    pack = next((item for item in packs if item.get("id") == "prometheus-http-api"), None)
+    pack = next((item for item in packs if item.get("id") == PROMETHEUS_PACK_ID), None)
     if not pack:
         raise DemoInitError("Bundled Prometheus knowledge pack is missing")
-    if pack.get("status") not in {"available", "installed"}:
-        raise DemoInitError(f"Unexpected Prometheus pack status: {pack.get('status')!r}")
-    return pack
+    if pack.get("status") == "installed" and pack.get("kb_id"):
+        return pack
+    if pack.get("status") == "available":
+        api_request("POST", f"/knowledge-packs/{PROMETHEUS_PACK_ID}/install", {})
+
+    deadline = time.monotonic() + timeout_seconds
+    while time.monotonic() < deadline:
+        status = api_request("GET", f"/knowledge-packs/{PROMETHEUS_PACK_ID}/status")
+        if status.get("status") == "installed" and status.get("kb_id"):
+            return status
+        if status.get("status") == "error":
+            raise DemoInitError(
+                "Prometheus knowledge pack installation failed: "
+                f"{status.get('error_message') or 'unknown error'}"
+            )
+        time.sleep(0.5)
+    raise DemoInitError("Prometheus knowledge pack installation timed out")
 
 
 def main() -> None:
     """Initialize and verify all first-run demo objects."""
     wait_for_praxis()
     datasource = ensure_datasource()
-    service = ensure_service()
+    pack = ensure_knowledge_pack()
+    service = ensure_service(int(pack["kb_id"]))
     wait_for_connections(int(datasource["id"]), int(service["id"]))
-    pack = verify_knowledge_pack()
     print(
         json.dumps(
             {
                 "datasource": {"id": datasource["id"], "name": datasource["name"]},
                 "service": {"id": service["id"], "name": service["name"]},
                 "knowledge_pack": {
-                    "id": pack["id"],
+                    "id": PROMETHEUS_PACK_ID,
                     "status": pack["status"],
+                    "kb_id": pack["kb_id"],
                 },
             },
             indent=2,

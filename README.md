@@ -124,10 +124,11 @@ The standalone demo Compose project starts Praxis, MySQL, MySQL Exporter,
 Prometheus, and an automatic initializer with one command:
 
 ```bash
-./deployments/demo/start.sh
+docker compose -f deployments/demo/docker-compose.yml up -d --build
 ```
 
-It is separate from the default deployment. See the
+It uses fixed local-only demo credentials and is not a production deployment
+template. The initializer runs automatically as part of Compose. See the
 [demo guide](deployments/demo/README.md) for the preconfigured datasource,
 Prometheus Service, downloadable knowledge pack, and Chat scenario.
 

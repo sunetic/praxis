@@ -25,11 +25,12 @@ services:
     image: mysql:8.4.11
     command: ["--max-connections=24", "--performance-schema=ON"]
     environment:
-      MYSQL_ROOT_PASSWORD: ${DEMO_MYSQL_ROOT_PASSWORD:?Run deployments/demo/start.sh}
+      # Demo-only credentials. Published ports are restricted to 127.0.0.1.
+      MYSQL_ROOT_PASSWORD: ${DEMO_MYSQL_ROOT_PASSWORD:-praxis-demo-root}
       MYSQL_DATABASE: app
       MYSQL_USER: app
-      MYSQL_PASSWORD: ${DEMO_MYSQL_APP_PASSWORD:?Run deployments/demo/start.sh}
-      DEMO_EXPORTER_PASSWORD: ${DEMO_EXPORTER_PASSWORD:?Run deployments/demo/start.sh}
+      MYSQL_PASSWORD: ${DEMO_MYSQL_APP_PASSWORD:-praxis-demo-app}
+      DEMO_EXPORTER_PASSWORD: ${DEMO_EXPORTER_PASSWORD:-praxis-demo-exporter}
     ports:
       - "127.0.0.1:${DEMO_MYSQL_PORT:-3308}:3306"
     volumes:
@@ -52,7 +53,7 @@ services:
           "$${DEMO_EXPORTER_PASSWORD}" > /tmp/.my.cnf
         exec /bin/mysqld_exporter --config.my-cnf=/tmp/.my.cnf
     environment:
-      DEMO_EXPORTER_PASSWORD: ${DEMO_EXPORTER_PASSWORD:?Run deployments/demo/start.sh}
+      DEMO_EXPORTER_PASSWORD: ${DEMO_EXPORTER_PASSWORD:-praxis-demo-exporter}
     ports:
       - "127.0.0.1:${DEMO_EXPORTER_PORT:-9104}:9104"
     depends_on:
@@ -79,7 +80,7 @@ services:
   mysql-load-demo:
     image: mysql:8.4.11
     environment:
-      MYSQL_PWD: ${DEMO_MYSQL_APP_PASSWORD:?Run deployments/demo/start.sh}
+      MYSQL_PWD: ${DEMO_MYSQL_APP_PASSWORD:-praxis-demo-app}
     command: ["/bin/bash", "/demo/connection-pressure.sh"]
     volumes:
       - ./connection-pressure.sh:/demo/connection-pressure.sh:ro
@@ -93,7 +94,7 @@ services:
     command: ["python", "/demo/init.py"]
     environment:
       PRAXIS_API_URL: http://praxis-demo:8000/api/v1
-      DEMO_MYSQL_APP_PASSWORD: ${DEMO_MYSQL_APP_PASSWORD:?Run deployments/demo/start.sh}
+      DEMO_MYSQL_APP_PASSWORD: ${DEMO_MYSQL_APP_PASSWORD:-praxis-demo-app}
     volumes:
       - ./init.py:/demo/init.py:ro
     depends_on:

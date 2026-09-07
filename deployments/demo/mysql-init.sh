@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-if [[ ! "${DEMO_EXPORTER_PASSWORD}" =~ ^[a-f0-9]{48}$ ]]; then
-  echo "DEMO_EXPORTER_PASSWORD must be a generated 48-character hexadecimal value" >&2
+if [[ ! "${DEMO_EXPORTER_PASSWORD}" =~ ^[A-Za-z0-9_-]{8,64}$ ]]; then
+  echo "DEMO_EXPORTER_PASSWORD must contain 8-64 letters, numbers, underscores, or hyphens" >&2
   exit 1
 fi
 
