@@ -161,4 +161,24 @@ describe("ServicesPage", () => {
     expect(screen.queryByText("cluster-service")).not.toBeInTheDocument()
     expect(screen.queryByText("stale-datasource-service")).not.toBeInTheDocument()
   })
+
+  it("keeps the edit form scrollable inside a wide dialog", async () => {
+    const user = userEvent.setup()
+    render(<ServicesPage />)
+
+    await screen.findByText("cluster-service")
+    const clusterRow = screen.getByText("cluster-service").closest("tr")
+    expect(clusterRow).not.toBeNull()
+    await user.click(within(clusterRow as HTMLElement).getByRole("button", { name: "编辑服务" }))
+
+    const dialog = await screen.findByRole("dialog", { name: "编辑外部服务" })
+    expect(dialog).toHaveClass("h-[90vh]", "max-h-192", "sm:max-w-2xl")
+    expect(dialog.querySelector('[data-slot="scroll-area"]')).toHaveClass(
+      "h-0",
+      "min-h-0",
+      "flex-1",
+      "[&>[data-slot=scroll-area-viewport]]:absolute",
+      "[&>[data-slot=scroll-area-viewport]]:inset-0",
+    )
+  })
 })

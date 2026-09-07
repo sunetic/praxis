@@ -501,13 +501,13 @@ export function ServicesPage() {
     <TooltipProvider>
       <WorkbenchPage toolbar={toolbar} primary={primary} />
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-        <DialogContent className="flex max-h-[90vh] max-w-2xl flex-col overflow-hidden">
+        <DialogContent className="flex h-[90vh] max-h-192 flex-col overflow-hidden sm:max-w-2xl">
           <DialogHeader>
             <DialogTitle>{editingService ? "编辑外部服务" : "连接外部服务"}</DialogTitle>
             <DialogDescription>配置通用 HTTP API，并把服务关联到数据源及其文档。</DialogDescription>
           </DialogHeader>
 
-          <ScrollArea className="min-h-0 flex-1">
+          <ScrollArea className="h-0 min-h-0 flex-1 [&>[data-slot=scroll-area-viewport]]:absolute [&>[data-slot=scroll-area-viewport]]:inset-0">
             <div className="space-y-5 pr-4">
             <section className="grid gap-4 sm:grid-cols-2">
               <div>
