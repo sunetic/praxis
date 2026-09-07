@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react"
+import { useCallback, useEffect, useMemo, useState } from "react"
 import {
   BookOpen,
   ChevronDown,
@@ -249,6 +249,10 @@ export function ServicesPage() {
   }, [filtered, page])
 
   useEffect(() => setPage(1), [providerFilter, searchQuery])
+
+  const revealAdvancedContent = useCallback((node: HTMLDivElement | null) => {
+    node?.scrollIntoView({ block: "nearest" })
+  }, [])
 
   function openCreateDialog() {
     setEditingService(null)
@@ -616,12 +620,14 @@ export function ServicesPage() {
 
             <Collapsible open={advancedOpen} onOpenChange={setAdvancedOpen}>
               <CollapsibleTrigger asChild><Button variant="ghost" className="w-full justify-between">高级 Header 配置<ChevronDown className={`size-4 transition-transform ${advancedOpen ? "rotate-180" : ""}`} /></Button></CollapsibleTrigger>
-              <CollapsibleContent className="grid gap-4 pt-3 sm:grid-cols-2">
-                <div><label className="mb-1.5 block text-sm font-medium">默认 Header（JSON）</label><Textarea className="min-h-28 font-mono text-xs" value={form.defaultHeadersText} onChange={(event) => setForm({ ...form, defaultHeadersText: event.target.value })} /></div>
-                <div><label className="mb-1.5 block text-sm font-medium">加密 Header（JSON）</label><Textarea className="min-h-28 font-mono text-xs" value={form.secretHeadersText} onChange={(event) => setForm({ ...form, secretHeadersText: event.target.value })} placeholder={'{"X-Custom-Token":"..."}'} /></div>
-                <div className="flex items-center justify-between rounded-lg border border-border px-3 py-2 sm:col-span-2">
-                  <div><p className="text-sm font-medium">继承服务端环境代理</p><p className="text-xs text-muted-foreground">仅外部 API 需要 HTTP(S) 代理时开启；内网服务建议关闭。</p></div>
-                  <Switch checked={form.config.use_environment_proxy} onCheckedChange={(checked) => updateConfig("use_environment_proxy", checked)} />
+              <CollapsibleContent className="pt-3">
+                <div ref={revealAdvancedContent} className="grid gap-4 sm:grid-cols-2">
+                  <div><label htmlFor="service-default-headers" className="mb-1.5 block text-sm font-medium">默认 Header（JSON）</label><Textarea id="service-default-headers" className="min-h-28 font-mono text-xs" value={form.defaultHeadersText} onChange={(event) => setForm({ ...form, defaultHeadersText: event.target.value })} /></div>
+                  <div><label htmlFor="service-secret-headers" className="mb-1.5 block text-sm font-medium">加密 Header（JSON）</label><Textarea id="service-secret-headers" className="min-h-28 font-mono text-xs" value={form.secretHeadersText} onChange={(event) => setForm({ ...form, secretHeadersText: event.target.value })} placeholder={'{"X-Custom-Token":"..."}'} /></div>
+                  <div className="flex items-center justify-between rounded-lg border border-border px-3 py-2 sm:col-span-2">
+                    <div><p className="text-sm font-medium">继承服务端环境代理</p><p className="text-xs text-muted-foreground">仅外部 API 需要 HTTP(S) 代理时开启；内网服务建议关闭。</p></div>
+                    <Switch checked={form.config.use_environment_proxy} onCheckedChange={(checked) => updateConfig("use_environment_proxy", checked)} />
+                  </div>
                 </div>
               </CollapsibleContent>
             </Collapsible>

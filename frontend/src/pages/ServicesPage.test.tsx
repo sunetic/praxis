@@ -164,6 +164,8 @@ describe("ServicesPage", () => {
 
   it("keeps the edit form scrollable inside a wide dialog", async () => {
     const user = userEvent.setup()
+    const scrollIntoView = vi.fn()
+    Object.defineProperty(HTMLElement.prototype, "scrollIntoView", { configurable: true, value: scrollIntoView })
     render(<ServicesPage />)
 
     await screen.findByText("cluster-service")
@@ -180,5 +182,12 @@ describe("ServicesPage", () => {
       "[&>[data-slot=scroll-area-viewport]]:absolute",
       "[&>[data-slot=scroll-area-viewport]]:inset-0",
     )
+
+    await user.click(within(dialog).getByRole("button", { name: "高级 Header 配置" }))
+    const defaultHeaders = within(dialog).getByLabelText("默认 Header（JSON）")
+    await waitFor(() => expect(scrollIntoView).toHaveBeenCalledWith({ block: "nearest" }))
+    await user.clear(defaultHeaders)
+    await user.type(defaultHeaders, '"X-Test":"visible"')
+    expect(defaultHeaders).toHaveValue('"X-Test":"visible"')
   })
 })
