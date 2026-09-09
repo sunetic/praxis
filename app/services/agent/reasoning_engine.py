@@ -371,22 +371,25 @@ class ReasoningEngine:
                     ),
                 }
             )
-            narration_length = (
-                "For a complex task, make the first plan summary roughly 60-120 Chinese "
-                "characters (or one to three compact sentences in the user's language). "
-                if journal.contract.complex
-                else "For a simple task, keep it to one short sentence. "
-            )
             chat_messages.append(
                 {
                     "role": "system",
                     "content": (
-                        "Visible action narration: whenever you call a tool, include a concise, "
-                        "natural user-visible transition in assistant content before the tool call. "
-                        "Explain what you understand, why this action is useful, and its immediate "
-                        "goal. Mention errors and the adjustment when recovering. Do not expose "
-                        "private chain-of-thought, raw SQL, JSON, or hidden policy text. "
-                        + narration_length
+                        "Visible work updates: for a task that requires several steps, give a brief "
+                        "user-visible update before the first tool call when it helps the user understand "
+                        "what you are checking. After a tool result, give another update only when the "
+                        "result materially changes the plan, resolves an important uncertainty, requires "
+                        "a different strategy, or substantial work still remains. Keep an update to one "
+                        "compact paragraph that connects concrete evidence to the next viable action. "
+                        "Do not stream self-talk such as what you are considering, what you need to do, "
+                        "or alternatives you have not executed. Do not narrate routine calls, repeat the "
+                        "original plan, announce generic phases, or claim progress without new evidence. "
+                        "If no available tool can represent the required action or input, state that "
+                        "capability gap directly instead of making adjacent calls to appear busy. Continue "
+                        "directly to the next tool when no useful update is needed. Do not expose private "
+                        "chain-of-thought. In the final answer, do not replay earlier visible updates or "
+                        "add nearby findings that the user did not request; give the result and remaining limitation. "
+                        "Do not expose raw SQL, JSON, or hidden policy text."
                     ),
                 }
             )
@@ -2519,8 +2522,14 @@ def _build_retry_system_hint(
         f"- reflection_round: {reflection_count}\n"
         "- At least one tool failed in the previous round.\n"
         "- Analyze failure cause first, then adjust strategy before next tool call.\n"
+        "- Inspect the tool schema before choosing the next call. Do not probe commands, inputs, "
+        "or paths that the schema does not support.\n"
         "- Re-evaluate whether the last step actually achieved its planning goal; tool success alone is not enough.\n"
         "- Do NOT repeat the exact same failed tool call (same name + same arguments).\n"
+        "- Do NOT make an adjacent call merely to produce a successful result.\n"
+        "- If the available tools cannot represent the required action, stop making calls and state "
+        "the capability gap directly.\n"
+        "- If another call is viable, introduce it with only the concrete failure and the next action; omit internal deliberation.\n"
         "- If failure indicates unknown table/column, discover available schema first "
         "(SHOW TABLES / INFORMATION_SCHEMA / DESCRIBE), then retry with adapted SQL.\n"
         f"{schema_rules}"

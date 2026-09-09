@@ -56,7 +56,7 @@ class BaseTool(ABC):
             props["_runtime"] = {
                 "type": "object",
                 "description": (
-                    "Optional planning metadata for runtime use only; not a business parameter. "
+                    "Required planning metadata for runtime use only; not a business parameter. "
                     "Declares the current step's phase, goal, success criteria, and whether to pause for reflection and re-planning after this step."
                 ),
                 "properties": {
@@ -78,7 +78,11 @@ class BaseTool(ABC):
                         "description": "Whether to end the current batch after this tool execution and enter reflection/re-planning.",
                     },
                 },
+                "required": ["phase", "goal", "success_criteria"],
             }
+        required = parameters.setdefault("required", [])
+        if isinstance(required, list) and "_runtime" not in required:
+            required.append("_runtime")
         return {
             "type": "function",
             "function": {
@@ -1047,8 +1051,12 @@ class CallServiceTool(BaseTool):
 class ExecCommandTool(BaseTool):
     name = "exec_command"
     description = (
-        "Execute a restricted shell command. Only allowlisted commands (rg/grep/sed/cat/head/tail/wc/find/ls) are permitted, "
-        "and the working directory is limited to data/. Used for searching and reading knowledge base documents and other platform data files."
+        "Search or read platform data files with exactly one allowlisted command: "
+        "rg, grep, sed, cat, head, tail, wc, find, or ls. This is not a general shell: "
+        "it cannot run or discover other binaries (for example which, yq, python, or sh), "
+        "and it does not support pipes, redirects, shell operators, stdin, or inline text input. "
+        "Arguments are passed as literal argv, and every file path must be under the configured "
+        "data/ directory. Do not call this tool when the task cannot be expressed by this contract."
     )
     parameters = {
         "type": "object",

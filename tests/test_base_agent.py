@@ -462,6 +462,86 @@ async def test_tool_failure_triggers_retry() -> None:
 
 
 @pytest.mark.anyio
+async def test_failed_result_is_followed_by_evidence_based_recovery_transition() -> None:
+    executed_sql: list[str] = []
+
+    async def executor(name: str, args: dict[str, Any]) -> dict[str, Any]:
+        assert name == "execute_sql"
+        sql = str(args.get("sql") or "")
+        executed_sql.append(sql)
+        if "total_amount" in sql:
+            return {
+                "success": False,
+                "error": {
+                    "category": "unknown_column",
+                    "message": "Unknown column 'total_amount' in 'field list'",
+                },
+                "error_class": "schema_error",
+            }
+        return {
+            "success": True,
+            "data": {"columns": [{"name": "amount"}, {"name": "created_at"}]},
+        }
+
+    initial_update = "我先用订单表核对总额字段和数据范围。"
+    recovery_update = (
+        "查询返回 Unknown column 'total_amount'，说明金额字段名与预期不一致；"
+        "我先读取 orders 的真实字段，再按实际结构改写统计。"
+    )
+    llm = FakeLLM(
+        responses=[
+            [
+                _text_chunk(initial_update, finish_reason=None),
+                *_tool_call_chunk(
+                    "execute_sql",
+                    '{"sql":"SELECT total_amount FROM orders","intent":"核对订单金额"}',
+                    call_id="tc-bad-column",
+                ),
+            ],
+            [
+                _text_chunk(recovery_update, finish_reason=None),
+                *_tool_call_chunk(
+                    "execute_sql",
+                    '{"sql":"DESCRIBE orders","intent":"确认订单表真实字段"}',
+                    call_id="tc-discover-schema",
+                ),
+            ],
+            [_text_chunk("金额字段实际为 amount，可以据此继续统计。")],
+        ]
+    )
+    engine = _make_engine(
+        llm=llm,
+        config=EngineConfig(max_iterations=8, max_reflections=2),
+        executor=executor,
+    )
+
+    events = await _collect(
+        engine,
+        messages=[{"role": "user", "content": "分析订单金额。"}],
+        tools=[{"type": "function", "function": {"name": "execute_sql"}}],
+    )
+
+    failed_result_index = next(
+        index
+        for index, event in enumerate(events)
+        if event["type"] == "tool_result"
+        and event["data"]["result"]["success"] is False
+    )
+    recovery_update_index = next(
+        index
+        for index, event in enumerate(events)
+        if event["type"] == "assistant" and event["data"]["text"] == recovery_update
+    )
+    second_tool_index = [
+        index for index, event in enumerate(events) if event["type"] == "tool_start"
+    ][1]
+
+    assert failed_result_index < recovery_update_index < second_tool_index
+    assert executed_sql == ["SELECT total_amount FROM orders", "DESCRIBE orders"]
+    assert events[-1]["data"]["completed"] is True
+
+
+@pytest.mark.anyio
 async def test_invalid_tool_arguments_are_sanitized_before_next_model_round() -> None:
     executed: list[dict[str, Any]] = []
 
@@ -806,7 +886,14 @@ async def test_tool_task_emits_task_plan_then_model_transition_before_tool() -> 
         for event in events
     )
     system_prompts = [message["content"] for message in llm.calls[0] if message["role"] == "system"]
-    assert any("Visible action narration" in prompt for prompt in system_prompts)
+    assert any("Visible work updates" in prompt for prompt in system_prompts)
+    assert any(
+        "only when the result materially changes the plan" in prompt
+        for prompt in system_prompts
+    )
+    assert any("Do not narrate routine calls" in prompt for prompt in system_prompts)
+    assert any("Do not stream self-talk" in prompt for prompt in system_prompts)
+    assert any("capability gap directly" in prompt for prompt in system_prompts)
     assert any(
         "Evidence discipline for every tool-backed task" in prompt for prompt in system_prompts
     )

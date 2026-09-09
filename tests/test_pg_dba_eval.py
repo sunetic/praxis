@@ -368,3 +368,22 @@ def test_exec_command_rejects_similar_prefix_outside_configured_data_dir(
 
     assert path_error is not None
     assert path_error["code"] == "path_violation"
+
+
+def test_exec_command_schema_exposes_real_capability_boundary_and_runtime_goal():
+    tool = registry.ExecCommandTool().to_openai_function()["function"]
+    parameters = tool["parameters"]
+
+    assert "_runtime" in parameters["required"]
+    assert parameters["properties"]["_runtime"]["required"] == [
+        "phase",
+        "goal",
+        "success_criteria",
+    ]
+    assert "not a general shell" in tool["description"]
+    assert "does not support pipes" in tool["description"]
+    assert "stdin" in tool["description"]
+    assert "which" in tool["description"]
+    assert parameters["properties"]["command"]["enum"] == [
+        "rg", "grep", "sed", "cat", "head", "tail", "wc", "find", "ls"
+    ]

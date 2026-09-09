@@ -892,11 +892,15 @@ class TaskJournal:
                     )
                     and item.tool_name == episode.tool_name
                     and (
-                        item.target_object == episode.target_object
+                        (
+                            episode.target_object != "global"
+                            and item.target_object == episode.target_object
+                        )
                         or episode.category
                         in {"argument_error", "invalid_arguments", "validation_error"}
                         or (
-                            (
+                            episode.tool_name == "execute_sql"
+                            and (
                                 episode.target_object == "global"
                                 or episode.target_object.startswith("datasource_id:")
                             )
@@ -972,7 +976,11 @@ class TaskJournal:
         )
 
     def _record_step(self, observation: Observation) -> None:
-        goal = observation.planning_goal or f"Execute {observation.tool_name}"
+        goal = (
+            observation.planning_goal
+            or observation.request_summary
+            or f"Execute {observation.tool_name}"
+        )
         step = next((item for item in self.steps if item.goal == goal), None)
         if step is None:
             step = TaskStep(

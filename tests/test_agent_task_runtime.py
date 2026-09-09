@@ -550,6 +550,57 @@ def test_unrelated_success_does_not_resolve_active_failure_episode() -> None:
     assert deterministic_completion_precheck(journal).satisfied is True
 
 
+def test_unrelated_exec_success_does_not_resolve_global_command_failure() -> None:
+    journal = _journal()
+    failed_probe = {
+        "tool_call_id": "forbidden-command",
+        "name": "exec_command",
+        "arguments": {"command": "which", "args": ["yq"]},
+        "result": {
+            "success": False,
+            "error": {"code": "forbidden", "message": "Command not allowed: which"},
+        },
+        "error_class": "execution_error",
+        "planning_meta": {},
+    }
+    unrelated_listing = {
+        "tool_call_id": "unrelated-listing",
+        "name": "exec_command",
+        "arguments": {"command": "ls", "args": ["data/"]},
+        "result": {
+            "success": True,
+            "data": {"exit_code": 0, "output": "knowledge_packs.json\n"},
+        },
+        "error_class": None,
+        "planning_meta": {},
+    }
+
+    journal.evaluate_observations(
+        [Observation.from_execution(failed_probe)],
+        iteration=1,
+        per_episode_retry_budget=2,
+        transient_retry_budget=3,
+        max_no_progress_rounds=2,
+    )
+    journal.evaluate_observations(
+        [Observation.from_execution(unrelated_listing)],
+        iteration=2,
+        per_episode_retry_budget=2,
+        transient_retry_budget=3,
+        max_no_progress_rounds=2,
+    )
+
+    assert journal.failure_episodes[0].status == "open"
+    assert journal.metrics.recovered_failures == 0
+    unresolved = journal.unresolved_steps()
+    assert len(unresolved) == 1
+    assert "which" in unresolved[0].goal
+    assert "Command not allowed" in unresolved[0].unresolved_questions[0]
+    assert len(journal.steps) == 2
+    assert journal.steps[1].status == "completed"
+    assert "ls" in journal.steps[1].goal
+
+
 def test_failure_audit_rejects_unassessed_open_episode_without_domain_rules() -> None:
     journal = _journal()
     _evaluate(
