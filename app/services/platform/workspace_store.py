@@ -5,6 +5,7 @@ import os
 import shlex
 import subprocess
 from copy import deepcopy
+from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -286,6 +287,14 @@ class WorkspaceStore:
             allowed_files=["main.py"],
             edits=[],
         )
+        plan = replace(
+            plan,
+            purpose="analyze",
+            context={
+                "datasource_schema": datasource_schema,
+                "datasource_id": datasource_id,
+            },
+        )
         result = self._adapter.apply_changes(workspace_dir=target_dir, plan=plan)
         logger.info(
             "workspace_analyze_function_goal %s",
@@ -318,6 +327,14 @@ class WorkspaceStore:
             goal=str(goal or "").strip(),
             allowed_files=["main.py"],
             edits=[],
+        )
+        plan = replace(
+            plan,
+            purpose="implement",
+            context={
+                "datasource_schema": datasource_schema,
+                "datasource_id": datasource_id,
+            },
         )
         result = self._adapter.apply_changes(workspace_dir=target_dir, plan=plan)
         logger.info(
@@ -356,6 +373,10 @@ class WorkspaceStore:
             goal=str(goal or "").strip(),
             allowed_files=["main.tsx", "preview.html"],
             edits=[],
+        )
+        plan = replace(
+            plan,
+            context={"existing_functions": existing_functions or []},
         )
         result = self._adapter.apply_changes(workspace_dir=target_dir, plan=plan)
         logger.info(

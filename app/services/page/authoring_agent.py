@@ -201,6 +201,7 @@ class PageAuthoringAgent:
             _emit_authoring_plan_event(
                 event_callback, summary=goal_preview or "需求规划 · 进入构建阶段"
             )
+            workspace_store.set_adapter_event_callback(event_callback)
         apply = self._builder.build(
             page=page,
             goal=plan.goal,

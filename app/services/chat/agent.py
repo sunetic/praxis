@@ -6,6 +6,7 @@ from collections.abc import AsyncGenerator, Callable
 from typing import TYPE_CHECKING, Any
 
 from app.core.logging import get_logger
+from app.services.agent.reasoning_engine import ToolExecutor
 from app.services.platform.prompt_loader import PromptLoader
 from app.tools.registry import registry as tool_registry
 
@@ -87,6 +88,7 @@ class ChatCoreAgent:
         is_cancelled: Callable[[], bool] | None = None,
         task_state: dict[str, Any] | None = None,
         resumed_execution: dict[str, Any] | None = None,
+        tool_executor: ToolExecutor | None = None,
     ) -> AsyncGenerator[dict[str, Any], None]:
         chat_with_tools = self._chat_service.chat_with_tools
         chat_signature = inspect.signature(chat_with_tools)
@@ -109,6 +111,8 @@ class ChatCoreAgent:
             kwargs["task_state"] = task_state
         if "resumed_execution" in chat_signature.parameters:
             kwargs["resumed_execution"] = resumed_execution
+        if "tool_executor" in chat_signature.parameters:
+            kwargs["tool_executor"] = tool_executor
         async for event in chat_with_tools(messages, **kwargs):
             yield event
 

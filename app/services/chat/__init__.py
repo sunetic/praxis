@@ -20,6 +20,7 @@ from app.services.agent.reasoning_engine import (
     EngineConfig,
     ReasoningEngine,
     ReasoningPhase,
+    ToolExecutor,
 )
 from app.services.llm import get_llm_client
 from app.tools.registry import registry
@@ -134,6 +135,7 @@ class ChatService:
         is_cancelled: Callable[[], bool] | None = None,
         task_state: dict[str, Any] | None = None,
         resumed_execution: dict[str, Any] | None = None,
+        tool_executor: ToolExecutor | None = None,
     ) -> AsyncGenerator[dict[str, Any], None]:
         del use_state_machine
         chat_messages = list(messages)
@@ -198,7 +200,8 @@ class ChatService:
                 ),
             ),
             llm=self.llm,
-            tool_executor=_ChatToolExecutor(
+            tool_executor=tool_executor
+            or _ChatToolExecutor(
                 self,
                 default_datasource_id=default_datasource_id,
                 scope_context=scope_context,

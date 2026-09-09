@@ -267,7 +267,6 @@ def patch_runtime_stubs(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr("app.services.chat.stream_helpers.get_llm_client", lambda: fake_llm)
     monkeypatch.setattr("app.services.chat.get_llm_client", lambda: fake_llm)
     monkeypatch.setattr(functions_api, "get_llm_client", lambda: fake_llm)
-    monkeypatch.setattr("app.services.coding.reasoning_agent.get_llm_client", lambda: fake_llm)
     monkeypatch.setattr("app.services.llm.get_llm_client", lambda: fake_llm)
     monkeypatch.setattr("app.services.agent.scope_adapter_base.get_llm_client", lambda: fake_llm)
     monkeypatch.setattr("app.services.agent.reasoning_engine.get_llm_client", lambda: fake_llm)

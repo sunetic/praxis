@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import threading
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol
@@ -18,6 +19,8 @@ class CodingEnginePlan:
     goal: str
     allowed_files: list[str]
     edits: list[CodingEngineEdit] = field(default_factory=list)
+    purpose: str = "implement"
+    context: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -29,7 +32,9 @@ class CodingEngineApplyResult:
     assistant_message: str
     generated_title: str = ""
     generated_description: str = ""
-    result_status: str = "completed"  # completed | needs_clarification | too_complex
+    result_status: str = (
+        "completed"  # clear | refined | completed | needs_clarification | too_complex
+    )
 
 
 class CodingEngineAdapter(Protocol):
@@ -101,10 +106,24 @@ class BuiltinReasoningAdapter:
 
     def __init__(self, *, max_iterations: int = 12) -> None:
         self.max_iterations = max_iterations
-        self._event_callback: Any | None = None
+        self._event_callback: Callable[[dict[str, Any]], None] | None = None
+        self._build_context: dict[str, Any] = {}
 
-    def set_event_callback(self, callback: Any | None) -> None:
+    def set_event_callback(
+        self, callback: Callable[[dict[str, Any]], None] | None
+    ) -> None:
         self._event_callback = callback
+
+    def set_build_context(
+        self,
+        *,
+        datasource_schema: dict[str, Any] | None = None,
+        datasource_id: int | None = None,
+    ) -> None:
+        self._build_context = {
+            "datasource_schema": datasource_schema,
+            "datasource_id": datasource_id,
+        }
 
     def plan_changes(
         self,
@@ -128,19 +147,37 @@ class BuiltinReasoningAdapter:
                 assistant_message="Code changes applied to workspace.",
             )
 
-        from app.services.coding.reasoning_agent import CodingReasoningAgent
+        allowed = set(plan.allowed_files)
+        if allowed == {"main.py"}:
+            from app.services.function.chat_agent import FunctionChatAgent
 
-        agent = CodingReasoningAgent(
-            max_iterations=self.max_iterations,
-            event_callback=self._event_callback,
-        )
-        result = _run_async_safely(
-            agent.run(
-                goal=plan.goal,
-                workspace_dir=workspace_dir,
-                allowed_files=plan.allowed_files,
+            result = _run_async_safely(
+                FunctionChatAgent().run_coding_task(
+                    goal=plan.goal,
+                    workspace_dir=workspace_dir,
+                    purpose=plan.purpose,
+                    build_context={**self._build_context, **plan.context},
+                    max_iterations=self.max_iterations,
+                    event_callback=self._event_callback,
+                )
             )
-        )
+        elif allowed == {"main.tsx", "preview.html"}:
+            from app.services.page.chat_agent import PageChatAgent
+
+            result = _run_async_safely(
+                PageChatAgent().run_coding_task(
+                    goal=plan.goal,
+                    workspace_dir=workspace_dir,
+                    build_context=plan.context,
+                    max_iterations=self.max_iterations,
+                    event_callback=self._event_callback,
+                )
+            )
+        else:
+            raise ValueError(
+                "Reasoning adapter does not support an empty-edit plan for files: "
+                + ", ".join(sorted(allowed))
+            )
         if not isinstance(result, CodingEngineApplyResult):
             raise ValueError("reasoning coding adapter returned invalid result")
         return CodingEngineApplyResult(
