@@ -163,6 +163,51 @@ def test_stream_user_message_persistence_is_idempotent_and_not_duplicated_in_llm
         engine.dispose()
 
 
+def test_format_messages_for_llm_preserves_text_after_tool_results() -> None:
+    assistant = SimpleNamespace(
+        role="assistant",
+        content="",
+        tool_calls=None,
+        content_parts=[
+            {"type": "text", "text": "I will run the analysis."},
+            {
+                "type": "tool_use",
+                "id": "chart-source-1",
+                "name": "execute_sql",
+                "input": {"sql": "SELECT month, gmv FROM monthly_sales"},
+                "result": {"success": True, "data": {"rows": [{"month": "2026-08"}]}},
+            },
+            {
+                "type": "text",
+                "text": "I can turn the monthly GMV result into a chart if needed.",
+            },
+        ],
+    )
+    user = SimpleNamespace(
+        role="user",
+        content="Yes, please.",
+        tool_calls=None,
+        content_parts=None,
+    )
+
+    formatted = chat_history.format_messages_for_llm([assistant, user])
+
+    assert [message["role"] for message in formatted] == [
+        "assistant",
+        "tool",
+        "assistant",
+        "user",
+    ]
+    assert formatted[0]["content"] == "I will run the analysis."
+    assert formatted[0]["tool_calls"][0]["id"] == "chart-source-1"
+    assert formatted[1]["tool_call_id"] == "chart-source-1"
+    assert formatted[2] == {
+        "role": "assistant",
+        "content": "I can turn the monthly GMV result into a chart if needed.",
+    }
+    assert formatted[3] == {"role": "user", "content": "Yes, please."}
+
+
 @pytest.mark.parametrize("event_type", ["tool_start", "tool_result"])
 def test_map_tool_event_to_step_event_preserves_parallel_flag(event_type: str) -> None:
     event = {
@@ -893,6 +938,119 @@ async def test_chat_stream_emits_compressing_status_before_waiting_for_compactio
             item.get("type") == "context_status" and item.get("state") == "ready"
             for item in remaining_payloads
         )
+    finally:
+        db.close()
+        engine.dispose()
+
+
+@pytest.mark.anyio
+async def test_chat_stream_keeps_context_usage_on_the_conversation_estimator(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    async def _fake_select_dynamic_skills(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        del args, kwargs
+        return {
+            "active_skills": [],
+            "added": [],
+            "removed": [],
+            "reason": "test",
+            "selector_ok": True,
+        }
+
+    async def _noop_save(items: list[Any]) -> None:
+        del items
+
+    persisted_statuses: list[dict[str, Any]] = []
+
+    async def _capture_events(events: list[models.ChatEvent]) -> None:
+        for event in events:
+            if event.event_type == "context_status" and isinstance(event.payload, dict):
+                persisted_statuses.append(event.payload)
+
+    fake_service = _FakeStreamingChatService(
+        events=[
+            {
+                "type": "assistant",
+                "phase": "responding",
+                "data": {"text": "The durable answer is now part of the conversation."},
+                "meta": {},
+            },
+            {
+                "type": "context_status",
+                "phase": "responding",
+                "data": {
+                    "context_window_tokens": 128_000,
+                    "estimated_tokens": 120_000,
+                    "used_percent": 93.8,
+                    "compression_progress_percent": 100.0,
+                    "compression_threshold_percent": 75,
+                    "compression_threshold_tokens": 96_000,
+                    "remaining_tokens": 8_000,
+                    "token_source": "provider",
+                    "state": "ready",
+                },
+                "meta": {},
+            },
+            {
+                "type": "done",
+                "phase": "done",
+                "data": {"status": "completed", "completed": True},
+                "meta": {},
+            },
+        ]
+    )
+    monkeypatch.setattr(chat_api, "_select_dynamic_skills", _fake_select_dynamic_skills)
+    monkeypatch.setattr(chat_api, "_save_messages_to_db", _noop_save)
+    monkeypatch.setattr(chat_api, "_save_chat_events_to_db", _capture_events)
+    monkeypatch.setattr(chat_api, "get_chat_service", lambda: fake_service)
+
+    factory, engine = _build_session_factory(tmp_path)
+    db = factory()
+    try:
+        conversation = models.Conversation(title="stable-context-usage")
+        db.add(conversation)
+        db.commit()
+        db.refresh(conversation)
+        db.add(
+            models.ChatEvent(
+                conversation_id=conversation.id,
+                event_type="context_status",
+                payload={
+                    "conversation_id": conversation.id,
+                    "context_window_tokens": 128_000,
+                    "estimated_tokens": 50_000,
+                    "used_percent": 39.1,
+                    "compression_progress_percent": 52.1,
+                    "compression_threshold_percent": 75,
+                    "compression_threshold_tokens": 96_000,
+                    "remaining_tokens": 78_000,
+                    "summary_tokens": 0,
+                    "recent_message_count": 1,
+                    "compacted_through_message_id": None,
+                    "last_compacted_at": None,
+                    "token_source": "provider",
+                    "state": "ready",
+                },
+            )
+        )
+        db.commit()
+
+        response = await chat_api.chat_stream(
+            conversation_id=conversation.id,
+            message=schemas.ChatStreamRequest(content="Give me a concise answer."),
+            db=db,
+        )
+        await _collect_stream_payloads(response)
+
+        assert len(persisted_statuses) == 2
+        assert all(status["token_source"] == "estimate" for status in persisted_statuses)
+        assert persisted_statuses[0]["estimated_tokens"] == 50_000
+        assert persisted_statuses[1]["estimated_tokens"] >= persisted_statuses[0][
+            "estimated_tokens"
+        ]
+        assert persisted_statuses[1]["estimated_tokens"] < 120_000
+        assert persisted_statuses[1]["used_percent"] < 93.8
     finally:
         db.close()
         engine.dispose()

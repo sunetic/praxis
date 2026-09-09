@@ -145,18 +145,19 @@ def format_messages_for_llm(messages: list) -> list[dict[str, Any]]:
             continue
         parts = m.content_parts if isinstance(m.content_parts, list) else None
         if m.role == "assistant" and parts:
-            tool_calls_openai = []
-            text_parts = []
-            for part in parts:
-                if not isinstance(part, dict):
-                    continue
-                if part.get("type") == "text" and str(part.get("text") or "").strip():
-                    text_parts.append(part["text"])
-                elif part.get("type") == "tool_use":
-                    tc_id = part.get("id") or f"tool_{part.get('name', '')}"
-                    tool_calls_openai.append(
+            text_parts: list[str] = []
+            tool_parts: list[dict[str, Any]] = []
+
+            def flush_segment() -> None:
+                if not text_parts and not tool_parts:
+                    return
+                assistant_msg: dict[str, Any] = {"role": "assistant"}
+                if text_parts:
+                    assistant_msg["content"] = "\n".join(text_parts)
+                if tool_parts:
+                    assistant_msg["tool_calls"] = [
                         {
-                            "id": tc_id,
+                            "id": part.get("id") or f"tool_{part.get('name', '')}",
                             "type": "function",
                             "function": {
                                 "name": part.get("name") or "",
@@ -165,27 +166,33 @@ def format_messages_for_llm(messages: list) -> list[dict[str, Any]]:
                                 ),
                             },
                         }
-                    )
-            assistant_msg: dict[str, Any] = {"role": "assistant"}
-            if text_parts:
-                assistant_msg["content"] = "\n".join(text_parts)
-            if tool_calls_openai:
-                assistant_msg["tool_calls"] = tool_calls_openai
-            if text_parts or tool_calls_openai:
+                        for part in tool_parts
+                    ]
                 chat_messages.append(assistant_msg)
+                for part in tool_parts:
+                    tc_id = part.get("id") or f"tool_{part.get('name', '')}"
+                    result = part.get("result")
+                    result_text = (
+                        result
+                        if isinstance(result, str)
+                        else json.dumps(result, ensure_ascii=False, default=str)
+                    )
+                    chat_messages.append(
+                        {"role": "tool", "tool_call_id": tc_id, "content": result_text}
+                    )
+                text_parts.clear()
+                tool_parts.clear()
+
             for part in parts:
-                if not isinstance(part, dict) or part.get("type") != "tool_use":
+                if not isinstance(part, dict):
                     continue
-                tc_id = part.get("id") or f"tool_{part.get('name', '')}"
-                result = part.get("result")
-                result_text = (
-                    result
-                    if isinstance(result, str)
-                    else json.dumps(result, ensure_ascii=False, default=str)
-                )
-                chat_messages.append(
-                    {"role": "tool", "tool_call_id": tc_id, "content": result_text}
-                )
+                if part.get("type") == "text" and str(part.get("text") or "").strip():
+                    if tool_parts:
+                        flush_segment()
+                    text_parts.append(part["text"])
+                elif part.get("type") == "tool_use":
+                    tool_parts.append(part)
+            flush_segment()
         elif m.role == "assistant" and m.tool_calls:
             tool_calls_openai = []
             text_content = str(m.content or "").strip()

@@ -429,19 +429,35 @@ function ChatThreadViewSession({
 
 export function ContextUsageIndicator({ status }: { status: ChatContextStatus }) {
   const { t } = useShellI18n()
-  const percent = Math.max(0, Math.min(100, status.compression_progress_percent))
+  const percent = Math.max(0, Math.min(100, status.used_percent))
   const isCompressing = status.state === "compressing"
   const compressionFailed = status.state === "compression_failed"
+
+  if (isCompressing) {
+    return (
+      <div
+        data-testid="chat-context-usage"
+        data-state="compressing"
+        role="status"
+        aria-live="polite"
+        aria-busy="true"
+        className="flex min-h-6 items-center gap-2 px-1 text-xs text-warning"
+      >
+        <Loader2 className="size-3.5 shrink-0 animate-spin" />
+        <span>{t("chat.context.compressing")}</span>
+      </div>
+    )
+  }
+
+  const warningThreshold = Math.max(0, status.compression_threshold_percent * 0.85)
   const indicatorClassName = compressionFailed
     ? "bg-negative"
-    : isCompressing || percent >= 85
+    : percent >= warningThreshold
       ? "bg-warning"
       : "bg-primary"
-  const label = isCompressing
-    ? t("chat.context.compressing")
-    : compressionFailed
-      ? t("chat.context.compressionFailed")
-      : t("chat.context.label")
+  const label = compressionFailed
+    ? t("chat.context.compressionFailed")
+    : t("chat.context.label")
 
   return (
     <TooltipProvider delayDuration={150}>
@@ -450,32 +466,27 @@ export function ContextUsageIndicator({ status }: { status: ChatContextStatus })
           <div
             data-testid="chat-context-usage"
             data-state={status.state}
-            role={isCompressing || compressionFailed ? "status" : undefined}
-            aria-live={isCompressing || compressionFailed ? "polite" : undefined}
+            role={compressionFailed ? "status" : undefined}
+            aria-live={compressionFailed ? "polite" : undefined}
             className="flex min-h-6 items-center gap-2 px-1 text-xs text-muted-foreground"
           >
-            {isCompressing ? (
-              <Loader2 className="size-3.5 shrink-0 animate-spin text-warning" />
-            ) : (
-              <Gauge className="size-3.5 shrink-0" />
-            )}
+            <Gauge className="size-3.5 shrink-0" />
             <span className={compressionFailed ? "shrink-0 text-negative" : "shrink-0"}>{label}</span>
             <Progress
               value={percent}
               aria-label={`${label} ${percent}%`}
               className="w-24"
-              indicatorClassName={`${indicatorClassName}${isCompressing ? " animate-pulse" : ""}`}
+              indicatorClassName={indicatorClassName}
             />
             <span className="min-w-10 tabular-nums text-foreground">{percent.toFixed(1)}%</span>
           </div>
         </TooltipTrigger>
         <TooltipContent side="top" sideOffset={6}>
           <p className="tabular-nums">
-            {Math.round(status.estimated_tokens).toLocaleString()} / {status.compression_threshold_tokens.toLocaleString()} tokens · {t("chat.context.budget")}
+            {Math.round(status.estimated_tokens).toLocaleString()} / {status.context_window_tokens.toLocaleString()} tokens · {t("chat.context.windowUsage")}
           </p>
           <p>
-            {t("chat.context.windowUsage")} {status.used_percent.toFixed(1)}%
-            {` · ${t("chat.context.compressAt")} ${status.compression_threshold_percent}%`}
+            {t("chat.context.compressAt")} {status.compression_threshold_percent}%
             {status.token_source === "provider" ? ` · ${t("chat.context.measured")}` : ` · ${t("chat.context.estimated")}`}
           </p>
         </TooltipContent>

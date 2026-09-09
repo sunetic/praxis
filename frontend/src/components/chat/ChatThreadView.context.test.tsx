@@ -5,7 +5,7 @@ import { renderWithShell as render } from "@/test/renderWithShell"
 import { ContextCompressionBanner, ContextUsageIndicator } from "./ChatThreadView"
 
 describe("Chat context visibility", () => {
-  it("always shows exact context usage and the configured trigger", () => {
+  it("shows model-window usage as the single visible percentage", () => {
     render(
       <ContextUsageIndicator
         status={{
@@ -28,14 +28,15 @@ describe("Chat context visibility", () => {
     )
 
     expect(screen.getByTestId("chat-context-usage")).toHaveTextContent("上下文")
-    expect(screen.getByText("66.7%")).toBeInTheDocument()
-    expect(screen.getByRole("progressbar", { name: "上下文 66.7%" })).toHaveAttribute(
+    expect(screen.getByText("50.0%")).toBeInTheDocument()
+    expect(screen.queryByText("66.7%")).not.toBeInTheDocument()
+    expect(screen.getByRole("progressbar", { name: "上下文 50%" })).toHaveAttribute(
       "aria-valuenow",
-      "66.7",
+      "50",
     )
   })
 
-  it("shows compaction in progress when the budget reaches 100%", () => {
+  it("replaces window usage with a blocking compaction state", () => {
     render(
       <ContextUsageIndicator
         status={{
@@ -59,11 +60,38 @@ describe("Chat context visibility", () => {
 
     const status = screen.getByRole("status")
     expect(status).toHaveTextContent("正在压缩上下文")
-    expect(status).toHaveTextContent("100.0%")
-    expect(screen.getByRole("progressbar", { name: "正在压缩上下文 100%" })).toHaveAttribute(
-      "aria-valuenow",
-      "100",
+    expect(status).toHaveAttribute("aria-busy", "true")
+    expect(status).not.toHaveTextContent("75.0%")
+    expect(screen.queryByRole("progressbar")).not.toBeInTheDocument()
+  })
+
+  it("restores the usage meter when compaction fails", () => {
+    render(
+      <ContextUsageIndicator
+        status={{
+          conversation_id: 7,
+          context_window_tokens: 32768,
+          estimated_tokens: 24576,
+          used_percent: 75,
+          compression_progress_percent: 100,
+          compression_threshold_percent: 75,
+          compression_threshold_tokens: 24576,
+          remaining_tokens: 8192,
+          summary_tokens: 0,
+          recent_message_count: 20,
+          compacted_through_message_id: null,
+          last_compacted_at: null,
+          token_source: "estimate",
+          state: "compression_failed",
+        }}
+      />,
     )
+
+    const status = screen.getByRole("status")
+    expect(status).toHaveTextContent("上下文压缩失败")
+    expect(status).toHaveTextContent("75.0%")
+    expect(status).not.toHaveAttribute("aria-busy")
+    expect(screen.getByRole("progressbar", { name: "上下文压缩失败 75%" })).toBeInTheDocument()
   })
 
   it("shows an evidence-rich compaction receipt", () => {

@@ -586,6 +586,22 @@ async def chat_stream(
         latest_task_state: dict[str, Any] | None = None
         assistant_event_buffer = ""
         next_part_seq = 1
+        latest_context_event = (
+            db.query(models.ChatEvent)
+            .filter(
+                models.ChatEvent.conversation_id == conversation_id,
+                models.ChatEvent.event_type == "context_status",
+            )
+            .order_by(models.ChatEvent.id.desc())
+            .first()
+        )
+        previous_context_status = (
+            dict(latest_context_event.payload)
+            if latest_context_event is not None
+            and isinstance(latest_context_event.payload, dict)
+            else {}
+        )
+        context_usage_floor_tokens = 0
 
         def _is_cancelled() -> bool:
             return _cancelled
@@ -703,6 +719,78 @@ async def chat_stream(
             )
             return True
 
+        def _stabilize_context_status(
+            raw_status: dict[str, Any], *, reset_floor: bool = False
+        ) -> dict[str, Any]:
+            """Keep visible usage monotonic until a real compaction resets it."""
+            nonlocal context_usage_floor_tokens
+            status = dict(raw_status)
+            if reset_floor:
+                context_usage_floor_tokens = 0
+            elif context_usage_floor_tokens == 0:
+                same_budget = previous_context_status.get(
+                    "context_window_tokens"
+                ) == status.get("context_window_tokens")
+                same_snapshot = previous_context_status.get(
+                    "compacted_through_message_id"
+                ) == status.get("compacted_through_message_id")
+                if same_budget and same_snapshot:
+                    context_usage_floor_tokens = max(
+                        0, int(previous_context_status.get("estimated_tokens") or 0)
+                    )
+
+            estimated_tokens = max(0, int(status.get("estimated_tokens") or 0))
+            stable_tokens = max(estimated_tokens, context_usage_floor_tokens)
+            context_usage_floor_tokens = stable_tokens
+            if stable_tokens == estimated_tokens:
+                return status
+
+            context_window_tokens = max(
+                1, int(status.get("context_window_tokens") or 1)
+            )
+            compression_threshold_tokens = max(
+                1, int(status.get("compression_threshold_tokens") or 1)
+            )
+            status.update(
+                {
+                    "estimated_tokens": stable_tokens,
+                    "used_percent": round(
+                        stable_tokens * 100 / context_window_tokens, 1
+                    ),
+                    "compression_progress_percent": round(
+                        min(
+                            100.0,
+                            stable_tokens * 100 / compression_threshold_tokens,
+                        ),
+                        1,
+                    ),
+                    "remaining_tokens": max(
+                        0, context_window_tokens - stable_tokens
+                    ),
+                }
+            )
+            return status
+
+        def _current_conversation_context_status(state: str) -> dict[str, Any]:
+            """Recalculate the durable conversation usage with one stable estimator."""
+            current_messages = list(messages)
+            if turn_message is not None:
+                current_messages.append(turn_message)
+            status, _ = context_manager.preview(
+                db,
+                conversation_id=conversation_id,
+                raw_messages=current_messages,
+                system_prompt=system_prompt,
+                tools=tools if tools else None,
+            )
+            status = _stabilize_context_status(status)
+            status["state"] = (
+                state
+                if state in {"ready", "compressing", "compression_failed"}
+                else "ready"
+            )
+            return status
+
         try:
             preview_status, compression_required = context_manager.preview(
                 db,
@@ -711,6 +799,7 @@ async def chat_stream(
                 system_prompt=system_prompt,
                 tools=tools if tools else None,
             )
+            preview_status = _stabilize_context_status(preview_status)
             if compression_required:
                 compression_started_event = _annotate_runtime_event(
                     {
@@ -735,6 +824,10 @@ async def chat_stream(
                 tools=tools if tools else None,
             )
             chat_messages = prepared_context.messages
+            prepared_context.status = _stabilize_context_status(
+                prepared_context.status,
+                reset_floor=prepared_context.compression is not None,
+            )
 
             if prepared_context.compression is not None:
                 compression_event = _annotate_runtime_event(
@@ -1156,8 +1249,9 @@ async def chat_stream(
                     else None
                 )
                 if mapped_type == "context_status" and isinstance(mapped_data, dict):
-                    mapped_data = {**prepared_context.status, **mapped_data}
-                    mapped_data["conversation_id"] = conversation_id
+                    mapped_data = _current_conversation_context_status(
+                        str(mapped_data.get("state") or "ready")
+                    )
                     annotated_event["data"] = mapped_data
                 if mapped_type == "task_state" and isinstance(mapped_data, dict):
                     latest_task_state = dict(mapped_data)

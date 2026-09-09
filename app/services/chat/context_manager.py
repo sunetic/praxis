@@ -289,7 +289,7 @@ class ConversationContextManager:
         )
         if compression is not None:
             compression["after_tokens"] = estimated_after
-            compression["after_percent"] = status["compression_progress_percent"]
+            compression["after_percent"] = status["used_percent"]
         logger.info(
             "context_prepared %s",
             fmt_kv(
@@ -487,9 +487,9 @@ class ConversationContextManager:
                 raise
 
         runtime_settings = resolve_context_settings(db)
-        before_percent = self._compression_progress_percent(
-            estimated_before,
-            runtime_settings.compression_threshold_tokens,
+        before_percent = round(
+            min(100.0, estimated_before / runtime_settings.context_window_tokens * 100),
+            1,
         )
         event = {
             "mode": "persistent",
