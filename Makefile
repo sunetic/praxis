@@ -1,4 +1,4 @@
-.PHONY: install dev test lint guard-semantic migrate rollback migrate-create clean seed eval eval-context eval-list testbed-init testbed-once testbed-start testbed-stop testbed-status testbed-case rules-health handbook-build handbook-serve docker-build docker-up docker-down
+.PHONY: install dev test lint migrate rollback migrate-create clean seed eval eval-context eval-list testbed-init testbed-once testbed-start testbed-stop testbed-status testbed-case rules-health handbook-build handbook-serve docker-build docker-up docker-down
 
 EVAL_CASE ?= all
 EVAL_REPEAT ?= 1
@@ -62,7 +62,7 @@ dev:
 	$(UV_ENV) uv run python -m uvicorn app.main:app --reload --reload-dir app --port 8000
 
 test:
-	uv run pytest
+	$(UV_ENV) uv run pytest
 
 eval:
 	uv run python -m $(EVAL_MODULE) \
@@ -80,11 +80,9 @@ eval-context:
 	uv run python -m evals.context_compaction.run
 
 lint:
-	uv run ruff check app/
-	uv run python tools/semantic_guard_scan.py --root . --paths app tests
-
-guard-semantic:
-	uv run python tools/semantic_guard_scan.py --root . --paths app tests
+	$(UV_ENV) uv run ruff check .
+	$(UV_ENV) uv run ruff format --check .
+	tools/check-repository-hygiene.sh
 
 migrate:
 	uv run alembic upgrade head

@@ -597,8 +597,7 @@ async def chat_stream(
         )
         previous_context_status = (
             dict(latest_context_event.payload)
-            if latest_context_event is not None
-            and isinstance(latest_context_event.payload, dict)
+            if latest_context_event is not None and isinstance(latest_context_event.payload, dict)
             else {}
         )
         context_usage_floor_tokens = 0
@@ -728,9 +727,9 @@ async def chat_stream(
             if reset_floor:
                 context_usage_floor_tokens = 0
             elif context_usage_floor_tokens == 0:
-                same_budget = previous_context_status.get(
+                same_budget = previous_context_status.get("context_window_tokens") == status.get(
                     "context_window_tokens"
-                ) == status.get("context_window_tokens")
+                )
                 same_snapshot = previous_context_status.get(
                     "compacted_through_message_id"
                 ) == status.get("compacted_through_message_id")
@@ -745,18 +744,14 @@ async def chat_stream(
             if stable_tokens == estimated_tokens:
                 return status
 
-            context_window_tokens = max(
-                1, int(status.get("context_window_tokens") or 1)
-            )
+            context_window_tokens = max(1, int(status.get("context_window_tokens") or 1))
             compression_threshold_tokens = max(
                 1, int(status.get("compression_threshold_tokens") or 1)
             )
             status.update(
                 {
                     "estimated_tokens": stable_tokens,
-                    "used_percent": round(
-                        stable_tokens * 100 / context_window_tokens, 1
-                    ),
+                    "used_percent": round(stable_tokens * 100 / context_window_tokens, 1),
                     "compression_progress_percent": round(
                         min(
                             100.0,
@@ -764,9 +759,7 @@ async def chat_stream(
                         ),
                         1,
                     ),
-                    "remaining_tokens": max(
-                        0, context_window_tokens - stable_tokens
-                    ),
+                    "remaining_tokens": max(0, context_window_tokens - stable_tokens),
                 }
             )
             return status
@@ -785,9 +778,7 @@ async def chat_stream(
             )
             status = _stabilize_context_status(status)
             status["state"] = (
-                state
-                if state in {"ready", "compressing", "compression_failed"}
-                else "ready"
+                state if state in {"ready", "compressing", "compression_failed"} else "ready"
             )
             return status
 

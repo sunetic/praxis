@@ -19,6 +19,7 @@ from app.services.agent.reasoning_engine import (
     _check_transition,
     _extract_completion_verification_policies,
     _reflector_step,
+    _serialize_tool_result_for_history,
     _summarize_planning_objectives,
     _tool_signature,
 )
@@ -253,6 +254,19 @@ def test_tool_signature_different_for_different_calls() -> None:
     tool_calls_1 = {0: {"function": {"name": "foo", "arguments": '{"a": 1}'}}}
     tool_calls_2 = {0: {"function": {"name": "bar", "arguments": '{"a": 1}'}}}
     assert _tool_signature(tool_calls_1) != _tool_signature(tool_calls_2)
+
+
+def test_large_tool_result_is_compacted_only_for_model_history() -> None:
+    result = {"success": True, "data": {"values": ["metric-name"] * 20_000}}
+
+    content = _serialize_tool_result_for_history(result)
+    parsed = json.loads(content)
+
+    assert len(content) < 16_000
+    assert parsed["success"] is True
+    assert parsed["data"]["history_compacted"] is True
+    assert parsed["data"]["original_chars"] > 100_000
+    assert "history compacted from" in parsed["data"]["preview"]
 
 
 def test_reflector_step_continue_on_success() -> None:
@@ -524,8 +538,7 @@ async def test_failed_result_is_followed_by_evidence_based_recovery_transition()
     failed_result_index = next(
         index
         for index, event in enumerate(events)
-        if event["type"] == "tool_result"
-        and event["data"]["result"]["success"] is False
+        if event["type"] == "tool_result" and event["data"]["result"]["success"] is False
     )
     recovery_update_index = next(
         index
@@ -888,8 +901,7 @@ async def test_tool_task_emits_task_plan_then_model_transition_before_tool() -> 
     system_prompts = [message["content"] for message in llm.calls[0] if message["role"] == "system"]
     assert any("Visible work updates" in prompt for prompt in system_prompts)
     assert any(
-        "only when the result materially changes the plan" in prompt
-        for prompt in system_prompts
+        "only when the result materially changes the plan" in prompt for prompt in system_prompts
     )
     assert any("Do not narrate routine calls" in prompt for prompt in system_prompts)
     assert any("Do not stream self-talk" in prompt for prompt in system_prompts)

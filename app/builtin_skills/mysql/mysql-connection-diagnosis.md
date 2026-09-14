@@ -16,17 +16,17 @@ Diagnose connection-related issues: thread exhaustion, sleeping connections, and
 ### Step 1: Connection Overview
 ```sql
 SELECT
-    gs1.VARIABLE_VALUE AS threads_connected,
-    gs2.VARIABLE_VALUE AS threads_running,
-    gs3.VARIABLE_VALUE AS max_used_connections,
+    MAX(CASE WHEN VARIABLE_NAME = 'Threads_connected' THEN VARIABLE_VALUE END) + 0 AS threads_connected,
+    MAX(CASE WHEN VARIABLE_NAME = 'Threads_running' THEN VARIABLE_VALUE END) + 0 AS threads_running,
+    MAX(CASE WHEN VARIABLE_NAME = 'Max_used_connections' THEN VARIABLE_VALUE END) + 0 AS max_used_connections,
     @@max_connections AS max_connections,
-    ROUND(gs1.VARIABLE_VALUE / @@max_connections * 100, 1) AS usage_pct
-FROM performance_schema.global_status gs1,
-     performance_schema.global_status gs2,
-     performance_schema.global_status gs3
-WHERE gs1.VARIABLE_NAME = 'Threads_connected'
-  AND gs2.VARIABLE_NAME = 'Threads_running'
-  AND gs3.VARIABLE_NAME = 'Max_used_connections';
+    ROUND(
+        100 * MAX(CASE WHEN VARIABLE_NAME = 'Threads_connected' THEN VARIABLE_VALUE END)
+        / @@max_connections,
+        1
+    ) AS usage_pct
+FROM performance_schema.global_status
+WHERE VARIABLE_NAME IN ('Threads_connected', 'Threads_running', 'Max_used_connections');
 ```
 Alert if `usage_pct` > 80%. `threads_running` > CPU cores indicates overload.
 
@@ -76,6 +76,14 @@ LIMIT 10;
 - Connection errors from specific hosts → check `max_connect_errors`, firewall, or DNS
 
 ## Rules
+- Use the canonical identifiers above exactly. Do not mutate a status or variable name while repairing SQL syntax.
+- Status rows can change while a query scans them under active load, so the returned
+  values are not guaranteed to be one atomic snapshot. If `Threads_running` is
+  greater than `Threads_connected`, report sampling skew and corroborate with the
+  process list or monitoring series; do not infer impossible connection arithmetic.
+- Being below `max_connections` shows current headroom, but does not prove that no
+  connections were rejected. Check `Aborted_connects` over the relevant window
+  before making an absence claim.
 - `wait_timeout` should typically be 300-600s for web applications, not the default 8 hours.
 - Prefer connection pooling (ProxySQL) over raising `max_connections` past 500.
 - `KILL <id>` only with user confirmation.

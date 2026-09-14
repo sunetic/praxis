@@ -70,7 +70,7 @@ export const Thread: FC<{ suggestions?: ThreadSuggestion[]; footerContent?: Reac
     >
       <ThreadPrimitive.Viewport
         data-slot="aui_thread-viewport"
-        className="relative flex flex-1 flex-col overflow-x-hidden overflow-y-scroll scroll-smooth"
+        className="relative flex flex-1 flex-col overflow-x-hidden overflow-y-scroll"
       >
         <div className="mx-auto flex w-full max-w-(--thread-max-width) flex-1 flex-col px-8 pt-6">
           <AuiIf condition={(s) => s.thread.isEmpty}>
@@ -120,7 +120,7 @@ const ThreadMessage: FC<{
 const ThreadScrollToBottom: FC = () => {
   const { t } = useShellI18n();
   return (
-    <ThreadPrimitive.ScrollToBottom asChild>
+    <ThreadPrimitive.ScrollToBottom behavior="smooth" asChild>
       <TooltipIconButton
         tooltip={t("thread.scrollToBottom")}
         variant="outline"
@@ -325,8 +325,11 @@ const AssistantMessage: FC<{
         <MessageError />
       </div>
 
-      {/* Action bar */}
-      <div className="mt-1 flex items-center">
+      {/* Float actions in the existing message gap so hover never changes layout. */}
+      <div
+        data-slot="aui_assistant-message-actions"
+        className="absolute start-0 top-full z-10 flex h-6 items-center"
+      >
         <AssistantActionBar />
       </div>
     </MessagePrimitive.Root>
@@ -393,13 +396,26 @@ const UserMessage: FC = () => {
     >
       <UserMessageAttachments />
 
-      <div className="relative col-start-2 flex min-w-0 items-start justify-end">
-        {/* User bubble: primary color per design spec §9 */}
-        <div className="wrap-break-word peer rounded-xl bg-primary px-4 py-2.5 text-sm text-primary-foreground empty:hidden">
-          <MessagePrimitive.Parts />
-        </div>
-        <div className="absolute start-0 top-1/2 -translate-x-full -translate-y-1/2 pe-2 peer-empty:hidden rtl:translate-x-full">
-          <UserActionBar />
+      <div className="col-start-2 flex min-w-0 items-start justify-end">
+        <div
+          data-slot="aui_user-message-shell"
+          className="relative w-fit max-w-full"
+        >
+          {/* User bubble: primary color per design spec §9 */}
+          <div
+            data-slot="aui_user-message-bubble"
+            className="wrap-break-word peer rounded-xl bg-primary px-4 py-2.5 text-sm text-primary-foreground empty:hidden"
+          >
+            <MessagePrimitive.Parts />
+          </div>
+          <AuiIf condition={(s) => s.thread.capabilities.edit}>
+            <div
+              data-slot="aui_user-message-actions"
+              className="absolute end-full top-1/2 -translate-y-1/2 pe-2 peer-empty:hidden"
+            >
+              <UserActionBar />
+            </div>
+          </AuiIf>
         </div>
       </div>
     </MessagePrimitive.Root>
@@ -415,7 +431,7 @@ const UserActionBar: FC = () => {
       className="flex flex-col items-end"
     >
       <ActionBarPrimitive.Edit asChild>
-        <TooltipIconButton tooltip={t("thread.edit")} className="p-4">
+        <TooltipIconButton tooltip={t("thread.edit")}>
           <PencilIcon />
         </TooltipIconButton>
       </ActionBarPrimitive.Edit>

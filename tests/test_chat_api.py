@@ -366,6 +366,9 @@ def test_inject_service_tools_keeps_call_service_without_domain_metadata(
         assert "auto-bound to service_id" in description
         assert "vendor_cluster_id" not in description
         assert "linked knowledge-base evidence" in description
+        assert "Bound Prometheus read contract" in fn["description"]
+        assert "/api/v1/query_range" in fn["description"]
+        assert "/api/v1/label/__name__/values" in fn["description"]
     finally:
         db.close()
         engine.dispose()
@@ -422,6 +425,7 @@ def test_inject_service_tools_injects_generic_service_binding_hint(
         assert f"service_id={service.id}" in description
         assert "vendor_cluster_id" not in description
         assert "loaded skills" in description
+        assert "mysql_global_status_threads_connected" not in fn["description"]
     finally:
         db.close()
         engine.dispose()
@@ -1046,9 +1050,9 @@ async def test_chat_stream_keeps_context_usage_on_the_conversation_estimator(
         assert len(persisted_statuses) == 2
         assert all(status["token_source"] == "estimate" for status in persisted_statuses)
         assert persisted_statuses[0]["estimated_tokens"] == 50_000
-        assert persisted_statuses[1]["estimated_tokens"] >= persisted_statuses[0][
-            "estimated_tokens"
-        ]
+        assert (
+            persisted_statuses[1]["estimated_tokens"] >= persisted_statuses[0]["estimated_tokens"]
+        )
         assert persisted_statuses[1]["estimated_tokens"] < 120_000
         assert persisted_statuses[1]["used_percent"] < 93.8
     finally:

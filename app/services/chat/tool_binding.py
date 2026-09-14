@@ -18,6 +18,34 @@ from app.tools.registry import registry
 settings = get_settings()
 
 
+def _bound_service_contract(service: models.Service, datasource: models.DataSource) -> str:
+    """Return a concise provider contract for the currently bound Service."""
+    service_type = str(service.service_type or "").strip().casefold()
+    if service_type != "prometheus":
+        return ""
+
+    lines = [
+        "Bound Prometheus read contract:",
+        "- Readiness: GET /-/ready.",
+        "- Current PromQL: GET /api/v1/query with query_params.query.",
+        "- Historical PromQL: GET /api/v1/query_range with query, start, end, and step.",
+        "- Current alerts: GET /api/v1/alerts; active scrape targets: GET /api/v1/targets with state=active.",
+        "- Do not guess identifiers or enumerate the full /api/v1/label/__name__/values catalog. Use one focused knowledge_search against the linked knowledge base when this contract does not name the required metric.",
+        "- Stop discovery once the endpoint, metric, labels, and time window needed for the user's claim are known.",
+    ]
+    if str(datasource.db_type or "").strip().casefold() == "mysql":
+        lines.extend(
+            [
+                "MySQL exporter metric mapping:",
+                "- connections: mysql_global_status_threads_connected",
+                "- active threads: mysql_global_status_threads_running",
+                "- connection limit: mysql_global_variables_max_connections",
+                "- failed connection counter: mysql_global_status_aborted_connects",
+            ]
+        )
+    return "\n".join(lines)
+
+
 def filter_tools_by_agent(agent: models.Agent | None) -> list[dict]:
     del agent
     return registry.get_openai_functions()
@@ -100,7 +128,18 @@ def inject_service_tools(tools: list[dict], datasource_id: int | None, db: Sessi
     patched = copy.deepcopy(list(tools))
     for tool in patched:
         fn = tool.get("function", {})
-        if fn.get("name") != "call_praxis_service":
+        tool_name = fn.get("name")
+        if tool_name == "knowledge_search" and len(services) == 1:
+            kb_ids = [str(item.id) for item in services[0].knowledge_bases]
+            kb_ids_prop = fn.get("parameters", {}).get("properties", {}).get("kb_ids")
+            if kb_ids and isinstance(kb_ids_prop, dict):
+                kb_ids_prop["description"] = (
+                    f"For the bound Service, search only linked knowledge base IDs: "
+                    f"{', '.join(kb_ids)}. Use one focused lookup when its provider contract "
+                    "does not already supply the required endpoint or identifier."
+                )
+            continue
+        if tool_name != "call_praxis_service":
             continue
         props = fn.get("parameters", {}).get("properties", {})
         if "service_id" not in props:
@@ -117,6 +156,12 @@ def inject_service_tools(tools: list[dict], datasource_id: int | None, db: Sessi
             if kb_ids:
                 description += f" Linked knowledge base IDs: {', '.join(kb_ids)}."
             props["service_id"]["description"] = description
+            provider_contract = _bound_service_contract(svc, datasource)
+            if provider_contract:
+                base_description = str(fn.get("description") or "").strip()
+                fn["description"] = "\n\n".join(
+                    item for item in (base_description, provider_contract) if item
+                )
             req = fn.get("parameters", {}).get("required", [])
             if isinstance(req, list) and "service_id" in req:
                 fn["parameters"]["required"] = [x for x in req if x != "service_id"]

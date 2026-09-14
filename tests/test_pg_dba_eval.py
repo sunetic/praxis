@@ -385,5 +385,13 @@ def test_exec_command_schema_exposes_real_capability_boundary_and_runtime_goal()
     assert "stdin" in tool["description"]
     assert "which" in tool["description"]
     assert parameters["properties"]["command"]["enum"] == [
-        "rg", "grep", "sed", "cat", "head", "tail", "wc", "find", "ls"
+        "rg",
+        "grep",
+        "sed",
+        "cat",
+        "head",
+        "tail",
+        "wc",
+        "find",
+        "ls",
     ]

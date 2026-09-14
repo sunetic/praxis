@@ -41,6 +41,8 @@ from app.services.platform.prompt_loader import PromptLoader
 
 logger = get_logger("agent.reasoning_engine")
 
+_TOOL_HISTORY_MAX_CHARS = 16_000
+
 _AGENT_TASK_COMPLETE_TOOL_NAME = "agent_task_complete"
 _AGENT_TASK_COMPLETE_TOOL = {
     "type": "function",
@@ -1536,7 +1538,7 @@ class ReasoningEngine:
                 "role": "tool",
                 "tool_call_id": item["tool_call_id"],
                 "name": item["name"],
-                "content": json.dumps(item["result"], ensure_ascii=False, default=str),
+                "content": _serialize_tool_result_for_history(item["result"]),
             }
         )
 
@@ -2002,6 +2004,34 @@ def _successful_terminal_result(
         if data.get("terminal") is True:
             return data
     return None
+
+
+def _serialize_tool_result_for_history(
+    result: Any,
+    *,
+    max_chars: int = _TOOL_HISTORY_MAX_CHARS,
+) -> str:
+    """Bound one tool message without changing the full emitted tool_result event."""
+    rendered = json.dumps(result, ensure_ascii=False, default=str)
+    if len(rendered) <= max_chars:
+        return rendered
+
+    marker = f"...<history compacted from {len(rendered)} chars>..."
+    preview_budget = max(256, max_chars // 2)
+    head_chars = max(1, int(preview_budget * 0.72))
+    tail_chars = max(1, preview_budget - head_chars - len(marker))
+    preview = rendered[:head_chars] + marker + rendered[-tail_chars:]
+    compacted: dict[str, Any] = {
+        "success": result.get("success") if isinstance(result, dict) else None,
+        "data": {
+            "history_compacted": True,
+            "original_chars": len(rendered),
+            "preview": preview,
+        },
+    }
+    if isinstance(result, dict) and result.get("error") is not None:
+        compacted["error"] = result["error"]
+    return json.dumps(compacted, ensure_ascii=False, default=str)
 
 
 def _can_parallelize_tool_calls(

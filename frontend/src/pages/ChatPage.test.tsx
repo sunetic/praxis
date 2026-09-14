@@ -1010,6 +1010,45 @@ describe("ChatPage workspace boundary and handoff", () => {
     expect(screen.queryByText(/^Assistant$/)).not.toBeInTheDocument()
   })
 
+  it("keeps hover actions out of layout and hides unsupported user editing", async () => {
+    messagesApi.list.mockResolvedValueOnce([
+      {
+        id: 11,
+        conversation_id: 1,
+        role: "user",
+        content: "明白了。",
+        created_at: "2026-03-14T00:00:01Z",
+      },
+      {
+        id: 12,
+        conversation_id: 1,
+        role: "assistant",
+        content: "另注：这是补充说明。",
+        agent_name: "Assistant",
+        created_at: "2026-03-14T00:00:02Z",
+      },
+    ])
+
+    render(
+      <MemoryRouter initialEntries={["/chat?conversationId=1"]}>
+        <ChatPage />
+      </MemoryRouter>
+    )
+
+    expect(await screen.findByText("另注：这是补充说明。")).toBeInTheDocument()
+
+    const assistantActions = document.querySelector(
+      '[data-slot="aui_assistant-message-actions"]'
+    )
+    expect(assistantActions).toHaveClass("absolute", "top-full")
+
+    const userActions = document.querySelector('[data-slot="aui_user-message-actions"]')
+    expect(userActions).not.toBeInTheDocument()
+
+    const viewport = document.querySelector('[data-slot="aui_thread-viewport"]')
+    expect(viewport).not.toHaveClass("scroll-smooth")
+  })
+
   it("keeps scene conversations out of the default list and renders them as read-only history", async () => {
     conversationsApi.list.mockImplementation(async (params?: { category?: string }) => {
       if (params?.category === "scene") {

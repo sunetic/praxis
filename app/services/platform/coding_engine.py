@@ -109,9 +109,7 @@ class BuiltinReasoningAdapter:
         self._event_callback: Callable[[dict[str, Any]], None] | None = None
         self._build_context: dict[str, Any] = {}
 
-    def set_event_callback(
-        self, callback: Callable[[dict[str, Any]], None] | None
-    ) -> None:
+    def set_event_callback(self, callback: Callable[[dict[str, Any]], None] | None) -> None:
         self._event_callback = callback
 
     def set_build_context(
