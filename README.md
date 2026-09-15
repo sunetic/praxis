@@ -51,31 +51,39 @@ Schedule any agent for recurring execution — daily health checks, weekly index
 
 ## Quick Start
 
+Install Docker Desktop, or Docker Engine with Compose v2, then run:
+
 ```bash
 git clone https://github.com/sunetic/praxis.git
 cd praxis
-docker compose up -d
+docker compose run --build --rm demo-init
 ```
 
-Open [http://localhost:8000](http://localhost:8000) and configure only the AI
-provider in onboarding. Compose automatically creates and verifies the
-`Demo MySQL` datasource and `Demo Prometheus` Service.
+This single Docker Compose command builds the checked-out Praxis source, starts
+the complete stack in the background, runs registration and connection checks
+in the foreground, and then prints the actual addresses and credentials:
 
-Default demo MySQL connection:
+```text
+Praxis demo is ready.
 
-| Field | Default |
-| --- | --- |
-| Address | `127.0.0.1:3308` |
-| Database | `app` |
-| Username | `app` |
-| Password | `praxis-demo-app` |
-| Root password | `praxis-demo-root` |
+  Praxis UI:        http://127.0.0.1:8000
+  Demo MySQL:       127.0.0.1:3308
+    Database:       app
+    Username:       app
+    Password:       praxis-demo-app
+    Root password:  praxis-demo-root
+  Prometheus:       http://127.0.0.1:9090
+  MySQL Exporter:   http://127.0.0.1:9104/metrics
+```
 
-Prometheus is available at
-[http://127.0.0.1:9090](http://127.0.0.1:9090). Run
-`docker compose logs demo-init`; `"status": "ready"` confirms that
-automatic initialization completed. To reset stale or failed demo state, run
-`docker compose down --volumes` and start again. This deletes demo data.
+Open [http://127.0.0.1:8000](http://127.0.0.1:8000) and configure only the AI
+provider in onboarding. The `Demo MySQL` datasource and `Demo Prometheus`
+Service are already registered and verified. Knowledge packs are not downloaded
+automatically; install one from **Knowledge Base → Knowledge Packs** when needed.
+
+Run `docker compose down` to stop the stack. To also reset all demo data, run
+`docker compose down --volumes`, then run the startup command above again.
+Resetting volumes deletes the demo data.
 
 To run Praxis alone and connect your own database instead:
 

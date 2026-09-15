@@ -9,12 +9,12 @@ It must not be used as a production deployment template.
 Prerequisite: Docker with Compose v2.
 
 ```bash
-docker compose -f deployments/demo/docker-compose.yml up -d --build
+docker compose -f deployments/demo/docker-compose.yml run --build --rm demo-init
 ```
 
-Compose uses fixed demo-only credentials, builds Praxis, starts the complete
-stack, initializes the demo objects through the real Praxis HTTP API, and
-verifies both integrations. All published ports bind to `127.0.0.1`; do not use
+Compose builds Praxis, starts the complete stack, initializes the demo objects
+through the real Praxis HTTP API, verifies both integrations, and then prints
+all connection information. All published ports bind to `127.0.0.1`; do not use
 this configuration as a production deployment template.
 
 The default MySQL connection from the host is:
@@ -38,9 +38,11 @@ On a fresh volume the environment already contains:
 
 - a `Demo MySQL` datasource with cluster key `mysql-prometheus-demo`;
 - a cluster-bound `Demo Prometheus` Service whose connection test passes;
-- the installed `Prometheus HTTP API` knowledge pack, linked to the Service;
 - MySQL exporter metrics, two hours of Prometheus retention, and a workload that
   triggers `MySQLConnectionPressure` after approximately 20 seconds.
+
+Knowledge packs remain uninstalled. A user can install the Prometheus pack from
+**Knowledge Base → Knowledge Packs** when it is useful for their workflow.
 
 After onboarding, select `Demo MySQL` in **Chat** and try this request:
 
@@ -64,9 +66,10 @@ docker compose -f deployments/demo/docker-compose.yml down
 docker compose -f deployments/demo/docker-compose.yml down --volumes
 ```
 
-A successful initializer prints `"status": "ready"`. If an older or failed
-demo volume does not contain the two integrations, remove the demo volumes with
-the last command above and start the stack again. This deletes demo-only data.
+A successful initializer prints `Praxis demo is ready.` together with the
+host-side URLs and credentials. If an older or failed demo volume does not
+contain the two integrations, remove the demo volumes with the last command
+above and start the stack again. This deletes demo-only data.
 
 All published ports bind to `127.0.0.1`. To avoid local port conflicts, override
 `PRAXIS_DEMO_PORT`, `DEMO_MYSQL_PORT`, `DEMO_PROMETHEUS_PORT`, or

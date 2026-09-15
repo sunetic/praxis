@@ -83,6 +83,7 @@ lint:
 	$(UV_ENV) uv run ruff check .
 	$(UV_ENV) uv run ruff format --check .
 	tools/check-repository-hygiene.sh
+	cd frontend && npm run lint:i18n
 
 migrate:
 	uv run alembic upgrade head

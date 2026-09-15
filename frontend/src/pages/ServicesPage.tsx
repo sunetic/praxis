@@ -40,6 +40,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Textarea } from "@/components/ui/textarea"
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
+import { useShellI18n } from "@/i18n/shellI18n"
 import { datasourcesApi, knowledgeApi, servicesApi } from "@/lib/api"
 import type {
   DataSource,
@@ -53,15 +54,15 @@ import type {
 const PAGE_SIZE = 10
 
 const PROVIDERS = [
-  { value: "http_api", label: "通用 HTTP API", healthPath: "/health" },
+  { value: "http_api", labelKey: "service.provider.http" as const, healthPath: "/health" },
   { value: "prometheus", label: "Prometheus", healthPath: "/-/ready" },
   { value: "alertmanager", label: "Alertmanager", healthPath: "/-/ready" },
   { value: "grafana", label: "Grafana", healthPath: "/api/health" },
 ] as const
 
 const RESOURCE_TYPES = [
-  { value: "cluster", label: "集群" },
-  { value: "datasource", label: "数据源" },
+  { value: "cluster", labelKey: "service.resource.cluster" as const },
+  { value: "datasource", labelKey: "service.resource.datasource" as const },
 ] as const
 
 type ResourceRefType = (typeof RESOURCE_TYPES)[number]["value"]
@@ -138,19 +139,29 @@ function buildResourceRef(type: ResourceRefType, value: string): string | undefi
   return normalized ? `${type}:${normalized}` : undefined
 }
 
-function parseHeaderMap(text: string, label: string): Record<string, string> {
+function formatCopy(copy: string, key: string, value: string | number): string {
+  return copy.replace(`{${key}}`, String(value))
+}
+
+function parseHeaderMap(
+  text: string,
+  label: string,
+  messages: { invalidJson: string; invalidObject: string; invalidValue: string },
+): Record<string, string> {
   let value: unknown
   try {
     value = JSON.parse(text || "{}")
   } catch {
-    throw new Error(`${label}必须是有效 JSON`)
+    throw new Error(formatCopy(messages.invalidJson, "label", label))
   }
   if (!value || Array.isArray(value) || typeof value !== "object") {
-    throw new Error(`${label}必须是键值对象`)
+    throw new Error(formatCopy(messages.invalidObject, "label", label))
   }
   const result: Record<string, string> = {}
   for (const [key, item] of Object.entries(value)) {
-    if (typeof item !== "string") throw new Error(`${label}中的值必须是字符串`)
+    if (typeof item !== "string") {
+      throw new Error(formatCopy(messages.invalidValue, "label", label))
+    }
     result[key] = item
   }
   return result
@@ -160,11 +171,13 @@ function resolveResourceLabel(
   ref: string | null | undefined,
   datasourceById: Map<string, DataSource>,
   clusterKeySet: Set<string>,
+  noneLabel: string,
+  staleLabel: string,
 ): string {
   const { type, value } = parseResourceRef(ref)
-  if (!value) return "未关联"
-  if (type === "datasource") return datasourceById.get(value)?.name || "引用已失效"
-  return clusterKeySet.has(value) ? value : "引用已失效"
+  if (!value) return noneLabel
+  if (type === "datasource") return datasourceById.get(value)?.name || staleLabel
+  return clusterKeySet.has(value) ? value : staleLabel
 }
 
 function ActionButton({
@@ -183,6 +196,7 @@ function ActionButton({
 }
 
 export function ServicesPage() {
+  const { t } = useShellI18n()
   const [services, setServices] = useState<Service[]>([])
   const [datasources, setDatasources] = useState<DataSource[]>([])
   const [knowledgeBases, setKnowledgeBases] = useState<KnowledgeBase[]>([])
@@ -224,7 +238,7 @@ export function ServicesPage() {
       setDatasources(Array.isArray(datasourceList) ? datasourceList : [])
       setKnowledgeBases(Array.isArray(kbList) ? kbList : [])
     } catch (cause) {
-      setError(getErrorMessage(cause, "服务列表加载失败"))
+      setError(getErrorMessage(cause, t("service.loadFailed")))
     } finally {
       setLoading(false)
     }
@@ -237,11 +251,17 @@ export function ServicesPage() {
     return services.filter((service) => {
       if (providerFilter !== "all" && service.service_type !== providerFilter) return false
       if (!query) return true
-      const resource = resolveResourceLabel(service.resource_ref, datasourceById, clusterKeySet)
+      const resource = resolveResourceLabel(
+        service.resource_ref,
+        datasourceById,
+        clusterKeySet,
+        t("service.resource.none"),
+        t("service.resource.stale"),
+      )
       return [service.name, service.service_type, service.config?.base_url || "", resource]
         .some((value) => value.toLowerCase().includes(query))
     })
-  }, [clusterKeySet, datasourceById, providerFilter, searchQuery, services])
+  }, [clusterKeySet, datasourceById, providerFilter, searchQuery, services, t])
 
   const paged = useMemo(() => {
     const start = (page - 1) * PAGE_SIZE
@@ -280,8 +300,21 @@ export function ServicesPage() {
   }
 
   function buildPayload(): ServiceInput {
-    const defaultHeaders = parseHeaderMap(form.defaultHeadersText, "默认 Header")
-    const secretHeaders = parseHeaderMap(form.secretHeadersText, "加密 Header")
+    const headerErrors = {
+      invalidJson: t("service.error.invalidJson"),
+      invalidObject: t("service.error.invalidObject"),
+      invalidValue: t("service.error.invalidValue"),
+    }
+    const defaultHeaders = parseHeaderMap(
+      form.defaultHeadersText,
+      t("service.defaultHeaders"),
+      headerErrors,
+    )
+    const secretHeaders = parseHeaderMap(
+      form.secretHeadersText,
+      t("service.secretHeaders"),
+      headerErrors,
+    )
     return {
       name: form.name.trim(),
       service_type: form.service_type,
@@ -298,15 +331,15 @@ export function ServicesPage() {
       const payload = buildPayload()
       if (editingService) {
         await servicesApi.update(editingService.id, payload)
-        toast.success("服务配置已更新")
+        toast.success(t("service.updated"))
       } else {
         await servicesApi.create(payload)
-        toast.success("外部服务已创建")
+        toast.success(t("service.created"))
       }
       setDialogOpen(false)
       await fetchData()
     } catch (cause) {
-      toast.error(getErrorMessage(cause, "保存失败"))
+      toast.error(getErrorMessage(cause, t("service.saveFailed")))
     } finally {
       setSaving(false)
     }
@@ -319,12 +352,12 @@ export function ServicesPage() {
         ? await servicesApi.testUpdateConfig(editingService.id, buildPayload())
         : await servicesApi.testConfig(buildPayload())
       if (result.success) {
-        toast.success(`连接成功${result.http_status ? ` · HTTP ${result.http_status}` : ""}`)
+        toast.success(`${t("service.connectSuccess")}${result.http_status ? ` · HTTP ${result.http_status}` : ""}`)
       } else {
-        toast.error(result.message || "连接失败")
+        toast.error(result.message || t("service.connectFailed"))
       }
     } catch (cause) {
-      toast.error(getErrorMessage(cause, "测试连接失败"))
+      toast.error(getErrorMessage(cause, t("service.testFailed")))
     } finally {
       setTesting(false)
     }
@@ -335,12 +368,12 @@ export function ServicesPage() {
     try {
       const result = await servicesApi.test(service.id)
       if (result.success) {
-        toast.success(`${service.name} 连接正常`)
+        toast.success(formatCopy(t("service.rowHealthy"), "name", service.name))
       } else {
-        toast.error(result.message || "连接失败")
+        toast.error(result.message || t("service.connectFailed"))
       }
     } catch (cause) {
-      toast.error(getErrorMessage(cause, "测试连接失败"))
+      toast.error(getErrorMessage(cause, t("service.testFailed")))
     } finally {
       setRowTestingId(null)
     }
@@ -351,11 +384,11 @@ export function ServicesPage() {
     setDeleting(true)
     try {
       await servicesApi.delete(deleteTarget.id)
-      toast.success("服务已删除")
+      toast.success(t("service.deleted"))
       setDeleteTarget(null)
       await fetchData()
     } catch (cause) {
-      toast.error(getErrorMessage(cause, "删除失败"))
+      toast.error(getErrorMessage(cause, t("service.deleteFailed")))
     } finally {
       setDeleting(false)
     }
@@ -390,10 +423,13 @@ export function ServicesPage() {
         <Select value={providerFilter} onValueChange={setProviderFilter}>
           <SelectTrigger className="w-44 bg-card"><SelectValue /></SelectTrigger>
           <SelectContent>
-            <SelectItem value="all">全部类型</SelectItem>
+            <SelectItem value="all">{t("service.filterAll")}</SelectItem>
             {providerOptions.map((value) => (
               <SelectItem key={value} value={value}>
-                {PROVIDERS.find((item) => item.value === value)?.label || value}
+                {(() => {
+                  const provider = PROVIDERS.find((item) => item.value === value)
+                  return provider && "labelKey" in provider ? t(provider.labelKey) : provider?.label || value
+                })()}
               </SelectItem>
             ))}
           </SelectContent>
@@ -401,8 +437,8 @@ export function ServicesPage() {
         <div className="relative">
           <Search className="pointer-events-none absolute left-3 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground/60" />
           <Input
-            aria-label="搜索服务"
-            placeholder="搜索名称、地址或关联资源"
+            aria-label={t("service.searchAria")}
+            placeholder={t("service.searchPlaceholder")}
             className="w-72 rounded-lg bg-card pl-9 text-sm"
             value={searchQuery}
             onChange={(event) => setSearchQuery(event.target.value)}
@@ -412,9 +448,9 @@ export function ServicesPage() {
       <FilterToolbarGroup>
         <Button variant="outline" size="sm" onClick={() => void fetchData()} disabled={loading}>
           {loading ? <Loader2 className="size-4 animate-spin" /> : <RefreshCw className="size-4" />}
-          刷新
+          {t("service.refresh")}
         </Button>
-        <Button size="sm" onClick={openCreateDialog}><Plus className="size-4" />新增服务</Button>
+        <Button size="sm" onClick={openCreateDialog}><Plus className="size-4" />{t("service.create")}</Button>
       </FilterToolbarGroup>
     </FilterToolbar>
   )
@@ -428,7 +464,7 @@ export function ServicesPage() {
           <div className="flex flex-col items-center gap-3">
             <Plug className="size-8 text-negative/60" />
             <p className="text-sm text-negative">{error}</p>
-            <Button variant="outline" size="sm" onClick={() => void fetchData()}>重试</Button>
+            <Button variant="outline" size="sm" onClick={() => void fetchData()}>{t("service.retry")}</Button>
           </div>
         </TableCell></TableRow>
       )
@@ -439,10 +475,10 @@ export function ServicesPage() {
           <div className="flex flex-col items-center gap-3">
             <Plug className="size-8 text-muted-foreground/40" />
             <div>
-              <p className="text-sm text-foreground">{searchQuery || providerFilter !== "all" ? "没有匹配的服务" : "还没有外部服务"}</p>
-              <p className="mt-1 text-xs text-muted-foreground">关联监控或客户自建 API，让 Chat 获得数据库之外的证据。</p>
+              <p className="text-sm text-foreground">{searchQuery || providerFilter !== "all" ? t("service.emptyNoMatch") : t("service.emptyNone")}</p>
+              <p className="mt-1 text-xs text-muted-foreground">{t("service.emptyDesc")}</p>
             </div>
-            {!searchQuery && providerFilter === "all" && <Button size="sm" onClick={openCreateDialog}>添加第一个服务</Button>}
+            {!searchQuery && providerFilter === "all" && <Button size="sm" onClick={openCreateDialog}>{t("service.emptyAdd")}</Button>}
           </div>
         </TableCell></TableRow>
       )
@@ -456,25 +492,28 @@ export function ServicesPage() {
               <p className="truncate text-sm font-medium text-foreground">{service.name}</p>
               <div className="mt-1 flex items-center gap-1.5 text-xs text-muted-foreground">
                 <span className={`size-1.5 rounded-full ${service.status === "active" ? "bg-positive" : "bg-muted-foreground"}`} />
-                {service.status === "active" ? "可用" : "已停用"}
+                {service.status === "active" ? t("service.status.active") : t("service.status.inactive")}
                 {service.has_credentials && <KeyRound className="ml-1 size-3" />}
               </div>
             </div>
           </div>
         </TableCell>
-        <TableCell><Badge variant="outline">{PROVIDERS.find((item) => item.value === service.service_type)?.label || service.service_type}</Badge></TableCell>
+        <TableCell><Badge variant="outline">{(() => {
+          const provider = PROVIDERS.find((item) => item.value === service.service_type)
+          return provider && "labelKey" in provider ? t(provider.labelKey) : provider?.label || service.service_type
+        })()}</Badge></TableCell>
         <TableCell className="max-w-64 truncate font-mono text-xs text-muted-foreground">{service.config?.base_url || "—"}</TableCell>
-        <TableCell className="text-sm text-muted-foreground">{resolveResourceLabel(service.resource_ref, datasourceById, clusterKeySet)}</TableCell>
+        <TableCell className="text-sm text-muted-foreground">{resolveResourceLabel(service.resource_ref, datasourceById, clusterKeySet, t("service.resource.none"), t("service.resource.stale"))}</TableCell>
         <TableCell>
           <div className="flex items-center gap-1.5 text-sm text-muted-foreground"><BookOpen className="size-3.5" />{service.knowledge_base_ids?.length || 0}</div>
         </TableCell>
         <TableCell className="text-right" onClick={(event) => event.stopPropagation()}>
           <div className="flex items-center justify-end gap-1">
-            <ActionButton label="测试连接" variant="ghost" size="icon-xs" disabled={rowTestingId === service.id} onClick={() => void handleTestConnection(service)}>
+            <ActionButton label={t("service.action.test")} variant="ghost" size="icon-xs" disabled={rowTestingId === service.id} onClick={() => void handleTestConnection(service)}>
               {rowTestingId === service.id ? <Loader2 className="size-3.5 animate-spin" /> : <Zap className="size-3.5" />}
             </ActionButton>
-            <ActionButton label="编辑服务" variant="ghost" size="icon-xs" onClick={() => openEditDialog(service)}><Pencil className="size-3.5" /></ActionButton>
-            <ActionButton label="删除服务" variant="ghost" size="icon-xs" className="text-destructive hover:text-destructive" onClick={() => setDeleteTarget(service)}><Trash2 className="size-3.5" /></ActionButton>
+            <ActionButton label={t("service.action.edit")} variant="ghost" size="icon-xs" onClick={() => openEditDialog(service)}><Pencil className="size-3.5" /></ActionButton>
+            <ActionButton label={t("service.action.delete")} variant="ghost" size="icon-xs" className="text-destructive hover:text-destructive" onClick={() => setDeleteTarget(service)}><Trash2 className="size-3.5" /></ActionButton>
           </div>
         </TableCell>
       </TableRow>
@@ -484,14 +523,14 @@ export function ServicesPage() {
   const primary = (
     <div className="rounded-xl bg-card shadow-sm">
       <div className="flex items-center gap-4 border-b border-border px-5 py-3">
-        <Tabs value="all" onValueChange={() => {}}><TabsList><TabsTrigger value="all">外部服务</TabsTrigger></TabsList></Tabs>
-        <span className="text-xs tabular-nums text-muted-foreground">{filtered.length} 项结果</span>
+        <Tabs value="all" onValueChange={() => {}}><TabsList><TabsTrigger value="all">{t("service.tabAll")}</TabsTrigger></TabsList></Tabs>
+        <span className="text-xs tabular-nums text-muted-foreground">{filtered.length} {t("service.resultCount")}</span>
       </div>
       <ListTable className="overflow-hidden rounded-none border-0">
         <Table>
           <TableHeader><TableRow className="hover:bg-transparent">
-            <TableHead>名称</TableHead><TableHead>类型</TableHead><TableHead>API 地址</TableHead>
-            <TableHead>关联资源</TableHead><TableHead>文档</TableHead><TableHead className="text-right">操作</TableHead>
+            <TableHead>{t("service.col.name")}</TableHead><TableHead>{t("service.col.type")}</TableHead><TableHead>{t("service.col.address")}</TableHead>
+            <TableHead>{t("service.col.resource")}</TableHead><TableHead>{t("service.col.documents")}</TableHead><TableHead className="text-right">{t("service.col.actions")}</TableHead>
           </TableRow></TableHeader>
           <TableBody>{renderTableBody()}</TableBody>
         </Table>
@@ -507,26 +546,26 @@ export function ServicesPage() {
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
         <DialogContent className="flex h-[90vh] max-h-192 flex-col overflow-hidden sm:max-w-2xl">
           <DialogHeader>
-            <DialogTitle>{editingService ? "编辑外部服务" : "连接外部服务"}</DialogTitle>
-            <DialogDescription>配置通用 HTTP API，并把服务关联到数据源及其文档。</DialogDescription>
+            <DialogTitle>{editingService ? t("service.dialogEdit") : t("service.dialogCreate")}</DialogTitle>
+            <DialogDescription>{t("service.dialogDesc")}</DialogDescription>
           </DialogHeader>
 
           <ScrollArea className="h-0 min-h-0 flex-1 [&>[data-slot=scroll-area-viewport]]:absolute [&>[data-slot=scroll-area-viewport]]:inset-0">
             <div className="space-y-5 pr-4">
             <section className="grid gap-4 sm:grid-cols-2">
               <div>
-                <label className="mb-1.5 block text-sm font-medium">名称</label>
-                <Input value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} placeholder="生产 Prometheus" />
+                <label className="mb-1.5 block text-sm font-medium">{t("service.label.name")}</label>
+                <Input value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} placeholder={t("service.namePlaceholder")} />
               </div>
               <div>
-                <label className="mb-1.5 block text-sm font-medium">服务类型</label>
+                <label className="mb-1.5 block text-sm font-medium">{t("service.label.type")}</label>
                 <Select value={form.service_type} onValueChange={(value) => {
                   const preset = PROVIDERS.find((item) => item.value === value)
                   setForm((current) => ({ ...current, service_type: value, config: { ...current.config, health_check_path: preset?.healthPath || current.config.health_check_path } }))
                 }}>
                   <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
                   <SelectContent>
-                    {PROVIDERS.map((item) => <SelectItem key={item.value} value={item.value}>{item.label}</SelectItem>)}
+                    {PROVIDERS.map((item) => <SelectItem key={item.value} value={item.value}>{"labelKey" in item ? t(item.labelKey) : item.label}</SelectItem>)}
                     {editingService && !PROVIDERS.some((item) => item.value === editingService.service_type) && <SelectItem value={editingService.service_type}>{editingService.service_type}</SelectItem>}
                   </SelectContent>
                 </Select>
@@ -536,63 +575,63 @@ export function ServicesPage() {
             <section className="rounded-lg border border-border bg-muted/10 p-4">
               <div className="grid gap-4 sm:grid-cols-[1fr_160px]">
                 <div>
-                  <label className="mb-1.5 block text-sm font-medium">Base URL</label>
-                  <Input value={form.config.base_url} onChange={(event) => updateConfig("base_url", event.target.value)} placeholder="http://prometheus:9090" />
+                  <label className="mb-1.5 block text-sm font-medium">{t("service.label.baseUrl")}</label>
+                  <Input value={form.config.base_url} onChange={(event) => updateConfig("base_url", event.target.value)} placeholder={t("service.example.baseUrl")} />
                 </div>
                 <div>
-                  <label className="mb-1.5 block text-sm font-medium">响应格式</label>
+                  <label className="mb-1.5 block text-sm font-medium">{t("service.label.response")}</label>
                   <Select value={form.config.response_format} onValueChange={(value) => updateConfig("response_format", value as ServiceHTTPConfig["response_format"])}>
                     <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
-                    <SelectContent><SelectItem value="auto">自动识别</SelectItem><SelectItem value="json">JSON</SelectItem><SelectItem value="text">文本</SelectItem></SelectContent>
+                    <SelectContent><SelectItem value="auto">{t("service.response.auto")}</SelectItem><SelectItem value="json">{t("service.response.json")}</SelectItem><SelectItem value="text">{t("service.response.text")}</SelectItem></SelectContent>
                   </Select>
                 </div>
               </div>
               <div className="mt-4 grid gap-4 sm:grid-cols-[1fr_160px]">
                 <div>
-                  <label className="mb-1.5 block text-sm font-medium">健康检查路径</label>
-                  <Input value={form.config.health_check_path} onChange={(event) => updateConfig("health_check_path", event.target.value)} placeholder="/-/ready" />
+                  <label className="mb-1.5 block text-sm font-medium">{t("service.label.healthPath")}</label>
+                  <Input value={form.config.health_check_path} onChange={(event) => updateConfig("health_check_path", event.target.value)} placeholder={t("service.example.healthPath")} />
                 </div>
                 <div>
-                  <label className="mb-1.5 block text-sm font-medium">超时（秒）</label>
+                  <label className="mb-1.5 block text-sm font-medium">{t("service.label.timeout")}</label>
                   <Input type="number" min={1} max={120} value={form.config.timeout_seconds} onChange={(event) => updateConfig("timeout_seconds", Number(event.target.value) || 30)} />
                 </div>
               </div>
             </section>
 
             <section className="rounded-lg border border-border bg-muted/10 p-4">
-              <div className="mb-4 flex items-center gap-2"><KeyRound className="size-4 text-muted-foreground" /><h3 className="text-sm font-medium">认证</h3>{editingService?.has_credentials && <Badge variant="secondary">已保存凭据</Badge>}</div>
+              <div className="mb-4 flex items-center gap-2"><KeyRound className="size-4 text-muted-foreground" /><h3 className="text-sm font-medium">{t("service.auth.title")}</h3>{editingService?.has_credentials && <Badge variant="secondary">{t("service.auth.saved")}</Badge>}</div>
               <div className="grid gap-4 sm:grid-cols-2">
                 <div>
-                  <label className="mb-1.5 block text-sm font-medium">认证方式</label>
+                  <label className="mb-1.5 block text-sm font-medium">{t("service.auth.type")}</label>
                   <Select value={authType} onValueChange={(value) => updateAuthType(value as AuthType)}>
                     <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
-                    <SelectContent><SelectItem value="none">无需认证</SelectItem><SelectItem value="basic">Basic Auth</SelectItem><SelectItem value="bearer">Bearer Token</SelectItem><SelectItem value="api_key">API Key</SelectItem></SelectContent>
+                    <SelectContent><SelectItem value="none">{t("service.auth.none")}</SelectItem><SelectItem value="basic">{t("service.auth.basic")}</SelectItem><SelectItem value="bearer">{t("service.auth.bearer")}</SelectItem><SelectItem value="api_key">{t("service.auth.apiKey")}</SelectItem></SelectContent>
                   </Select>
                 </div>
                 {authType === "basic" && <>
-                  <div><label className="mb-1.5 block text-sm font-medium">用户名</label><Input autoComplete="off" value={form.secrets.username || ""} onChange={(event) => setForm({ ...form, secrets: { ...form.secrets, username: event.target.value } })} /></div>
-                  <div><label className="mb-1.5 block text-sm font-medium">密码</label><Input type="password" autoComplete="new-password" value={form.secrets.password || ""} onChange={(event) => setForm({ ...form, secrets: { ...form.secrets, password: event.target.value } })} placeholder={editingService?.has_credentials ? "留空保留原密码" : "输入密码"} /></div>
+                  <div><label className="mb-1.5 block text-sm font-medium">{t("service.auth.username")}</label><Input autoComplete="off" value={form.secrets.username || ""} onChange={(event) => setForm({ ...form, secrets: { ...form.secrets, username: event.target.value } })} /></div>
+                  <div><label className="mb-1.5 block text-sm font-medium">{t("service.auth.password")}</label><Input type="password" autoComplete="new-password" value={form.secrets.password || ""} onChange={(event) => setForm({ ...form, secrets: { ...form.secrets, password: event.target.value } })} placeholder={editingService?.has_credentials ? t("service.auth.keepPassword") : t("service.auth.enterPassword")} /></div>
                 </>}
-                {authType === "bearer" && <div><label className="mb-1.5 block text-sm font-medium">Bearer Token</label><Input type="password" autoComplete="new-password" value={form.secrets.bearer_token || ""} onChange={(event) => setForm({ ...form, secrets: { ...form.secrets, bearer_token: event.target.value } })} placeholder={editingService?.has_credentials ? "留空保留原 Token" : "输入 Token"} /></div>}
+                {authType === "bearer" && <div><label className="mb-1.5 block text-sm font-medium">{t("service.auth.bearer")}</label><Input type="password" autoComplete="new-password" value={form.secrets.bearer_token || ""} onChange={(event) => setForm({ ...form, secrets: { ...form.secrets, bearer_token: event.target.value } })} placeholder={editingService?.has_credentials ? t("service.auth.keepToken") : t("service.auth.enterToken")} /></div>}
                 {authType === "api_key" && <>
-                  <div><label className="mb-1.5 block text-sm font-medium">Header 名称</label><Input value={form.config.api_key_header} onChange={(event) => updateConfig("api_key_header", event.target.value)} /></div>
-                  <div><label className="mb-1.5 block text-sm font-medium">API Key</label><Input type="password" autoComplete="new-password" value={form.secrets.api_key || ""} onChange={(event) => setForm({ ...form, secrets: { ...form.secrets, api_key: event.target.value } })} placeholder={editingService?.has_credentials ? "留空保留原 Key" : "输入 API Key"} /></div>
+                  <div><label className="mb-1.5 block text-sm font-medium">{t("service.auth.headerName")}</label><Input value={form.config.api_key_header} onChange={(event) => updateConfig("api_key_header", event.target.value)} /></div>
+                  <div><label className="mb-1.5 block text-sm font-medium">{t("service.auth.apiKey")}</label><Input type="password" autoComplete="new-password" value={form.secrets.api_key || ""} onChange={(event) => setForm({ ...form, secrets: { ...form.secrets, api_key: event.target.value } })} placeholder={editingService?.has_credentials ? t("service.auth.keepKey") : t("service.auth.enterKey")} /></div>
                 </>}
               </div>
             </section>
 
             <section className="grid gap-4 sm:grid-cols-2">
               <div>
-                <label className="mb-1.5 block text-sm font-medium">关联资源</label>
+                <label className="mb-1.5 block text-sm font-medium">{t("service.resource.label")}</label>
                 <div className="grid grid-cols-[120px_1fr] gap-2">
                   <Select value={form.resourceType} onValueChange={(value) => setForm({ ...form, resourceType: value as ResourceRefType, resourceValue: "" })}>
                     <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
-                    <SelectContent>{RESOURCE_TYPES.map((item) => <SelectItem key={item.value} value={item.value}>{item.label}</SelectItem>)}</SelectContent>
+                    <SelectContent>{RESOURCE_TYPES.map((item) => <SelectItem key={item.value} value={item.value}>{t(item.labelKey)}</SelectItem>)}</SelectContent>
                   </Select>
                   <Select value={form.resourceValue || "__none__"} onValueChange={(value) => setForm({ ...form, resourceValue: value === "__none__" ? "" : value })}>
-                    <SelectTrigger className="w-full"><SelectValue placeholder="选择关联资源" /></SelectTrigger>
+                    <SelectTrigger className="w-full"><SelectValue placeholder={t("service.resource.select")} /></SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="__none__">不关联</SelectItem>
+                      <SelectItem value="__none__">{t("service.resource.doNotLink")}</SelectItem>
                       {form.resourceType === "cluster"
                         ? clusterKeys.map((key) => <SelectItem key={key} value={key}>{key}</SelectItem>)
                         : datasources.map((item) => <SelectItem key={item.id} value={String(item.id)}>{item.name}</SelectItem>)}
@@ -602,30 +641,30 @@ export function ServicesPage() {
               </div>
               <div className="flex items-end pb-2">
                 <div className="flex w-full items-center justify-between rounded-lg border border-border px-3 py-2">
-                  <div className="flex items-center gap-2"><ShieldCheck className="size-4 text-muted-foreground" /><div><p className="text-sm font-medium">校验 TLS 证书</p><p className="text-xs text-muted-foreground">生产环境建议保持开启</p></div></div>
+                  <div className="flex items-center gap-2"><ShieldCheck className="size-4 text-muted-foreground" /><div><p className="text-sm font-medium">{t("service.tls.title")}</p><p className="text-xs text-muted-foreground">{t("service.tls.hint")}</p></div></div>
                   <Switch checked={form.config.verify_tls} onCheckedChange={(checked) => updateConfig("verify_tls", checked)} />
                 </div>
               </div>
             </section>
 
             <section>
-              <div className="mb-2 flex items-center gap-2"><BookOpen className="size-4 text-muted-foreground" /><h3 className="text-sm font-medium">关联 API 文档</h3></div>
+              <div className="mb-2 flex items-center gap-2"><BookOpen className="size-4 text-muted-foreground" /><h3 className="text-sm font-medium">{t("service.docs.title")}</h3></div>
               {knowledgeBases.length ? <ScrollArea className="h-40 rounded-lg border border-border"><div className="grid gap-2 p-3 sm:grid-cols-2">
                 {knowledgeBases.map((kb) => <label key={kb.id} className="flex cursor-pointer items-start gap-2 rounded-lg p-2 transition-colors hover:bg-muted/50">
                   <Checkbox checked={form.knowledge_base_ids.includes(kb.id)} onCheckedChange={(checked) => toggleKnowledgeBase(kb.id, checked === true)} />
-                  <span className="min-w-0"><span className="block truncate text-sm font-medium">{kb.name}</span><span className="text-xs text-muted-foreground">{kb.document_count} 篇文档</span></span>
+                  <span className="min-w-0"><span className="block truncate text-sm font-medium">{kb.name}</span><span className="text-xs text-muted-foreground">{formatCopy(t("service.docs.count"), "count", kb.document_count)}</span></span>
                 </label>)}
-              </div></ScrollArea> : <div className="rounded-lg border border-dashed border-border p-4 text-sm text-muted-foreground">请先在知识库页面安装或上传对应 API 文档。</div>}
+              </div></ScrollArea> : <div className="rounded-lg border border-dashed border-border p-4 text-sm text-muted-foreground">{t("service.docs.empty")}</div>}
             </section>
 
             <Collapsible open={advancedOpen} onOpenChange={setAdvancedOpen}>
-              <CollapsibleTrigger asChild><Button variant="ghost" className="w-full justify-between">高级 Header 配置<ChevronDown className={`size-4 transition-transform ${advancedOpen ? "rotate-180" : ""}`} /></Button></CollapsibleTrigger>
+              <CollapsibleTrigger asChild><Button variant="ghost" className="w-full justify-between">{t("service.advanced")}<ChevronDown className={`size-4 transition-transform ${advancedOpen ? "rotate-180" : ""}`} /></Button></CollapsibleTrigger>
               <CollapsibleContent className="pt-3">
                 <div ref={revealAdvancedContent} className="grid gap-4 sm:grid-cols-2">
-                  <div><label htmlFor="service-default-headers" className="mb-1.5 block text-sm font-medium">默认 Header（JSON）</label><Textarea id="service-default-headers" className="min-h-28 font-mono text-xs" value={form.defaultHeadersText} onChange={(event) => setForm({ ...form, defaultHeadersText: event.target.value })} /></div>
-                  <div><label htmlFor="service-secret-headers" className="mb-1.5 block text-sm font-medium">加密 Header（JSON）</label><Textarea id="service-secret-headers" className="min-h-28 font-mono text-xs" value={form.secretHeadersText} onChange={(event) => setForm({ ...form, secretHeadersText: event.target.value })} placeholder={'{"X-Custom-Token":"..."}'} /></div>
+                  <div><label htmlFor="service-default-headers" className="mb-1.5 block text-sm font-medium">{t("service.defaultHeadersJson")}</label><Textarea id="service-default-headers" className="min-h-28 font-mono text-xs" value={form.defaultHeadersText} onChange={(event) => setForm({ ...form, defaultHeadersText: event.target.value })} /></div>
+                  <div><label htmlFor="service-secret-headers" className="mb-1.5 block text-sm font-medium">{t("service.secretHeadersJson")}</label><Textarea id="service-secret-headers" className="min-h-28 font-mono text-xs" value={form.secretHeadersText} onChange={(event) => setForm({ ...form, secretHeadersText: event.target.value })} placeholder={'{"X-Custom-Token":"..."}'} /></div>
                   <div className="flex items-center justify-between rounded-lg border border-border px-3 py-2 sm:col-span-2">
-                    <div><p className="text-sm font-medium">继承服务端环境代理</p><p className="text-xs text-muted-foreground">仅外部 API 需要 HTTP(S) 代理时开启；内网服务建议关闭。</p></div>
+                    <div><p className="text-sm font-medium">{t("service.proxy.title")}</p><p className="text-xs text-muted-foreground">{t("service.proxy.hint")}</p></div>
                     <Switch checked={form.config.use_environment_proxy} onCheckedChange={(checked) => updateConfig("use_environment_proxy", checked)} />
                   </div>
                 </div>
@@ -636,14 +675,14 @@ export function ServicesPage() {
 
           <DialogFooter className="mt-2 flex items-center justify-between sm:justify-between">
             <Button variant="outline" onClick={() => void handleTestInDialog()} disabled={testing || !form.config.base_url}>
-              {testing ? <Loader2 className="size-4 animate-spin" /> : <Zap className="size-4" />}测试连接
+              {testing ? <Loader2 className="size-4 animate-spin" /> : <Zap className="size-4" />}{t("service.action.test")}
             </Button>
-            <div className="flex gap-2"><Button variant="outline" onClick={() => setDialogOpen(false)}>取消</Button><Button onClick={() => void handleSave()} disabled={saving || !form.name.trim() || !form.config.base_url.trim()}>{saving && <Loader2 className="size-4 animate-spin" />}{editingService ? "保存" : "创建"}</Button></div>
+            <div className="flex gap-2"><Button variant="outline" onClick={() => setDialogOpen(false)}>{t("service.cancel")}</Button><Button onClick={() => void handleSave()} disabled={saving || !form.name.trim() || !form.config.base_url.trim()}>{saving && <Loader2 className="size-4 animate-spin" />}{editingService ? t("service.save") : t("service.submitCreate")}</Button></div>
           </DialogFooter>
         </DialogContent>
       </Dialog>
 
-      <ConfirmActionDialog open={!!deleteTarget} title="删除服务" description={`确认删除服务「${deleteTarget?.name}」？关联关系也会被移除。`} onOpenChange={(open) => !open && setDeleteTarget(null)} onConfirm={handleDelete} confirming={deleting} />
+      <ConfirmActionDialog open={!!deleteTarget} title={t("service.deleteTitle")} description={formatCopy(t("service.deleteDesc"), "name", deleteTarget?.name || "")} onOpenChange={(open) => !open && setDeleteTarget(null)} onConfirm={handleDelete} confirming={deleting} />
     </TooltipProvider>
   )
 }

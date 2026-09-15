@@ -11,8 +11,8 @@ from urllib.request import ProxyHandler, Request, build_opener
 
 API_URL = os.getenv("PRAXIS_API_URL", "http://praxis-demo:8000/api/v1").rstrip("/")
 MYSQL_PASSWORD = os.environ["DEMO_MYSQL_APP_PASSWORD"]
+MYSQL_ROOT_PASSWORD = os.environ["DEMO_MYSQL_ROOT_PASSWORD"]
 CLUSTER_KEY = "mysql-prometheus-demo"
-PROMETHEUS_PACK_ID = "prometheus-http-api"
 OPENER = build_opener(ProxyHandler({}))
 
 
@@ -103,8 +103,8 @@ def ensure_datasource() -> dict[str, Any]:
     )
 
 
-def ensure_service(knowledge_base_id: int | None = None) -> dict[str, Any]:
-    """Create the cluster-bound Prometheus Service and optionally link its pack."""
+def ensure_service() -> dict[str, Any]:
+    """Create the cluster-bound Prometheus Service once."""
     services = api_request("GET", "/services")
     existing = next(
         (
@@ -116,14 +116,6 @@ def ensure_service(knowledge_base_id: int | None = None) -> dict[str, Any]:
         None,
     )
     if existing:
-        knowledge_base_ids = list(existing.get("knowledge_base_ids") or [])
-        if knowledge_base_id is not None and knowledge_base_id not in knowledge_base_ids:
-            knowledge_base_ids.append(knowledge_base_id)
-            return api_request(
-                "PATCH",
-                f"/services/{existing['id']}",
-                {"knowledge_base_ids": knowledge_base_ids},
-            )
         return existing
     return api_request(
         "POST",
@@ -143,7 +135,7 @@ def ensure_service(knowledge_base_id: int | None = None) -> dict[str, Any]:
                 "max_response_bytes": 262144,
             },
             "resource_ref": f"cluster:{CLUSTER_KEY}",
-            "knowledge_base_ids": ([knowledge_base_id] if knowledge_base_id is not None else []),
+            "knowledge_base_ids": [],
         },
     )
 
@@ -151,6 +143,7 @@ def ensure_service(knowledge_base_id: int | None = None) -> dict[str, Any]:
 def wait_for_connections(datasource_id: int, service_id: int, timeout_seconds: int = 120) -> None:
     """Verify both preconfigured integrations before reporting success."""
     deadline = time.monotonic() + timeout_seconds
+    next_progress = 0.0
     last_results: tuple[Any, Any] = (None, None)
     while time.monotonic() < deadline:
         database = api_request("POST", f"/datasources/{datasource_id}/test", {})
@@ -158,73 +151,65 @@ def wait_for_connections(datasource_id: int, service_id: int, timeout_seconds: i
         last_results = (database, service)
         if database.get("success") and service.get("success"):
             return
+        now = time.monotonic()
+        if now >= next_progress:
+            print(
+                "  Still waiting: "
+                f"MySQL={database.get('message', 'unknown')}; "
+                f"Prometheus={service.get('message', 'unknown')}",
+                flush=True,
+            )
+            next_progress = now + 10
         time.sleep(3)
     raise DemoInitError(f"Demo connections did not become ready: {last_results!r}")
 
 
-def ensure_knowledge_pack(timeout_seconds: int = 120) -> dict[str, Any]:
-    """Install the bundled Prometheus pack and return its knowledge-base ID."""
-    packs = api_request("GET", "/knowledge-packs")
-    pack = next((item for item in packs if item.get("id") == PROMETHEUS_PACK_ID), None)
-    if not pack:
-        raise DemoInitError("Bundled Prometheus knowledge pack is missing")
-    if pack.get("status") == "installed" and pack.get("kb_id"):
-        return pack
-    if pack.get("status") == "available":
-        api_request("POST", f"/knowledge-packs/{PROMETHEUS_PACK_ID}/install", {})
-
-    deadline = time.monotonic() + timeout_seconds
-    while time.monotonic() < deadline:
-        status = api_request("GET", f"/knowledge-packs/{PROMETHEUS_PACK_ID}/status")
-        if status.get("status") == "installed" and status.get("kb_id"):
-            return status
-        if status.get("status") == "error":
-            raise DemoInitError(
-                "Prometheus knowledge pack installation failed: "
-                f"{status.get('error_message') or 'unknown error'}"
-            )
-        time.sleep(0.5)
-    raise DemoInitError("Prometheus knowledge pack installation timed out")
+def verify_registration(datasource_id: int, service_id: int) -> None:
+    """Confirm fresh list calls expose both objects to the same API used by the UI."""
+    datasources = api_request("GET", "/datasources")
+    services = api_request("GET", "/services")
+    datasource_visible = any(
+        int(item.get("id", -1)) == datasource_id and item.get("name") == "Demo MySQL"
+        for item in datasources
+    )
+    service_visible = any(
+        int(item.get("id", -1)) == service_id and item.get("name") == "Demo Prometheus"
+        for item in services
+    )
+    if not datasource_visible or not service_visible:
+        raise DemoInitError(
+            "Demo objects were not visible through list APIs: "
+            f"datasource={datasource_visible}, service={service_visible}"
+        )
 
 
 def main() -> None:
     """Initialize and verify all first-run demo objects."""
+    print("[1/4] Waiting for the Praxis API...", flush=True)
     wait_for_praxis()
-    # Register both visible integrations first. Knowledge-pack installation is a
-    # separate enrichment step and must not leave the demo looking empty.
+    print("[2/4] Registering Demo MySQL and Demo Prometheus...", flush=True)
     datasource = retry_step("Demo MySQL registration", ensure_datasource)
     service = retry_step("Demo Prometheus registration", ensure_service)
+    print("[3/4] Verifying both connections...", flush=True)
     wait_for_connections(int(datasource["id"]), int(service["id"]))
-    pack = retry_step("Prometheus knowledge-pack installation", ensure_knowledge_pack)
-    service = retry_step(
-        "Prometheus knowledge-pack binding",
-        lambda: ensure_service(int(pack["kb_id"])),
-    )
+    print("[4/4] Confirming both objects are visible in Praxis...", flush=True)
+    verify_registration(int(datasource["id"]), int(service["id"]))
     print(
-        json.dumps(
-            {
-                "status": "ready",
-                "datasource": {"id": datasource["id"], "name": datasource["name"]},
-                "service": {"id": service["id"], "name": service["name"]},
-                "knowledge_pack": {
-                    "id": PROMETHEUS_PACK_ID,
-                    "status": pack["status"],
-                    "kb_id": pack["kb_id"],
-                },
-                "mysql_connection": {
-                    "host_from_host": "127.0.0.1",
-                    "port_from_host": int(os.getenv("DEMO_MYSQL_PORT", "3308")),
-                    "database": "app",
-                    "username": "app",
-                    "password": (
-                        "praxis-demo-app"
-                        if MYSQL_PASSWORD == "praxis-demo-app"
-                        else "set by DEMO_MYSQL_APP_PASSWORD"
-                    ),
-                },
-            },
-            indent=2,
-        )
+        f"""
+Praxis demo is ready.
+
+  Praxis UI:        http://127.0.0.1:{int(os.getenv("PRAXIS_DEMO_PORT", "8000"))}
+  Demo MySQL:       127.0.0.1:{int(os.getenv("DEMO_MYSQL_PORT", "3308"))}
+    Database:       app
+    Username:       app
+    Password:       {MYSQL_PASSWORD}
+    Root password:  {MYSQL_ROOT_PASSWORD}
+  Prometheus:       http://127.0.0.1:{int(os.getenv("DEMO_PROMETHEUS_PORT", "9090"))}
+  MySQL Exporter:   http://127.0.0.1:{int(os.getenv("DEMO_EXPORTER_PORT", "9104"))}/metrics
+
+Registered in Praxis: {datasource["name"]} (ID {datasource["id"]}), {service["name"]} (ID {service["id"]})
+Knowledge pack: not installed; download it from Knowledge Packs when needed.
+""".strip()
     )
 
 

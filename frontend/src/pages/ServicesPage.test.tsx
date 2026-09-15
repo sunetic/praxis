@@ -2,6 +2,8 @@ import { render, screen, waitFor, within } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 
+import { ShellI18nProvider } from "@/i18n/shellI18n"
+
 import { ServicesPage } from "./ServicesPage"
 
 const { servicesApi, datasourcesApi, knowledgeApi, toast } = vi.hoisted(() => ({
@@ -34,6 +36,14 @@ vi.mock("@/lib/api", () => ({
 vi.mock("sonner", () => ({
   toast,
 }))
+
+function renderServicesInChinese() {
+  return render(
+    <ShellI18nProvider initialLocale="zh-CN">
+      <ServicesPage />
+    </ShellI18nProvider>,
+  )
+}
 
 describe("ServicesPage", () => {
   beforeEach(() => {
@@ -123,7 +133,7 @@ describe("ServicesPage", () => {
   })
 
   it("renders valid relation resources and hides stale references", async () => {
-    render(<ServicesPage />)
+    renderServicesInChinese()
 
     await screen.findByText("cluster-service")
 
@@ -148,7 +158,7 @@ describe("ServicesPage", () => {
 
   it("filters by resolved relation resource instead of raw resource_ref", async () => {
     const user = userEvent.setup()
-    render(<ServicesPage />)
+    renderServicesInChinese()
 
     await screen.findByText("cluster-service")
 
@@ -166,7 +176,7 @@ describe("ServicesPage", () => {
     const user = userEvent.setup()
     const scrollIntoView = vi.fn()
     Object.defineProperty(HTMLElement.prototype, "scrollIntoView", { configurable: true, value: scrollIntoView })
-    render(<ServicesPage />)
+    renderServicesInChinese()
 
     await screen.findByText("cluster-service")
     const clusterRow = screen.getByText("cluster-service").closest("tr")
@@ -189,5 +199,30 @@ describe("ServicesPage", () => {
     await user.clear(defaultHeaders)
     await user.type(defaultHeaders, '"X-Test":"visible"')
     expect(defaultHeaders).toHaveValue('"X-Test":"visible"')
+  })
+
+  it("renders the service interface in English when English is selected", async () => {
+    const user = userEvent.setup()
+    render(
+      <ShellI18nProvider initialLocale="en-US">
+        <ServicesPage />
+      </ShellI18nProvider>,
+    )
+
+    await screen.findByText("cluster-service")
+    expect(screen.getByText("External services")).toBeInTheDocument()
+    expect(screen.getByPlaceholderText("Search name, address, or linked resource")).toBeInTheDocument()
+    expect(screen.getByRole("button", { name: "New service" })).toBeInTheDocument()
+    expect(screen.getAllByText("Available").length).toBeGreaterThan(0)
+    expect(screen.queryByText("外部服务")).not.toBeInTheDocument()
+
+    const clusterRow = screen.getByText("cluster-service").closest("tr")
+    expect(clusterRow).not.toBeNull()
+    await user.click(within(clusterRow as HTMLElement).getByRole("button", { name: "Edit service" }))
+    const dialog = await screen.findByRole("dialog", { name: "Edit external service" })
+    expect(within(dialog).getByText("Authentication")).toBeInTheDocument()
+    expect(within(dialog).getByText("Linked API documentation")).toBeInTheDocument()
+    expect(within(dialog).getByRole("button", { name: "Test connection" })).toBeInTheDocument()
+    expect(within(dialog).queryByText("认证")).not.toBeInTheDocument()
   })
 })

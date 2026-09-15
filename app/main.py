@@ -82,6 +82,20 @@ async def startup():
             _settings_db.commit()
         logger.info("sensitive_platform_settings_migrated count=%s", migrated_settings)
 
+    from app.services.demo_bootstrap import bootstrap_demo_integrations
+
+    with SessionLocal() as _demo_db:
+        demo_result = bootstrap_demo_integrations(_demo_db)
+        if demo_result is not None:
+            logger.info(
+                "demo_integrations_bootstrap_done datasource_id=%s service_id=%s "
+                "datasource_created=%s service_created=%s",
+                demo_result.datasource_id,
+                demo_result.service_id,
+                demo_result.datasource_created,
+                demo_result.service_created,
+            )
+
     # CE built-in functions + schedules
     try:
         from app.builtin_functions import register_builtin_functions

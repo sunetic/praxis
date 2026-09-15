@@ -51,30 +51,37 @@ Praxis 是一个可自部署的平台，把你的数据库变成 AI 对话工作
 
 ## 快速开始
 
+准备好 Docker Desktop，或安装了 Compose v2 的 Docker Engine，然后运行：
+
 ```bash
 git clone https://github.com/sunetic/praxis.git
 cd praxis
-docker compose up -d
+docker compose run --build --rm demo-init
 ```
 
-打开 [http://localhost:8000](http://localhost:8000)，只需在引导向导中配置
-AI 提供商。Compose 会自动创建并验证 `Demo MySQL` 数据源和
-`Demo Prometheus` 服务。
+这条 Docker Compose 命令会先构建当前检出的 Praxis 源码，再在后台启动
+完整环境，前台完成连接注册和验证，然后直接在终端显示实际地址和密码：
 
-演示 MySQL 默认连接信息：
+```text
+Praxis demo is ready.
 
-| 字段 | 默认值 |
-| --- | --- |
-| 地址 | `127.0.0.1:3308` |
-| 数据库 | `app` |
-| 用户名 | `app` |
-| 密码 | `praxis-demo-app` |
-| root 密码 | `praxis-demo-root` |
+  Praxis UI:        http://127.0.0.1:8000
+  Demo MySQL:       127.0.0.1:3308
+    Database:       app
+    Username:       app
+    Password:       praxis-demo-app
+    Root password:  praxis-demo-root
+  Prometheus:       http://127.0.0.1:9090
+  MySQL Exporter:   http://127.0.0.1:9104/metrics
+```
 
-Prometheus 地址是 [http://127.0.0.1:9090](http://127.0.0.1:9090)。运行
-`docker compose logs demo-init`，看到 `"status": "ready"` 即表示自动
-初始化完成。需要重置失败或旧版本留下的演示数据时，运行
-`docker compose down --volumes` 后重新启动；该命令会删除演示数据。
+打开 [http://127.0.0.1:8000](http://127.0.0.1:8000)，只需在引导向导中
+配置 AI 提供商。`Demo MySQL` 数据源和 `Demo Prometheus` 服务已经自动
+注册并验证。知识包不会自动下载；需要时可在 **知识库 → 知识包商店** 中自行安装。
+
+停止环境运行 `docker compose down`。需要连同演示数据一起重置时运行
+`docker compose down --volumes`，然后再次执行上面的启动命令；重置命令会
+删除 Demo 数据。
 
 只需要单独运行 Praxis、连接自己的数据库时，也可以使用：
 

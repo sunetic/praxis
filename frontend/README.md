@@ -1,5 +1,29 @@
 # React + TypeScript + Vite
 
+## UI copy and i18n
+
+All user-facing copy must be added to both dictionaries in
+`src/i18n/shellI18n.tsx` and rendered with `useShellI18n().t(...)`. This includes
+visible JSX text and accessibility attributes such as `aria-label`, `title`,
+`alt`, and text placeholders.
+
+Run the same guard used by CI before committing:
+
+```bash
+npm run lint:i18n
+```
+
+`eslint.i18n.baseline.json` records exact fingerprints for pre-existing debt.
+New or changed untranslated copy fails CI, including in files already present in
+the baseline. After translating legacy copy, shrink the baseline with:
+
+```bash
+npm run lint:i18n:update
+```
+
+The update command refuses to add new debt; it can only remove resolved
+fingerprints.
+
 This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
 
 Currently, two official plugins are available:

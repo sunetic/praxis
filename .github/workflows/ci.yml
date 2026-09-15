@@ -19,6 +19,23 @@ jobs:
       - run: pip install ruff
       - run: ruff check .
       - run: ruff format --check .
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+      - name: Reject frontend i18n regressions
+        working-directory: frontend
+        run: npm run lint:i18n
+      - name: Verify Service page in both languages
+        working-directory: frontend
+        run: npm test -- --run src/pages/ServicesPage.test.tsx
+      - name: Build frontend
+        working-directory: frontend
+        run: npm run build
 
   test:
     runs-on: ubuntu-latest
@@ -36,18 +53,24 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
-      - name: Start complete demo stack
-        run: docker compose -f deployments/demo/docker-compose.yml up -d --build
-      - name: Wait for initializer and verify registered integrations
+      - name: Start complete demo stack through customer command
         run: |
-          container_id="$(docker compose -f deployments/demo/docker-compose.yml ps -aq demo-init)"
-          test -n "$container_id"
-          test "$(docker wait "$container_id")" = "0"
+          docker compose -f deployments/demo/docker-compose.yml run --build --rm demo-init | tee /tmp/demo-output.txt
+      - name: Verify CLI output and registered integrations
+        run: |
+          grep -F "Praxis UI:        http://127.0.0.1:8000" /tmp/demo-output.txt
+          grep -F "Demo MySQL:       127.0.0.1:3308" /tmp/demo-output.txt
+          grep -F "Password:       praxis-demo-app" /tmp/demo-output.txt
+          grep -F "Prometheus:       http://127.0.0.1:9090" /tmp/demo-output.txt
+          grep -F "Knowledge pack: not installed" /tmp/demo-output.txt
 
           datasources="$(curl --fail --silent --show-error http://127.0.0.1:8000/api/v1/datasources)"
           services="$(curl --fail --silent --show-error http://127.0.0.1:8000/api/v1/services)"
+          packs="$(curl --fail --silent --show-error http://127.0.0.1:8000/api/v1/knowledge-packs)"
           python -c 'import json, sys; assert any(item["name"] == "Demo MySQL" for item in json.loads(sys.argv[1]))' "$datasources"
-          python -c 'import json, sys; assert any(item["name"] == "Demo Prometheus" and item["knowledge_base_ids"] for item in json.loads(sys.argv[1]))' "$services"
+          python -c 'import json, sys; assert any(item["name"] == "Demo Prometheus" and not item["knowledge_base_ids"] for item in json.loads(sys.argv[1]))' "$services"
+          python -c 'import json, sys; assert any(item["id"] == "prometheus-http-api" and item["status"] == "available" for item in json.loads(sys.argv[1]))' "$packs"
+          docker compose -f deployments/demo/docker-compose.yml logs praxis-demo | grep -F "demo_integrations_bootstrap_done"
       - name: Show demo logs
         if: always()
         run: docker compose -f deployments/demo/docker-compose.yml logs --no-color

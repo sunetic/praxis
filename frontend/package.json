@@ -7,6 +7,8 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "eslint .",
+    "lint:i18n": "node --test eslint.i18n.config.selftest.js && node scripts/check-i18n.mjs",
+    "lint:i18n:update": "node scripts/check-i18n.mjs --update",
     "preview": "vite preview",
     "test": "vitest run"
   },
