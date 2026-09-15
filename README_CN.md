@@ -52,10 +52,35 @@ Praxis 是一个可自部署的平台，把你的数据库变成 AI 对话工作
 ## 快速开始
 
 ```bash
-docker run -d -p 8000:8000 -v ~/.praxis/data:/app/data sunzy2/praxis:latest
+git clone https://github.com/sunetic/praxis.git
+cd praxis
+docker compose up -d
 ```
 
-打开 [http://localhost:8000](http://localhost:8000)，按引导向导连接你的第一个数据库并配置 AI 提供商。
+打开 [http://localhost:8000](http://localhost:8000)，只需在引导向导中配置
+AI 提供商。Compose 会自动创建并验证 `Demo MySQL` 数据源和
+`Demo Prometheus` 服务。
+
+演示 MySQL 默认连接信息：
+
+| 字段 | 默认值 |
+| --- | --- |
+| 地址 | `127.0.0.1:3308` |
+| 数据库 | `app` |
+| 用户名 | `app` |
+| 密码 | `praxis-demo-app` |
+| root 密码 | `praxis-demo-root` |
+
+Prometheus 地址是 [http://127.0.0.1:9090](http://127.0.0.1:9090)。运行
+`docker compose logs demo-init`，看到 `"status": "ready"` 即表示自动
+初始化完成。需要重置失败或旧版本留下的演示数据时，运行
+`docker compose down --volumes` 后重新启动；该命令会删除演示数据。
+
+只需要单独运行 Praxis、连接自己的数据库时，也可以使用：
+
+```bash
+docker run -d -p 8000:8000 -v ~/.praxis/data:/app/data sunzy2/praxis:latest
+```
 
 ## 更多功能
 
@@ -142,7 +167,7 @@ make handbook-build  # 构建到 site_handbook/
 
 ```bash
 make test          # 运行 pytest
-make lint          # 运行 ruff + semantic guard
+make lint          # 运行 Ruff、格式和仓库卫生检查
 ```
 
 ### 本地真实模型 Eval

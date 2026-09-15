@@ -17,6 +17,20 @@ stack, initializes the demo objects through the real Praxis HTTP API, and
 verifies both integrations. All published ports bind to `127.0.0.1`; do not use
 this configuration as a production deployment template.
 
+The default MySQL connection from the host is:
+
+| Field | Default |
+| --- | --- |
+| Address | `127.0.0.1:3308` |
+| Database | `app` |
+| Username | `app` |
+| Password | `praxis-demo-app` |
+| Root password | `praxis-demo-root` |
+
+Inside the Compose network, Praxis connects to `mysql-demo:3306`. Prometheus is
+available from the host at <http://127.0.0.1:9090> and from Praxis at
+`http://prometheus-demo:9090`.
+
 Open <http://127.0.0.1:8000>. The onboarding page still requires the user to
 enter LLM provider, model, API URL, and API key information.
 
@@ -40,12 +54,19 @@ After onboarding, select `Demo MySQL` in **Chat** and try this request:
 # Show status
 docker compose -f deployments/demo/docker-compose.yml ps
 
+# Confirm automatic registration completed
+docker compose -f deployments/demo/docker-compose.yml logs demo-init
+
 # Stop containers while preserving demo data
 docker compose -f deployments/demo/docker-compose.yml down
 
 # Delete containers and demo volumes
 docker compose -f deployments/demo/docker-compose.yml down --volumes
 ```
+
+A successful initializer prints `"status": "ready"`. If an older or failed
+demo volume does not contain the two integrations, remove the demo volumes with
+the last command above and start the stack again. This deletes demo-only data.
 
 All published ports bind to `127.0.0.1`. To avoid local port conflicts, override
 `PRAXIS_DEMO_PORT`, `DEMO_MYSQL_PORT`, `DEMO_PROMETHEUS_PORT`, or

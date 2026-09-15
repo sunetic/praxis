@@ -30,3 +30,27 @@ jobs:
           cache: pip
       - run: pip install -e ".[dev]"
       - run: pytest -m "not llm" --tb=short -q
+
+  demo-compose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Start complete demo stack
+        run: docker compose -f deployments/demo/docker-compose.yml up -d --build
+      - name: Wait for initializer and verify registered integrations
+        run: |
+          container_id="$(docker compose -f deployments/demo/docker-compose.yml ps -aq demo-init)"
+          test -n "$container_id"
+          test "$(docker wait "$container_id")" = "0"
+
+          datasources="$(curl --fail --silent --show-error http://127.0.0.1:8000/api/v1/datasources)"
+          services="$(curl --fail --silent --show-error http://127.0.0.1:8000/api/v1/services)"
+          python -c 'import json, sys; assert any(item["name"] == "Demo MySQL" for item in json.loads(sys.argv[1]))' "$datasources"
+          python -c 'import json, sys; assert any(item["name"] == "Demo Prometheus" and item["knowledge_base_ids"] for item in json.loads(sys.argv[1]))' "$services"
+      - name: Show demo logs
+        if: always()
+        run: docker compose -f deployments/demo/docker-compose.yml logs --no-color
+      - name: Remove demo stack
+        if: always()
+        run: docker compose -f deployments/demo/docker-compose.yml down --volumes

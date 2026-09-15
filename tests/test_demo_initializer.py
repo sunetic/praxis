@@ -33,7 +33,8 @@ def test_demo_compose_starts_without_generated_credentials() -> None:
     assert mysql_environment["DEMO_EXPORTER_PASSWORD"] == (
         "${DEMO_EXPORTER_PASSWORD:-praxis-demo-exporter}"
     )
-    assert services["demo-init"]["restart"] == "no"
+    assert services["demo-init"]["restart"] == "on-failure:5"
+    assert services["demo-init"]["environment"]["DEMO_MYSQL_PORT"] == ("${DEMO_MYSQL_PORT:-3308}")
     assert set(services["demo-init"]["depends_on"]) == {
         "praxis-demo",
         "mysql-demo",
@@ -72,6 +73,28 @@ def test_initializer_creates_cluster_bound_datasource_and_service(
     assert service["config"]["base_url"] == "http://prometheus-demo:9090"
     assert service["knowledge_base_ids"] == [7]
     assert len(calls) == 4
+
+
+def test_initializer_creates_service_before_knowledge_pack_is_available(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    initializer = _load_initializer(monkeypatch)
+    calls: list[tuple[str, str, dict[str, Any] | None]] = []
+
+    def fake_request(method: str, path: str, payload=None, **_kwargs):
+        calls.append((method, path, payload))
+        if (method, path) == ("GET", "/services"):
+            return []
+        if (method, path) == ("POST", "/services"):
+            return {"id": 2, **payload}
+        raise AssertionError(f"Unexpected request: {method} {path}")
+
+    monkeypatch.setattr(initializer, "api_request", fake_request)
+
+    service = initializer.ensure_service()
+
+    assert service["knowledge_base_ids"] == []
+    assert calls[-1][2]["resource_ref"] == "cluster:mysql-prometheus-demo"
 
 
 def test_initializer_reuses_existing_demo_objects(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -178,22 +201,50 @@ def test_initializer_main_accepts_pack_status_response_shape(
         "ensure_knowledge_pack",
         lambda: {"pack_id": "prometheus-http-api", "status": "installed", "kb_id": 2},
     )
-    monkeypatch.setattr(
-        initializer,
-        "ensure_service",
-        lambda knowledge_base_id: {"id": 3, "name": f"Demo Prometheus {knowledge_base_id}"},
-    )
+    service_calls: list[int | None] = []
+
+    def fake_service(knowledge_base_id=None):
+        service_calls.append(knowledge_base_id)
+        return {"id": 3, "name": "Demo Prometheus"}
+
+    monkeypatch.setattr(initializer, "ensure_service", fake_service)
     monkeypatch.setattr(initializer, "wait_for_connections", lambda *_args: None)
 
     initializer.main()
 
     summary = json.loads(capsys.readouterr().out)
+    assert summary["status"] == "ready"
     assert summary["knowledge_pack"] == {
         "id": "prometheus-http-api",
         "status": "installed",
         "kb_id": 2,
     }
-    assert summary["service"]["name"] == "Demo Prometheus 2"
+    assert summary["service"]["name"] == "Demo Prometheus"
+    assert summary["mysql_connection"] == {
+        "host_from_host": "127.0.0.1",
+        "port_from_host": 3308,
+        "database": "app",
+        "username": "app",
+        "password": "set by DEMO_MYSQL_APP_PASSWORD",
+    }
+    assert service_calls == [None, 2]
+
+
+def test_default_compose_is_complete_published_demo() -> None:
+    compose_path = Path(__file__).parents[1] / "docker-compose.yml"
+    compose = yaml.safe_load(compose_path.read_text())
+    services = compose["services"]
+
+    assert services["praxis-demo"]["image"] == "sunzy2/praxis:${PRAXIS_IMAGE_TAG:-latest}"
+    assert {
+        "praxis-demo",
+        "mysql-demo",
+        "mysql-exporter-demo",
+        "prometheus-demo",
+        "mysql-load-demo",
+        "demo-init",
+    } <= set(services)
+    assert services["demo-init"]["restart"] == "on-failure:5"
 
 
 def test_initializer_rejects_missing_prometheus_pack(monkeypatch: pytest.MonkeyPatch) -> None:

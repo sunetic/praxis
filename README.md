@@ -52,10 +52,36 @@ Schedule any agent for recurring execution — daily health checks, weekly index
 ## Quick Start
 
 ```bash
-docker run -d -p 8000:8000 -v ~/.praxis/data:/app/data sunzy2/praxis:latest
+git clone https://github.com/sunetic/praxis.git
+cd praxis
+docker compose up -d
 ```
 
-Open [http://localhost:8000](http://localhost:8000) and follow the onboarding wizard to connect your first database and configure your AI provider.
+Open [http://localhost:8000](http://localhost:8000) and configure only the AI
+provider in onboarding. Compose automatically creates and verifies the
+`Demo MySQL` datasource and `Demo Prometheus` Service.
+
+Default demo MySQL connection:
+
+| Field | Default |
+| --- | --- |
+| Address | `127.0.0.1:3308` |
+| Database | `app` |
+| Username | `app` |
+| Password | `praxis-demo-app` |
+| Root password | `praxis-demo-root` |
+
+Prometheus is available at
+[http://127.0.0.1:9090](http://127.0.0.1:9090). Run
+`docker compose logs demo-init`; `"status": "ready"` confirms that
+automatic initialization completed. To reset stale or failed demo state, run
+`docker compose down --volumes` and start again. This deletes demo data.
+
+To run Praxis alone and connect your own database instead:
+
+```bash
+docker run -d -p 8000:8000 -v ~/.praxis/data:/app/data sunzy2/praxis:latest
+```
 
 ## More Features
 
@@ -143,7 +169,7 @@ make handbook-build  # build site_handbook/
 
 ```bash
 make test          # run pytest
-make lint          # run ruff + semantic guard
+make lint          # run Ruff, format, and repository hygiene checks
 ```
 
 ### Local Live-Model Evals

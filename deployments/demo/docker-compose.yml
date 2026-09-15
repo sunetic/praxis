@@ -95,6 +95,7 @@ services:
     environment:
       PRAXIS_API_URL: http://praxis-demo:8000/api/v1
       DEMO_MYSQL_APP_PASSWORD: ${DEMO_MYSQL_APP_PASSWORD:-praxis-demo-app}
+      DEMO_MYSQL_PORT: ${DEMO_MYSQL_PORT:-3308}
     volumes:
       - ./init.py:/demo/init.py:ro
     depends_on:
@@ -104,7 +105,7 @@ services:
         condition: service_healthy
       prometheus-demo:
         condition: service_started
-    restart: "no"
+    restart: "on-failure:5"
 
 volumes:
   praxis_demo_data:
