@@ -7,6 +7,10 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      args: &demo-build-args
+        NPM_CONFIG_REGISTRY: ${NPM_CONFIG_REGISTRY:-https://registry.npmjs.org/}
+        UV_INDEX_URL: ${UV_INDEX_URL:-https://pypi.org/simple}
+        LITELLM_WHEEL_URL: ${LITELLM_WHEEL_URL:-https://files.pythonhosted.org/packages/1c/38/e6a4abb062e039d18d59538cc4e6fc370c2c10cd2bff4a2e546acb69dcb9/litellm-1.85.0-py3-none-any.whl}
     image: praxis-demo:local
     environment:
       PRAXIS_DEMO_BOOTSTRAP: "true"
@@ -99,6 +103,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      args: *demo-build-args
     image: praxis-demo:local
     entrypoint: ["python", "/demo/init.py"]
     environment:

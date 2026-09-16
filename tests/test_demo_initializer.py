@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import re
 from pathlib import Path
 from types import ModuleType
 from typing import Any
@@ -194,9 +195,13 @@ def test_default_compose_builds_one_source_matched_demo() -> None:
     compose = yaml.safe_load(compose_path.read_text())
     services = compose["services"]
 
-    assert services["praxis-demo"]["build"] == {
-        "context": ".",
-        "dockerfile": "Dockerfile",
+    demo_build = services["praxis-demo"]["build"]
+    assert demo_build["context"] == "."
+    assert demo_build["dockerfile"] == "Dockerfile"
+    assert set(demo_build["args"]) == {
+        "NPM_CONFIG_REGISTRY",
+        "UV_INDEX_URL",
+        "LITELLM_WHEEL_URL",
     }
     assert services["praxis-demo"]["image"] == "praxis-demo:local"
     assert services["demo-init"]["build"] == services["praxis-demo"]["build"]
@@ -219,3 +224,18 @@ def test_compose_run_is_the_documented_one_command_entrypoint() -> None:
 
     assert command in (root / "README.md").read_text()
     assert command in (root / "README_CN.md").read_text()
+
+
+def test_dockerfile_litellm_wheel_checksum_matches_uv_lock() -> None:
+    root = Path(__file__).parents[1]
+    lock_text = (root / "uv.lock").read_text()
+    wheel = re.search(
+        r'\{ url = "(?P<url>[^"]*litellm-[^"]+\.whl)", '
+        r'hash = "sha256:(?P<hash>[0-9a-f]{64})"',
+        lock_text,
+    )
+    assert wheel is not None
+
+    dockerfile = (root / "Dockerfile").read_text()
+    assert f"ARG LITELLM_WHEEL_URL={wheel.group('url')}" in dockerfile
+    assert f"ADD --checksum=sha256:{wheel.group('hash')}" in dockerfile
