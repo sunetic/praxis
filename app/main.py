@@ -12,24 +12,24 @@ from app.api import (
     agents,
     capabilities,
     channels,
-    chat,
-    chat_agent_draft,
-    chat_handoff,
-    chat_pending,
-    conversations,
     datasources,
     functions,
     knowledge,
     knowledge_packs,
     onboarding,
+    pages,
     schedules,
     services,
+    skill_drafts,
     skills,
 )
 from app.api import settings as settings_api
+from app.api.agent_runs import create_run_router
 from app.core.config import get_settings
 from app.core.logging import configure_logging, fmt_kv, get_logger
 from app.db.database import init_db
+from app.services.agent.application import RuntimeApplication, local_actor
+from app.services.agent.scheduled_runner import ScheduledAgentRunner
 from app.services.scheduler.runtime_state import get_scheduler_worker, set_scheduler_worker
 from app.services.scheduler.worker import SchedulerWorker
 
@@ -43,6 +43,8 @@ app = FastAPI(
     title=settings.app_name,
     debug=settings.debug,
 )
+agent_runtime = RuntimeApplication()
+app.state.agent_runtime = agent_runtime
 
 app.add_middleware(
     CORSMiddleware,
@@ -73,15 +75,8 @@ async def startup():
             _HANDBOOK_SITE,
         )
     init_db()
+    await agent_runtime.start()
     from app.db.database import SessionLocal
-    from app.services.platform.settings_store import migrate_sensitive_settings
-
-    with SessionLocal() as _settings_db:
-        migrated_settings = migrate_sensitive_settings(_settings_db)
-        if migrated_settings:
-            _settings_db.commit()
-        logger.info("sensitive_platform_settings_migrated count=%s", migrated_settings)
-
     from app.services.demo_bootstrap import bootstrap_demo_integrations
 
     with SessionLocal() as _demo_db:
@@ -125,21 +120,22 @@ async def startup():
         except OperationalError:
             onboarding_done = True  # table not yet migrated — allow scheduler to start
 
+    # The application owns manual submissions even when cron autostart is off.
+    worker = SchedulerWorker(
+        runtime_service=agent_runtime.functions,
+        agent_runtime_service=ScheduledAgentRunner(agent_runtime),
+        refresh_interval_seconds=settings.scheduler_refresh_interval_seconds,
+        job_coalesce=settings.scheduler_job_coalesce,
+        job_misfire_grace_seconds=settings.scheduler_job_misfire_grace_seconds,
+        job_max_instances=settings.scheduler_job_max_instances,
+    )
+    set_scheduler_worker(worker)
     if settings.scheduler_autostart and onboarding_done:
-        worker = SchedulerWorker(
-            refresh_interval_seconds=settings.scheduler_refresh_interval_seconds,
-            job_coalesce=settings.scheduler_job_coalesce,
-            job_misfire_grace_seconds=settings.scheduler_job_misfire_grace_seconds,
-            job_max_instances=settings.scheduler_job_max_instances,
-        )
         await worker.start()
-        set_scheduler_worker(worker)
         logger.info("scheduler_runtime_autostart_enabled")
     elif settings.scheduler_autostart and not onboarding_done:
-        set_scheduler_worker(None)
         logger.info("scheduler_deferred_pending_onboarding")
     else:
-        set_scheduler_worker(None)
         logger.info("scheduler_runtime_autostart_disabled")
 
 
@@ -155,6 +151,7 @@ async def shutdown():
             await worker.shutdown()
     finally:
         set_scheduler_worker(None)
+        await agent_runtime.close()
         await close_db_pools()
 
 
@@ -178,15 +175,18 @@ async def request_validation_exception_handler(request: Request, exc: RequestVal
 app.include_router(datasources.router, prefix="/api/v1")
 app.include_router(knowledge.router, prefix="/api/v1")
 app.include_router(knowledge_packs.router, prefix="/api/v1")
-app.include_router(conversations.router, prefix="/api/v1")
-app.include_router(conversations.message_router, prefix="/api/v1")
+app.include_router(
+    create_run_router(
+        agent_runtime.service,
+        actor_dependency=local_actor,
+        resolve_definition=agent_runtime.resolve,
+    )
+)
 app.include_router(agents.router, prefix="/api/v1")
 app.include_router(skills.router, prefix="/api/v1")
-app.include_router(chat.router, prefix="/api/v1")
-app.include_router(chat_handoff.router, prefix="/api/v1")
-app.include_router(chat_pending.router, prefix="/api/v1")
-app.include_router(chat_agent_draft.router, prefix="/api/v1")
+app.include_router(skill_drafts.router, prefix="/api/v1")
 app.include_router(functions.router, prefix="/api/v1")
+app.include_router(pages.router, prefix="/api/v1")
 app.include_router(schedules.router, prefix="/api/v1")
 app.include_router(channels.router, prefix="/api/v1")
 app.include_router(services.router, prefix="/api/v1")
@@ -197,7 +197,6 @@ app.include_router(settings_api.router, prefix="/api/v1")
 # ── EE routers (skip if modules absent) ─────────────────────────────────────
 _ee_api_modules = [
     "collector",
-    "pages",
     "traces",
 ]
 for _mod_name in _ee_api_modules:

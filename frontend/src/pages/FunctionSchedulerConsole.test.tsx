@@ -4,25 +4,22 @@ import { beforeEach, describe, expect, it, vi } from "vitest"
 import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom"
 
 import { renderWithShell as render } from "@/test/renderWithShell"
-import { FunctionBuildPage } from "./FunctionBuildPage"
 import { FunctionListPage } from "./FunctionListPage"
 import { SchedulerConsolePage } from "./SchedulerConsolePage"
 
-const { functionsApi, schedulesApi, datasourcesApi, agentsApi, chatApi, conversationsApi, messagesApi } = vi.hoisted(() => ({
+const FunctionBuildPage = () => <div>Build Chat</div> // Navigation target only; native workspace has its own tests.
+
+const { functionsApi, schedulesApi, datasourcesApi, agentsApi } = vi.hoisted(() => ({
   functionsApi: {
     list: vi.fn(),
     get: vi.fn(),
     create: vi.fn(),
     update: vi.fn(),
     delete: vi.fn(),
-    listBuildRuns: vi.fn(),
     listAllRuns: vi.fn(),
-    buildChatStream: vi.fn(),
-    buildChat: vi.fn(),
-    build: vi.fn(),
-    release: vi.fn(),
-    suggestInput: vi.fn(),
     invoke: vi.fn(),
+    cancelRun: vi.fn(),
+    suggestInput: vi.fn(),
   },
   schedulesApi: {
     list: vi.fn(),
@@ -48,21 +45,7 @@ const { functionsApi, schedulesApi, datasourcesApi, agentsApi, chatApi, conversa
   datasourcesApi: {
     list: vi.fn(),
   },
-  chatApi: {
-    stream: vi.fn(),
-    listEvents: vi.fn(),
-  },
-  conversationsApi: {
-    create: vi.fn(),
-    list: vi.fn(),
-    createBuildSession: vi.fn(),
-    heartbeatBuildSession: vi.fn(),
-    closeBuildSession: vi.fn(),
-  },
-  messagesApi: {
-    create: vi.fn(),
-    list: vi.fn(),
-  },
+
 }))
 
 vi.mock("@/lib/api", () => ({
@@ -70,38 +53,9 @@ vi.mock("@/lib/api", () => ({
   schedulesApi,
   agentsApi,
   datasourcesApi,
-  chatApi,
-  conversationsApi,
-  messagesApi,
   filterConnectableDatasources: (items: Array<{ status?: string }>) =>
     items.filter((item) => item.status === "active"),
 }))
-
-function createSseResponse(events: Array<Record<string, any>>): Response {
-  const lines: string[] = []
-  for (const event of events) {
-    const type = String(event.type ?? "")
-    if (type === "assistant") {
-      const text = String(event.data?.text ?? "")
-      lines.push(`0:${JSON.stringify(text)}\n`)
-    } else {
-      lines.push(`2:${JSON.stringify([{ type, data: event.data ?? {} }])}\n`)
-      if (type === "done") lines.push(`d:{"finishReason":"stop"}\n`)
-    }
-  }
-  return new Response(lines.join(""), {
-    status: 200,
-    headers: { "Content-Type": "text/plain; charset=utf-8" },
-  })
-}
-
-function createRuntimeSseResponse(events: Array<Record<string, any>>): Response {
-  const body = events.map((event) => `data: ${JSON.stringify(event)}\n\n`).join("")
-  return new Response(body, {
-    status: 200,
-    headers: { "Content-Type": "text/event-stream; charset=utf-8" },
-  })
-}
 
 function LocationProbe() {
   const location = useLocation()
@@ -110,7 +64,7 @@ function LocationProbe() {
 
 describe("Function and Scheduler consoles", () => {
   beforeEach(() => {
-    vi.clearAllMocks()
+    vi.resetAllMocks()
     functionsApi.list.mockResolvedValue([
       { id: 1, name: "daily-report", status: "draft", draft_code: "result = {'ok': True}" },
       { id: 2, name: "slow-sql-analyzer", status: "released", draft_code: "result = {'rows': []}" },
@@ -132,6 +86,14 @@ describe("Function and Scheduler consoles", () => {
       error_code: null,
       runtime_path: "production",
     })
+    functionsApi.cancelRun.mockResolvedValue({
+      status: "cancelled",
+      duration_ms: 9,
+      error_class: "cancelled",
+      error_code: "cancelled",
+      error_message: "Function invocation cancelled",
+      output: null,
+    })
     functionsApi.create.mockResolvedValue({
       id: 3,
       name: "未命名 Function a1b2c3",
@@ -148,179 +110,7 @@ describe("Function and Scheduler consoles", () => {
       status: "draft",
     }))
     functionsApi.delete.mockResolvedValue({})
-    functionsApi.listBuildRuns.mockResolvedValue([])
     functionsApi.listAllRuns.mockResolvedValue([])
-    chatApi.listEvents.mockResolvedValue([])
-    conversationsApi.list.mockResolvedValue([])
-    conversationsApi.create.mockResolvedValue({
-      id: 501,
-      title: "Build Chat",
-      datasource_id: null,
-      agent_id: null,
-      active_skills: [],
-      created_at: "2026-03-14T12:00:00Z",
-      updated_at: "2026-03-14T12:00:00Z",
-    })
-    conversationsApi.createBuildSession.mockResolvedValue({
-      id: 601,
-      conversation_id: 501,
-      scope_type: "builder",
-      scope_object_type: "function",
-      scope_object_id: "1",
-      ttl_seconds: 1800,
-      heartbeat_at: "2026-03-14T12:00:00Z",
-      expires_at: "2026-03-14T12:30:00Z",
-      status: "active",
-      created_at: "2026-03-14T12:00:00Z",
-      updated_at: "2026-03-14T12:00:00Z",
-    })
-    conversationsApi.heartbeatBuildSession.mockResolvedValue({
-      id: 601,
-      conversation_id: 501,
-      scope_type: "builder",
-      scope_object_type: "function",
-      scope_object_id: "1",
-      ttl_seconds: 1800,
-      heartbeat_at: "2026-03-14T12:01:00Z",
-      expires_at: "2026-03-14T12:31:00Z",
-      status: "active",
-      created_at: "2026-03-14T12:00:00Z",
-      updated_at: "2026-03-14T12:01:00Z",
-    })
-    conversationsApi.closeBuildSession.mockResolvedValue({})
-    messagesApi.list.mockResolvedValue([])
-    messagesApi.create.mockImplementation(async ({ conversation_id, role, content }: Record<string, any>) => ({
-      id: Date.now(),
-      conversation_id,
-      role,
-      content,
-      created_at: "2026-03-14T12:00:00Z",
-    }))
-    chatApi.stream.mockImplementation(async (_conversationId: number, content: string) =>
-      createSseResponse([
-        {
-          type: "phase",
-          phase: "plan",
-          data: { status: "running", summary: `Plan · 已解析 ${content}。` },
-        },
-        {
-          type: "phase",
-          phase: "act",
-          data: { status: "running", summary: "Act · Function 草稿已生成。" },
-        },
-        {
-          type: "phase",
-          phase: "observe",
-          data: { status: "done", summary: "Observe · Function 草稿校验通过。" },
-        },
-        {
-          type: "assistant",
-          data: { text: "带运行标识的函数" },
-        },
-        {
-          type: "done",
-          data: {
-            action: "build",
-            status: "done",
-            assistant_message: "带运行标识的函数",
-            function: {
-              id: 1,
-              name: "daily-report",
-              description: "带运行标识的函数",
-              status: "draft",
-              draft_dependencies: null,
-              draft_code: "result = {'ok': True, 'run_id': context.get('trace_id')}",
-            },
-          },
-        },
-      ])
-    )
-    functionsApi.release.mockResolvedValue({
-      function: {
-        id: 1,
-        name: "daily-report",
-        description: "由 Function 控制台创建",
-        status: "released",
-      },
-      release: { version: 1 },
-    })
-    functionsApi.buildChatStream.mockImplementation(async (_id: number, data: Record<string, any>) => {
-      const action = String(data?.action || "build")
-      if (action === "suggest_input") {
-        return createRuntimeSseResponse([
-          { type: "phase", phase: "suggest_input", data: { status: "done", summary: "测试入参建议已生成。" } },
-          { type: "assistant", data: { text: "已生成测试入参" } },
-          {
-            type: "done",
-            data: {
-              action: "suggest_input",
-              status: "done",
-              assistant_message: "已生成测试入参",
-              suggestion: {
-                payload: { rows: [1, 2, 3] },
-                rationale: "已生成测试入参",
-                missing_information: [],
-                assumptions: [],
-              },
-            },
-          },
-        ])
-      }
-      if (action === "invoke") {
-        return createRuntimeSseResponse([
-          { type: "phase", phase: "invoke_finished", data: { status: "success", summary: "测试已执行成功。" } },
-          { type: "assistant", data: { text: "测试已执行成功。" } },
-          {
-            type: "done",
-            data: {
-              action: "invoke",
-              status: "success",
-              assistant_message: "测试已执行成功。",
-              duration_ms: 12,
-              run_id: "run-1",
-              output: { rows: 3 },
-            },
-          },
-        ])
-      }
-      return createRuntimeSseResponse([
-        {
-          type: "phase",
-          phase: "plan",
-          data: { status: "running", summary: "Plan · 已解析 Function 需求。" },
-        },
-        {
-          type: "phase",
-          phase: "act",
-          data: { status: "running", summary: "Act · Function 草稿已生成。" },
-        },
-        {
-          type: "phase",
-          phase: "observe",
-          data: { status: "done", summary: "Observe · Function 草稿校验通过。" },
-        },
-        {
-          type: "assistant",
-          data: { text: "带运行标识的函数" },
-        },
-        {
-          type: "done",
-          data: {
-            action: "build",
-            status: "done",
-            assistant_message: "带运行标识的函数",
-            function: {
-              id: 1,
-              name: "daily-report",
-              description: "带运行标识的函数",
-              status: "draft",
-              draft_dependencies: null,
-              draft_code: "result = {'ok': True, 'run_id': context.get('trace_id')}",
-            },
-          },
-        },
-      ])
-    })
     schedulesApi.list.mockResolvedValue([
       {
         id: 100,
@@ -554,312 +344,6 @@ describe("Function and Scheduler consoles", () => {
     expect(screen.getAllByText("tenant-health-check")).toHaveLength(1)
   })
 
-  it("builds function in dedicated build workspace", async () => {
-    render(
-      <MemoryRouter initialEntries={["/function/1/build"]}>
-        <Routes>
-          <Route path="/function/:functionId/build" element={<FunctionBuildPage />} />
-        </Routes>
-      </MemoryRouter>
-    )
-
-    expect(await screen.findByText("Build Chat")).toBeInTheDocument()
-    expect(screen.getByText(/Build 内只做预演/)).toBeInTheDocument()
-    await userEvent.type(
-      screen.getByPlaceholderText("例如：读取业务租户后，输出 tenant_name 与 database_list"),
-      "增加结果字段 run_id"
-    )
-    await userEvent.keyboard("{Enter}")
-
-    expect((await screen.findAllByText("带运行标识的函数")).length).toBeGreaterThan(0)
-    expect(chatApi.stream).toHaveBeenCalledWith(
-      501,
-      "增加结果字段 run_id",
-      expect.objectContaining({
-        sceneAgent: expect.objectContaining({
-          key: "function_build",
-          context: expect.objectContaining({ function_id: 1 }),
-          focus_object: expect.objectContaining({ kind: "function", function_id: 1 }),
-        }),
-        conversationContext: expect.stringContaining("增加结果字段 run_id"),
-      })
-    )
-  })
-
-  it("uses inline title edit in build workspace", async () => {
-    render(
-      <MemoryRouter initialEntries={["/function/1/build"]}>
-        <Routes>
-          <Route path="/function/:functionId/build" element={<FunctionBuildPage />} />
-        </Routes>
-      </MemoryRouter>
-    )
-
-    await screen.findByText("Build Chat")
-    expect(screen.queryByRole("button", { name: "保存标题" })).not.toBeInTheDocument()
-    await userEvent.click(screen.getByRole("button", { name: "daily-report" }))
-    const titleInput = screen.getByLabelText("Function 名称")
-    await userEvent.clear(titleInput)
-    await userEvent.type(titleInput, "daily-report-v3")
-    await userEvent.keyboard("{Enter}")
-
-    expect(functionsApi.update).toHaveBeenCalledWith(1, expect.objectContaining({ name: "daily-report-v3" }))
-  })
-
-  it("uses inline description edit in build workspace", async () => {
-    render(
-      <MemoryRouter initialEntries={["/function/1/build"]}>
-        <Routes>
-          <Route path="/function/:functionId/build" element={<FunctionBuildPage />} />
-        </Routes>
-      </MemoryRouter>
-    )
-
-    await screen.findByText("Build Chat")
-    await userEvent.click(screen.getByRole("button", { name: /添加描述|由 Function 控制台创建/i }))
-    const descriptionInput = screen.getByLabelText("Function 描述")
-    await userEvent.clear(descriptionInput)
-    await userEvent.type(descriptionInput, "新的描述")
-    await userEvent.keyboard("{Enter}")
-
-    expect(functionsApi.update).toHaveBeenCalledWith(1, expect.objectContaining({ description: "新的描述" }))
-    expect(functionsApi.update).not.toHaveBeenCalledWith(1, expect.objectContaining({ name: "daily-report" }))
-  })
-
-  it("shows save-draft and release actions in build workspace", async () => {
-    render(
-      <MemoryRouter initialEntries={["/function/1/build"]}>
-        <Routes>
-          <Route path="/function/:functionId/build" element={<FunctionBuildPage />} />
-        </Routes>
-      </MemoryRouter>
-    )
-
-    await screen.findByText("Build Chat")
-    expect(screen.getByText("Functions")).toBeInTheDocument()
-    expect(screen.getByRole("button", { name: "保存草稿" })).toBeInTheDocument()
-    expect(screen.getByRole("button", { name: "发布" })).toBeInTheDocument()
-  })
-
-  it("navigates back to function list from build workspace", async () => {
-    render(
-      <MemoryRouter initialEntries={["/function/1/build"]}>
-        <Routes>
-          <Route
-            path="/function/:functionId/build"
-            element={
-              <>
-                <FunctionBuildPage />
-                <LocationProbe />
-              </>
-            }
-          />
-          <Route path="/function" element={<LocationProbe />} />
-        </Routes>
-      </MemoryRouter>
-    )
-
-    await screen.findByText("Build Chat")
-    await userEvent.click(screen.getByText("Functions"))
-
-    await waitFor(() => expect(screen.getByTestId("location-probe")).toHaveTextContent("/function"))
-  })
-
-  it("releases current function from build workspace", async () => {
-    render(
-      <MemoryRouter initialEntries={["/function/1/build"]}>
-        <Routes>
-          <Route path="/function/:functionId/build" element={<FunctionBuildPage />} />
-        </Routes>
-      </MemoryRouter>
-    )
-
-    await screen.findByText("Build Chat")
-    await userEvent.click(screen.getByRole("button", { name: "发布" }))
-
-    expect(functionsApi.release).toHaveBeenCalledWith(1, {})
-    expect(await screen.findByRole("button", { name: "已发布" })).toBeDisabled()
-  })
-
-  it("returns a released function to draft after saving a new edit", async () => {
-    functionsApi.get.mockResolvedValueOnce({
-      id: 1,
-      name: "daily-report",
-      description: "已发布版本",
-      status: "released",
-      draft_code: "result = {'ok': True}",
-      draft_dependencies: null,
-    })
-    functionsApi.update.mockResolvedValueOnce({
-      id: 1,
-      name: "daily-report-v2",
-      description: "已发布版本",
-      status: "draft",
-      draft_code: "result = {'ok': True}",
-      draft_dependencies: null,
-    })
-
-    render(
-      <MemoryRouter initialEntries={["/function/1/build"]}>
-        <Routes>
-          <Route path="/function/:functionId/build" element={<FunctionBuildPage />} />
-        </Routes>
-      </MemoryRouter>
-    )
-
-    await screen.findByText("Build Chat")
-    expect(screen.getByRole("button", { name: "已发布" })).toBeDisabled()
-
-    await userEvent.click(screen.getByRole("button", { name: "daily-report" }))
-    const titleInput = screen.getByLabelText("Function 名称")
-    await userEvent.clear(titleInput)
-    await userEvent.type(titleInput, "daily-report-v2")
-    await userEvent.keyboard("{Enter}")
-
-    expect(await screen.findByRole("button", { name: "发布" })).toBeEnabled()
-  })
-
-  it("renders build assistant_message as the single source of truth", async () => {
-    chatApi.stream.mockImplementationOnce(async () =>
-      createSseResponse([
-        { type: "phase", phase: "act", data: { status: "running", summary: "Function 草稿已生成。" } },
-        { type: "assistant", data: { text: "根据给定的数据源 ID，查询该数据源下包含的数据库列表。" } },
-        {
-          type: "done",
-          data: {
-            status: "done",
-            assistant_message: "根据给定的数据源 ID，查询该数据源下包含的数据库列表。",
-            function: {
-              id: 1,
-              name: "daily-report",
-              description: "由 Function 控制台创建",
-              status: "draft",
-              draft_code: "result = {'ok': True}",
-            },
-          },
-        },
-      ])
-    )
-
-    render(
-      <MemoryRouter initialEntries={["/function/1/build"]}>
-        <Routes>
-          <Route path="/function/:functionId/build" element={<FunctionBuildPage />} />
-        </Routes>
-      </MemoryRouter>
-    )
-
-    await screen.findByText("Build Chat")
-    await userEvent.type(
-      screen.getByPlaceholderText("例如：读取业务租户后，输出 tenant_name 与 database_list"),
-      "给定 datasource 的id，给出 datasource 的 database 列表"
-    )
-    await userEvent.keyboard("{Enter}")
-
-    await waitFor(() => {
-      expect(screen.getByText("根据给定的数据源 ID，查询该数据源下包含的数据库列表。")).toBeInTheDocument()
-    }, { timeout: 3000 })
-    expect(screen.queryByText("请求已提交，等待 Function 构建...")).not.toBeInTheDocument()
-  })
-
-  it("does not render duplicate bubble when apply event summary equals assistant_message", async () => {
-    chatApi.stream.mockImplementationOnce(async () =>
-      createSseResponse([
-        { type: "phase", phase: "act", data: { status: "done", summary: "已修复数据库名称提取逻辑。" } },
-        { type: "assistant", data: { text: "已修复数据库名称提取逻辑。" } },
-        {
-          type: "done",
-          data: {
-            status: "done",
-            assistant_message: "已修复数据库名称提取逻辑。",
-            function: {
-              id: 1,
-              name: "daily-report",
-              description: "由 Function 控制台创建",
-              status: "draft",
-              draft_code: "result = {'ok': True}",
-            },
-          },
-        },
-      ])
-    )
-
-    render(
-      <MemoryRouter initialEntries={["/function/1/build"]}>
-        <Routes>
-          <Route path="/function/:functionId/build" element={<FunctionBuildPage />} />
-        </Routes>
-      </MemoryRouter>
-    )
-
-    await screen.findByText("Build Chat")
-    await userEvent.type(
-      screen.getByPlaceholderText("例如：读取业务租户后，输出 tenant_name 与 database_list"),
-      "再次修复"
-    )
-    await userEvent.keyboard("{Enter}")
-
-    await waitFor(() => {
-      expect(screen.getAllByText("已修复数据库名称提取逻辑。").length).toBe(1)
-    }, { timeout: 3000 })
-  })
-
-  it("does not append extra clarification bubble when assistant_message exists", async () => {
-    chatApi.stream.mockImplementationOnce(async () =>
-      createSseResponse([
-        { type: "phase", phase: "plan", data: { status: "running", summary: "已解析 Function 需求。" } },
-        { type: "phase", phase: "plan", data: { status: "noted", summary: "检测到影响行为的歧义，需先澄清再生成。" } },
-        { type: "assistant", data: { text: "已生成一版 Function。输入参数 datasource_id:integer。可直接测试。" } },
-        {
-          type: "done",
-          data: {
-            status: "done",
-            assistant_message: "已生成一版 Function。输入参数 datasource_id:integer。可直接测试。",
-            function: {
-              id: 1,
-              name: "daily-report",
-              description: "由 Function 控制台创建",
-              status: "draft",
-              draft_code: "result = {'ok': True}",
-            },
-          },
-        },
-      ])
-    )
-
-    render(
-      <MemoryRouter initialEntries={["/function/1/build"]}>
-        <Routes>
-          <Route path="/function/:functionId/build" element={<FunctionBuildPage />} />
-        </Routes>
-      </MemoryRouter>
-    )
-
-    await screen.findByText("Build Chat")
-    await userEvent.type(
-      screen.getByPlaceholderText("例如：读取业务租户后，输出 tenant_name 与 database_list"),
-      "检索数据源，从中找到第一个租户，查询里面所有库"
-    )
-    await userEvent.keyboard("{Enter}")
-
-    await waitFor(() => {
-      expect(screen.getByText("已生成一版 Function。输入参数 datasource_id:integer。可直接测试。")).toBeInTheDocument()
-    }, { timeout: 3000 })
-    expect(screen.queryByText(/请确认“第一个”按名称升序是否符合你的预期/)).not.toBeInTheDocument()
-    expect(chatApi.stream).toHaveBeenCalledWith(
-      501,
-      "检索数据源，从中找到第一个租户，查询里面所有库",
-      expect.objectContaining({
-        sceneAgent: expect.objectContaining({
-          key: "function_build",
-          context: expect.objectContaining({ function_id: 1 }),
-          focus_object: expect.objectContaining({ kind: "function", function_id: 1 }),
-        }),
-        conversationContext: expect.stringContaining("检索数据源，从中找到第一个租户，查询里面所有库"),
-      })
-    )
-  })
-
   it("keeps scheduler console focused on lifecycle + execution drawer", async () => {
     render(
       <MemoryRouter initialEntries={["/scheduler/100"]}>
@@ -893,6 +377,26 @@ describe("Function and Scheduler consoles", () => {
     await userEvent.click(screen.getByRole("button", { name: "AI 调整当前 Scheduler" }))
 
     expect(schedulesApi.build).toHaveBeenCalledWith(100, "改成每 5 分钟执行一次，失败重试 3 次")
+  })
+
+  it("keeps native approval waiting distinct from success and opens the original conversation", async () => {
+    schedulesApi.listAllRunsPage.mockResolvedValue({
+      items: [{ id: 2, schedule_id: 100, run_id: "native-occurrence", target_type: "agent",
+        status: "waiting_approval", runtime_status: "waiting_approval", conversation_id: "native-conversation",
+        trigger_type: "manual", attempt: 1, retry_count: 0, max_retries: 0, created_at: "2026-09-16T10:00:00Z" }],
+      total: 1, limit: 20, offset: 0,
+    })
+    render(<MemoryRouter initialEntries={["/scheduler/100"]}>
+      <LocationProbe />
+      <Routes><Route path="/scheduler/:schedulerId" element={<SchedulerConsolePage />} />
+        <Route path="/chat" element={<div>Native chat destination</div>} /></Routes>
+    </MemoryRouter>)
+    await userEvent.click(screen.getByRole("tab", { name: "执行记录" }))
+    await userEvent.click(await screen.findByText("native-occurrence"))
+    expect(screen.getByText("状态: 等待批准")).toBeInTheDocument()
+    expect(screen.queryByRole("button", { name: "修复假 running" })).not.toBeInTheDocument()
+    await userEvent.click(screen.getByRole("button", { name: "查看对话与处理审批" }))
+    expect(await screen.findByText("Native chat destination")).toBeInTheDocument()
   })
 
   it("repairs stale running runs from the execution drawer", async () => {
@@ -937,156 +441,6 @@ describe("Function and Scheduler consoles", () => {
     await waitFor(() => expect(schedulesApi.repairRun).toHaveBeenCalledWith(100, 1))
     expect(await screen.findByText("状态: failed")).toBeInTheDocument()
     expect(screen.getAllByText("Manually repaired stale running schedule run").length).toBeGreaterThan(0)
-  })
-
-  it("shows failure message when invoke returns failed status", async () => {
-    functionsApi.buildChatStream.mockImplementationOnce(async () =>
-      createRuntimeSseResponse([
-        { type: "phase", phase: "invoke_finished", data: { status: "failed", summary: "测试执行失败：未发布版本禁止 production 执行" } },
-        { type: "assistant", data: { text: "测试执行失败：未发布版本禁止 production 执行" } },
-        {
-          type: "done",
-          data: {
-            action: "invoke",
-            status: "failed",
-            assistant_message: "测试执行失败：未发布版本禁止 production 执行",
-            error_message: "未发布版本禁止 production 执行",
-            error_code: "release_required",
-            duration_ms: 21,
-            run_id: "run-failed-1",
-            output: null,
-          },
-        },
-      ])
-    )
-
-    render(
-      <MemoryRouter initialEntries={["/function/1/build"]}>
-        <Routes>
-          <Route path="/function/:functionId/build" element={<FunctionBuildPage />} />
-        </Routes>
-      </MemoryRouter>
-    )
-
-    await screen.findByText("Build Chat")
-    await userEvent.click(screen.getByRole("button", { name: "确认并预演" }))
-
-    expect(await screen.findByText(/测试执行失败：当前服务仍在生产路径执行/)).toBeInTheDocument()
-    expect(screen.queryByText(/测试已执行成功/)).not.toBeInTheDocument()
-  })
-
-  it("opens a right execution drawer and removes the left run console", async () => {
-    render(
-      <MemoryRouter initialEntries={["/function/1/build"]}>
-        <Routes>
-          <Route path="/function/:functionId/build" element={<FunctionBuildPage />} />
-        </Routes>
-      </MemoryRouter>
-    )
-
-    await screen.findByText("Build Chat")
-    expect(screen.queryByText("Run Console")).not.toBeInTheDocument()
-    expect(screen.queryByText("Step 3")).not.toBeInTheDocument()
-    expect(screen.getByText(/Build 内只做预演/)).toBeInTheDocument()
-
-    await userEvent.click(screen.getByRole("button", { name: "确认并预演" }))
-
-    expect(await screen.findByRole("heading", { name: "执行结果" })).toBeInTheDocument()
-    expect(screen.getByText("入参 JSON")).toBeInTheDocument()
-    expect(screen.getByText("执行输出")).toBeInTheDocument()
-    expect(await screen.findByText(/"rows": 3/)).toBeInTheDocument()
-  })
-
-  it("passes datasource_id from selected datasource into invoke request", async () => {
-    render(
-      <MemoryRouter initialEntries={["/function/1/build"]}>
-        <Routes>
-          <Route path="/function/:functionId/build" element={<FunctionBuildPage />} />
-        </Routes>
-      </MemoryRouter>
-    )
-
-    await screen.findByText("Build Chat")
-    await userEvent.click(screen.getByRole("button", { name: "选择测试数据源" }))
-    await userEvent.click(screen.getByRole("option", { name: /sys-a/i }))
-    await userEvent.click(screen.getByRole("button", { name: "确认并预演" }))
-
-    expect(functionsApi.buildChatStream).toHaveBeenCalledWith(
-      1,
-      expect.objectContaining({
-        action: "invoke",
-        invoke: expect.objectContaining({
-          datasource_id: 2,
-          payload: expect.objectContaining({
-            datasource_id: 2,
-            datasource_ids: [2],
-          }),
-          write_mode: "readonly",
-          execution_mode: "plan",
-          runtime_path: "draft",
-        }),
-      })
-    )
-  })
-
-  it("keeps invoke datasource_id empty when no datasource is selected", async () => {
-    render(
-      <MemoryRouter initialEntries={["/function/1/build"]}>
-        <Routes>
-          <Route path="/function/:functionId/build" element={<FunctionBuildPage />} />
-        </Routes>
-      </MemoryRouter>
-    )
-
-    await screen.findByText("Build Chat")
-    await userEvent.click(screen.getByRole("button", { name: "确认并预演" }))
-
-    expect(functionsApi.buildChatStream).toHaveBeenCalledWith(
-      1,
-      expect.objectContaining({
-        action: "invoke",
-        invoke: expect.not.objectContaining({
-          datasource_id: expect.any(Number),
-        }),
-      })
-    )
-    const invokeCall = functionsApi.buildChatStream.mock.calls.at(-1)?.[1] as any
-    expect(invokeCall?.invoke?.payload?.datasource_id).toBeUndefined()
-    expect(invokeCall?.invoke?.payload?.datasource_ids).toBeUndefined()
-  })
-
-  it("maps sql syntax error to friendly message", async () => {
-    functionsApi.buildChatStream.mockImplementationOnce(async () =>
-      createRuntimeSseResponse([
-        { type: "phase", phase: "invoke_finished", data: { status: "failed", summary: "测试执行失败：(1064...)" } },
-        { type: "assistant", data: { text: "测试执行失败：(1064...)" } },
-        {
-          type: "done",
-          data: {
-            action: "invoke",
-            status: "failed",
-            assistant_message: "测试执行失败：(1064...)",
-            error_message: "数据库执行失败",
-            error_code: "sql_syntax_error",
-            duration_ms: 12,
-            run_id: "run-sql-err-1",
-            output: null,
-          },
-        },
-      ])
-    )
-
-    render(
-      <MemoryRouter initialEntries={["/function/1/build"]}>
-        <Routes>
-          <Route path="/function/:functionId/build" element={<FunctionBuildPage />} />
-        </Routes>
-      </MemoryRouter>
-    )
-
-    await screen.findByText("Build Chat")
-    await userEvent.click(screen.getByRole("button", { name: "确认并预演" }))
-    expect((await screen.findAllByText(/生成的 SQL 语法有问题/)).length).toBeGreaterThan(0)
   })
 
   it("creates function from empty state entry", async () => {
@@ -1182,6 +536,56 @@ describe("Function and Scheduler consoles", () => {
         runtime_path: "production",
       }))
     })
+  })
+
+  it("assigns a run id before invocation and can stop the owned run", async () => {
+    functionsApi.list.mockResolvedValueOnce([
+      { id: 12, name: "slow-function", status: "released" },
+    ])
+    functionsApi.get.mockResolvedValueOnce({
+      id: 12,
+      name: "slow-function",
+      status: "released",
+      draft_code: "import time\ntime.sleep(10)",
+      draft_dependencies: null,
+    })
+    let finishInvocation: ((value: Record<string, unknown>) => void) | undefined
+    functionsApi.invoke.mockImplementationOnce(
+      () => new Promise((resolve) => { finishInvocation = resolve })
+    )
+    functionsApi.cancelRun.mockImplementationOnce(async () => {
+      const result = {
+        status: "cancelled",
+        duration_ms: 9,
+        error_class: "cancelled",
+        error_code: "cancelled",
+        error_message: "Function invocation cancelled",
+        output: null,
+      }
+      finishInvocation?.(result)
+      return result
+    })
+
+    render(
+      <MemoryRouter initialEntries={["/function"]}>
+        <Routes>
+          <Route path="/function" element={<FunctionListPage />} />
+        </Routes>
+      </MemoryRouter>
+    )
+
+    await screen.findByText("slow-function")
+    await userEvent.click(screen.getByRole("button", { name: "执行 slow-function" }))
+    await userEvent.click(screen.getByRole("button", { name: "执行" }))
+    const stop = await screen.findByRole("button", { name: "停止执行" })
+    const invokeRequest = functionsApi.invoke.mock.calls[0][1]
+    expect(invokeRequest.run_id).toMatch(/^[A-Za-z0-9][A-Za-z0-9._:-]*$/)
+    await userEvent.click(stop)
+
+    await waitFor(() => {
+      expect(functionsApi.cancelRun).toHaveBeenCalledWith(12, invokeRequest.run_id)
+    })
+    expect(await screen.findByText(/执行已停止/)).toBeInTheDocument()
   })
 
   it("formats object-like invoke errors instead of rendering object object", async () => {

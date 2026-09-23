@@ -9,7 +9,6 @@ from types import SimpleNamespace
 import pytest
 
 from app.services.platform import object_tools
-from app.tools import registry
 from evals.dba_core import runtime
 from evals.dba_core.runtime import resolve_llm_config
 from evals.dba_core.scoring import aggregate_scores, score_case
@@ -344,54 +343,10 @@ def test_explicit_settings_database_must_exist(tmp_path: Path):
 def test_knowledge_tool_paths_follow_configured_data_dir(tmp_path: Path, monkeypatch):
     settings = SimpleNamespace(data_dir=str(tmp_path))
     monkeypatch.setattr(object_tools, "get_settings", lambda: settings)
-    monkeypatch.setattr(registry, "get_settings", lambda: settings)
     document = tmp_path / "knowledge" / "7" / "policy.md"
     document.parent.mkdir(parents=True)
     document.write_text("policy", encoding="utf-8")
 
     doc_root = object_tools._knowledge_doc_root(7)
-    path_error = registry.ExecCommandTool()._validate_path_args("cat", [str(document)])
 
     assert doc_root == f"{document.parent}/"
-    assert path_error is None
-
-
-def test_exec_command_rejects_similar_prefix_outside_configured_data_dir(
-    tmp_path: Path, monkeypatch
-):
-    data_dir = tmp_path / "data"
-    settings = SimpleNamespace(data_dir=str(data_dir))
-    monkeypatch.setattr(registry, "get_settings", lambda: settings)
-    outside = tmp_path / "data-escape" / "secret.md"
-
-    path_error = registry.ExecCommandTool()._validate_path_args("cat", [str(outside)])
-
-    assert path_error is not None
-    assert path_error["code"] == "path_violation"
-
-
-def test_exec_command_schema_exposes_real_capability_boundary_and_runtime_goal():
-    tool = registry.ExecCommandTool().to_openai_function()["function"]
-    parameters = tool["parameters"]
-
-    assert "_runtime" in parameters["required"]
-    assert parameters["properties"]["_runtime"]["required"] == [
-        "phase",
-        "goal",
-        "success_criteria",
-    ]
-    assert "not a general shell" in tool["description"]
-    assert "does not support pipes" in tool["description"]
-    assert "stdin" in tool["description"]
-    assert "which" in tool["description"]
-    assert parameters["properties"]["command"]["enum"] == [
-        "rg",
-        "grep",
-        "sed",
-        "cat",
-        "head",
-        "tail",
-        "wc",
-        "find",
-        "ls",
-    ]

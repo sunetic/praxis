@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import importlib.util
-import re
 from pathlib import Path
 from types import ModuleType
 from typing import Any
@@ -226,16 +225,14 @@ def test_compose_run_is_the_documented_one_command_entrypoint() -> None:
     assert command in (root / "README_CN.md").read_text()
 
 
-def test_dockerfile_litellm_wheel_checksum_matches_uv_lock() -> None:
+def test_image_uses_locked_native_sdk_without_litellm_bootstrap() -> None:
     root = Path(__file__).parents[1]
-    lock_text = (root / "uv.lock").read_text()
-    wheel = re.search(
-        r'\{ url = "(?P<url>[^"]*litellm-[^"]+\.whl)", '
-        r'hash = "sha256:(?P<hash>[0-9a-f]{64})"',
-        lock_text,
-    )
-    assert wheel is not None
+    import tomllib
 
+    packages = tomllib.loads((root / "uv.lock").read_text())["package"]
+    versions = {item["name"]: item["version"] for item in packages}
+    assert versions["pydantic-ai-slim"] == "2.43.0"
+    assert "litellm" not in versions
     dockerfile = (root / "Dockerfile").read_text()
-    assert f"ARG LITELLM_WHEEL_URL={wheel.group('url')}" in dockerfile
-    assert f"ADD --checksum=sha256:{wheel.group('hash')}" in dockerfile
+    assert "litellm" not in dockerfile.lower()
+    assert "uv sync --frozen" in dockerfile

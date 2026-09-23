@@ -263,6 +263,45 @@ class DBConnectionPool:
                 "row_count": row_count,
             }
 
+    async def execute_read_query(self, datasource, sql: str, *, limit: int = 200) -> dict:
+        """Execute one bounded result in a database-enforced read-only transaction.
+
+        No connection-loss or decoding replay: the caller sees the actual error.
+        Rollback also resets the transaction before returning a pooled connection.
+        SQL statement validation belongs to the authorized domain tool.
+        """
+        pool = await self._get_pool(
+            datasource.host,
+            datasource.port,
+            datasource.user or "",
+            datasource.password or "",
+            datasource.database or "",
+        )
+        async with pool.acquire() as conn:
+            try:
+                async with conn.cursor(aiomysql.SSDictCursor) as cursor:
+                    await cursor.execute("START TRANSACTION READ ONLY")
+                    await cursor.execute(sql)
+                    rows = list(await cursor.fetchmany(limit + 1))
+                    columns = [self._safe_decode(c[0]) for c in cursor.description or []]
+                    result = {
+                        "columns": columns,
+                        "rows": [self._decode_row(row) for row in rows[:limit]],
+                        "returned_rows": min(len(rows), limit),
+                        "truncated": len(rows) > limit,
+                        "total_rows": None if len(rows) > limit else len(rows),
+                    }
+                    if len(rows) > limit:
+                        # Do not drain an unbounded server-side result on close.
+                        conn.close()
+                    return result
+            except BaseException:
+                conn.close()
+                raise
+            finally:
+                if not conn.closed:
+                    await conn.rollback()
+
     async def execute_query(
         self,
         datasource: models.DataSource,

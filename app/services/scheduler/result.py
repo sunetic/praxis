@@ -13,4 +13,4 @@ class ScheduleRuntimeResult:
     error_class: str | None
     error_message: str | None
     duration_ms: int
-    conversation_id: int | None = None
+    conversation_id: str | None = None

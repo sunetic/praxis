@@ -1,168 +1,133 @@
-from __future__ import annotations
+"""Submit a scheduled occurrence to the application-owned native runtime."""
 
-import asyncio
-import json
-from typing import Any
+from dataclasses import replace
+from typing import TYPE_CHECKING
+from uuid import NAMESPACE_URL, uuid5
 
-import httpx
-from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy import insert, select, update
 
-from app.core.logging import get_logger
-from app.models import models
+from app.models import agent_runs as native
+from app.models.models import ScheduleRun
+from app.services.agent.persistence import run_db
+from app.services.agent.store import RunConflictError
 from app.services.scheduler.result import ScheduleRuntimeResult
 
-logger = get_logger("agent.runtime")
+if TYPE_CHECKING:
+    from app.services.agent.application import RuntimeApplication
 
 
 class ScheduledAgentRunner:
-    def __init__(
-        self,
-        *,
-        session_factory: sessionmaker[Session] | Any,
-        chat_agent: Any | None = None,
-    ) -> None:
-        self._session_factory = session_factory
-        # chat_agent kept for interface compatibility but no longer used
-        self._chat_agent = chat_agent
+    def __init__(self, application: "RuntimeApplication"):
+        self.application = application
 
     async def invoke(
         self,
         *,
-        agent: models.Agent,
+        agent_id: int,
         prompt: str,
-        trace_id: str | None = None,
-        timeout_seconds: float = 300.0,
+        schedule_run_id: str,
         datasource_id: int | None = None,
     ) -> ScheduleRuntimeResult:
-        db = self._session_factory()
-        try:
-            agent_ref = db.query(models.Agent).filter(models.Agent.id == agent.id).first()
-            if agent_ref is None:
-                return ScheduleRuntimeResult(
-                    "", "failed", None, None, "validation", f"Agent {agent.id} not found", 0
-                )
-
-            effective_prompt = str(prompt or "").strip()
-
-            default_datasource_id = datasource_id
-            if default_datasource_id is None and agent_ref.datasources:
-                default_datasource_id = agent_ref.datasources[0].id
-
-            conversation = models.Conversation(
-                title=f"Scheduler Agent Run - {agent_ref.name}",
-                agent_id=agent_ref.id,
-                datasource_id=default_datasource_id,
-                active_skills=agent_ref.skills if isinstance(agent_ref.skills, list) else None,
-                category="scheduler_run",
-            )
-            db.add(conversation)
-            db.commit()
-            db.refresh(conversation)
-            conversation_id = conversation.id
-        except Exception as exc:
-            logger.exception("agent_scheduler_create_conversation_failed error=%s", str(exc))
-            return ScheduleRuntimeResult("", "failed", None, None, "runtime", str(exc), 0)
-        finally:
-            db.close()
-
-        # Delegate to the chat stream endpoint via ASGI transport (in-process, no network).
-        from app.main import app as asgi_app
-
-        stream_url = f"/api/v1/chat/{conversation_id}/stream"
-
-        assistant_chunks: list[str] = []
-        error_payload: dict[str, Any] | None = None
-        started = asyncio.get_running_loop().time()
-
-        try:
-            transport = httpx.ASGITransport(app=asgi_app)
-            async with httpx.AsyncClient(
-                transport=transport,
-                base_url="http://internal",
-                timeout=timeout_seconds,
-            ) as client:
-                async with client.stream(
-                    "POST",
-                    stream_url,
-                    json={"content": effective_prompt},
-                ) as response:
-                    if response.status_code != 200:
-                        body = await response.aread()
-                        return ScheduleRuntimeResult(
-                            run_id=str(conversation_id),
-                            status="failed",
-                            output=None,
-                            output_summary=None,
-                            error_class="http_error",
-                            error_message=f"Stream endpoint returned {response.status_code}: {body[:200]}",
-                            duration_ms=int((asyncio.get_running_loop().time() - started) * 1000),
-                            conversation_id=conversation_id,
-                        )
-                    async for line in response.aiter_lines():
-                        if not line.startswith("data: "):
-                            continue
-                        raw = line[6:]
-                        if raw in ("[DONE]", ""):
-                            continue
-                        try:
-                            event = json.loads(raw)
-                        except json.JSONDecodeError:
-                            continue
-                        event_type = str(event.get("type") or "")
-                        if (
-                            event_type == "assistant"
-                            and str(event.get("phase") or "") == "responding"
-                        ):
-                            text = str((event.get("data") or {}).get("text") or "")
-                            if text:
-                                assistant_chunks.append(text)
-                        elif event_type == "error" and isinstance(event.get("data"), dict):
-                            error_payload = event["data"]
-        except TimeoutError:
-            return ScheduleRuntimeResult(
-                run_id=str(conversation_id),
-                status="failed",
-                output=None,
-                output_summary=None,
-                error_class="timeout",
-                error_message="Agent invocation timed out",
-                duration_ms=int((asyncio.get_running_loop().time() - started) * 1000),
-                conversation_id=conversation_id,
-            )
-        except Exception as exc:
-            logger.exception("agent_scheduler_runtime_failed error=%s", str(exc))
-            return ScheduleRuntimeResult(
-                run_id=str(conversation_id),
-                status="failed",
-                output=None,
-                output_summary=None,
-                error_class="runtime",
-                error_message=str(exc),
-                duration_ms=int((asyncio.get_running_loop().time() - started) * 1000),
-                conversation_id=conversation_id,
-            )
-
-        duration_ms = int((asyncio.get_running_loop().time() - started) * 1000)
-        if error_payload:
-            return ScheduleRuntimeResult(
-                run_id=str(conversation_id),
-                status="failed",
-                output=None,
-                output_summary=None,
-                error_class=str(error_payload.get("error_class") or "runtime"),
-                error_message=str(error_payload.get("message") or "Agent runtime error"),
-                duration_ms=duration_ms,
-                conversation_id=conversation_id,
-            )
-
-        assistant_text = "".join(assistant_chunks).strip() or "Agent run finished."
-        return ScheduleRuntimeResult(
-            run_id=str(conversation_id),
-            status="success",
-            output={"assistant_message": assistant_text, "conversation_id": conversation_id},
-            output_summary=assistant_text,
-            error_class=None,
-            error_message=None,
-            duration_ms=duration_ms,
-            conversation_id=conversation_id,
+        return await run_db(
+            self._submit,
+            agent_id=agent_id,
+            prompt=prompt,
+            schedule_run_id=schedule_run_id,
+            datasource_id=datasource_id,
         )
+
+    def _submit(
+        self,
+        *,
+        agent_id: int,
+        prompt: str,
+        schedule_run_id: str,
+        datasource_id: int | None = None,
+    ) -> ScheduleRuntimeResult:
+        """Return acceptance, not task success. The native run owns execution.
+
+        Persist the occurrence's conversation before submission. If the process
+        stops between submission and the caller saving the returned run ID, the
+        native run is still recoverable by conversation + occurrence request ID.
+        There is no second execution owner, timeout loop, or HTTP/SSE adapter.
+        """
+        app = self.application
+        scene = {
+            "agent_id": agent_id,
+            "datasource_ids": ([datasource_id] if datasource_id is not None else None),
+        }
+        conversation_id = uuid5(NAMESPACE_URL, f"praxis:schedule-run:{schedule_run_id}").hex
+        with app.sessions.begin() as db:
+            occurrence = db.execute(
+                update(ScheduleRun)
+                .where(ScheduleRun.run_id == schedule_run_id, ScheduleRun.target_type == "agent")
+                .values(status=ScheduleRun.status)
+                .returning(ScheduleRun.id, ScheduleRun.schedule_id, ScheduleRun.conversation_id)
+            ).first()
+            if occurrence is None:
+                raise ValueError("Scheduled Agent requires a persisted occurrence")
+            if occurrence.conversation_id and occurrence.conversation_id != conversation_id:
+                raise RunConflictError("Scheduled occurrence has another conversation")
+            if not occurrence.conversation_id:
+                db.execute(
+                    insert(native.conversations).values(
+                        id=conversation_id,
+                        actor_id="local",
+                        title=f"Schedule {occurrence.schedule_id}",
+                        scene=scene,
+                        created_at=app.store.clock(),
+                    )
+                )
+                db.execute(
+                    update(ScheduleRun)
+                    .where(ScheduleRun.id == occurrence.id)
+                    .values(
+                        conversation_id=conversation_id,
+                    )
+                )
+            existing = (
+                db.execute(
+                    select(native.runs).where(
+                        native.runs.c.conversation_id == conversation_id,
+                        native.runs.c.client_request_id == schedule_run_id,
+                    )
+                )
+                .mappings()
+                .first()
+            )
+            saved_scene = db.execute(
+                select(native.conversations.c.scene).where(
+                    native.conversations.c.id == conversation_id
+                )
+            ).scalar_one()
+            if saved_scene != scene or (existing and existing["prompt"] != prompt):
+                raise RunConflictError(
+                    "Scheduled occurrence was already submitted with other input"
+                )
+        if existing:
+            return scheduled_result(dict(existing))
+        definition = app.resolve(conversation_id, "local", {})
+        definition = replace(
+            definition,
+            scope={
+                **definition.scope,
+                "entrypoint": "scheduler",
+                "schedule_id": occurrence.schedule_id,
+                "schedule_run_id": schedule_run_id,
+            },
+        )
+        run = app.service.submit(conversation_id, "local", schedule_run_id, prompt, definition)
+        return scheduled_result(run)
+
+
+def scheduled_result(run: dict) -> ScheduleRuntimeResult:
+    return ScheduleRuntimeResult(
+        run_id=run["id"],
+        status=run["status"],
+        output={"assistant_message": run["output"], "conversation_id": run["conversation_id"]},
+        output_summary=run["output"],
+        error_class=run["error_code"],
+        error_message=run["error_code"],
+        duration_ms=int(run["budget"].get("active_seconds", 0) * 1000),
+        conversation_id=run["conversation_id"],
+    )

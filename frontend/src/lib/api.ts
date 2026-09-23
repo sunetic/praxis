@@ -42,6 +42,34 @@ export type DataSourceInput = {
 
 export type DataSourceUpdateInput = Partial<DataSourceInput>
 
+// Presentation contract used by the restored assistant-ui tool disclosure.
+// Native Agent runs populate approvals from ToolBlock instead of the retired Chat API.
+export type PendingAction = {
+  token: string
+  action_type: string
+  status: string
+  batch_id?: string
+  sql?: string
+  sql_preview?: string
+  intent?: string
+  resolved_datasource_id?: number
+  resolved_role?: string
+  resolved_access_level?: "user" | "admin"
+  cluster_key?: string
+  tenant_fingerprint?: Record<string, string>
+  execution_fingerprint?: string
+  mode?: string
+  object_type?: string
+  object_action?: string
+  object_id?: number
+  preview?: string
+  risk_level?: string
+  confirmation_policy?: string
+  idempotency_key?: string
+  source_text?: string
+  created_at?: string | null
+}
+
 export function filterConnectableDatasources(datasources: DataSource[]): DataSource[] {
   return datasources
 }
@@ -53,15 +81,11 @@ export type Agent = {
   prompt: string;
   tools?: string[];
   skills?: string[];
+  datasource_ids: number[];
   agent_type: "built_in" | "custom";
   status: string;
   created_at: string;
   updated_at: string;
-}
-
-export type AgentRunResult = {
-  conversation: Conversation;
-  datasource_ids: number[];
 }
 
 export type ScheduleTargetType = "function" | "agent" | "collector"
@@ -105,7 +129,7 @@ export type ScheduleRun = {
   target_type?: string | null;
   runtime_run_id?: string | null;
   runtime_status?: string | null;
-  conversation_id?: number | null;
+  conversation_id?: string | null;
   error_summary?: string | null;
   output_summary?: string | null;
   output_payload?: Record<string, any> | null;
@@ -211,223 +235,6 @@ export type SkillInput = {
 }
 
 export type SkillUpdateInput = Partial<SkillInput>
-
-export type ConversationCategory = "primary" | "scene" | "agent_run"
-
-export type Conversation = {
-  id: number;
-  title: string;
-  datasource_id?: number;
-  agent_id?: number;
-  active_skills?: string[];
-  category: ConversationCategory;
-  scene_key?: string | null;
-  read_only: boolean;
-  created_at: string;
-  updated_at: string;
-}
-
-export type ToolCallItem = {
-  id: string;
-  name: string;
-  input: Record<string, unknown>;
-  result?: unknown;
-  pending_action_token?: string | null;
-  pending_action_status?: 'pending' | 'confirmed' | 'cancelled' | 'failed' | null;
-}
-
-export type ContentPart =
-  | { type: "text"; text: string }
-  | { type: "progress"; text: string; stage?: string | null }
-  | { type: "tool_use"; id: string; name: string; input?: object | null; result?: unknown; pending_action_token?: string | null; pending_action_status?: "pending" | "confirmed" | "cancelled" | "failed" | null }
-
-export type Message = {
-  id: number;
-  conversation_id: number;
-  role: string;
-  content: string;
-  agent_name?: string | null;
-  tool_calls?: ToolCallItem[] | null;
-  content_parts?: ContentPart[] | null;
-  created_at: string;
-}
-
-export type ChatContextStatus = {
-  conversation_id: number
-  context_window_tokens: number
-  estimated_tokens: number
-  used_percent: number
-  compression_progress_percent: number
-  compression_threshold_percent: number
-  compression_threshold_tokens: number
-  remaining_tokens: number
-  summary_tokens: number
-  recent_message_count: number
-  compacted_through_message_id?: number | null
-  last_compacted_at?: string | null
-  token_source: "estimate" | "provider" | string
-  state: "ready" | "compressing" | "compression_failed"
-}
-
-export type ContextCompressionNotice = {
-  mode: string
-  revision: number
-  summarized_message_count: number
-  summarized_turn_count: number
-  duplicate_messages_omitted: number
-  through_message_id?: number
-  before_tokens: number
-  after_tokens: number
-  before_percent: number
-  after_percent: number
-  summary_tokens: number
-}
-
-export type PageBuildOrchestration = {
-  enabled?: boolean;
-  mode?: string;
-  scenario_id?: string;
-  required_slots?: string[];
-  slots?: Record<string, any>;
-  dependencies?: Array<string | Record<string, any>>;
-}
-
-export type ChatStreamEvent = {
-  type:
-    | "thinking"
-    | "plan"
-    | "assistant_progress"
-    | "step_start"
-    | "step_result"
-    | "reflect"
-    | "task_contract"
-    | "progress"
-    | "verification"
-    | "task_state"
-    | "checkpoint"
-    | "context_compressed"
-    | "context_status"
-    | "assistant"
-    | "skill_delta"
-    | "error"
-    | "done";
-  id?: string;
-  ts?: string;
-  phase?: string;
-  data?: any;
-  meta?: Record<string, any>;
-}
-
-export type SceneAgentPayload = {
-  key: string
-  context?: Record<string, any>
-  focus_object?: Record<string, any> | null
-  tools?: string[]
-  skills?: string[]
-}
-
-export type SaveAgentStreamEvent = {
-  type: "save_agent_status" | "save_agent_done" | "error" | "done";
-  data?: any;
-}
-
-export type ChatEvent = {
-  id: number;
-  conversation_id: number;
-  event_type: string;
-  phase?: string;
-  turn_id?: string | null;
-  turn_seq?: number | null;
-  part_seq?: number | null;
-  role?: string | null;
-  agent_name?: string | null;
-  payload?: Record<string, any> | null;
-  created_at: string;
-}
-
-export type ChatHandoffFact = {
-  label: string;
-  value: string;
-}
-
-export type ChatHandoffSource = {
-  page: string;
-  entry: string;
-  label?: string | null;
-}
-
-export type ChatHandoffPacket = {
-  type: string;
-  version: number;
-  source: ChatHandoffSource;
-  title: string;
-  summary?: string | null;
-  facts: ChatHandoffFact[];
-  suggested_prompts: string[];
-  context: Record<string, any>;
-}
-
-export type ChatHandoff = {
-  id: number;
-  conversation_id: number;
-  status: string;
-  consumed_at?: string | null;
-  packet: ChatHandoffPacket;
-  created_at: string;
-}
-
-export type ChatHandoffCreateInput = {
-  conversation_id?: number;
-  title?: string;
-  datasource_id?: number;
-  preferred_execution_datasource_id?: number;
-  packet: ChatHandoffPacket;
-}
-
-export type ChatHandoffCreateResponse = {
-  conversation: Conversation;
-  handoff: ChatHandoff;
-}
-
-export type PendingAction = {
-  token: string;
-  action_type: string;
-  status: string;
-  batch_id?: string;
-  sql?: string;
-  sql_preview?: string;
-  intent?: string;
-  resolved_datasource_id?: number;
-  resolved_role?: string;
-  resolved_access_level?: "user" | "admin";
-  cluster_key?: string;
-  tenant_fingerprint?: Record<string, string>;
-  execution_fingerprint?: string;
-  mode?: string;
-  object_type?: string;
-  object_action?: string;
-  object_id?: number;
-  preview?: string;
-  risk_level?: string;
-  confirmation_policy?: string;
-  idempotency_key?: string;
-  source_text?: string;
-  created_at?: string | null;
-}
-
-export type BuildSession = {
-  id: number;
-  conversation_id?: number;
-  scope_type: string;
-  scope_object_type: "page" | "function" | "scheduler";
-  scope_object_id: string;
-  ttl_seconds: number;
-  heartbeat_at: string;
-  expires_at: string;
-  status: "active" | "closed";
-  created_at: string;
-  updated_at: string;
-}
 
 export const datasourcesApi = {
   list: () => api.get<DataSource[]>('/datasources').then(res => res.data),
@@ -611,12 +418,10 @@ export const knowledgePackApi = {
 export const agentsApi = {
   list: () => api.get<Agent[]>('/agents').then(res => res.data),
   get: (id: number) => api.get<Agent>(`/agents/${id}`).then(res => res.data),
-  create: (data: { name: string; description?: string; prompt: string; tools?: string[]; skills?: string[] }) =>
+  create: (data: { name: string; description?: string; prompt: string; tools?: string[]; skills?: string[]; datasource_ids?: number[] }) =>
     api.post<Agent>('/agents', data).then(res => res.data),
   update: (id: number, data: Partial<Omit<Agent, 'id' | 'status' | 'created_at' | 'updated_at'>>) =>
     api.patch<Agent>(`/agents/${id}`, data).then(res => res.data),
-  run: (id: number, data: { datasource_ids?: number[]; title?: string }) =>
-    api.post<AgentRunResult>(`/agents/${id}/run`, data).then(res => res.data),
   delete: (id: number) => api.delete(`/agents/${id}`),
 };
 
@@ -631,256 +436,15 @@ export const skillsApi = {
   delete: (name: string) => api.delete(`/skills/${encodeURIComponent(name)}`),
 };
 
-export const conversationsApi = {
-  list: (params?: { datasource_id?: number; agent_id?: number; category?: ConversationCategory; scene_key?: string }) =>
-    api.get<Conversation[]>('/conversations', { params }).then(res => res.data),
-  get: (id: number) => api.get<Conversation>(`/conversations/${id}`).then(res => res.data),
-  create: (data: {
-    title?: string;
-    datasource_id?: number;
-    agent_id?: number;
-    active_skills?: string[];
-    category?: ConversationCategory;
-    scene_key?: string | null;
-    read_only?: boolean;
-  }) =>
-    api.post<Conversation>('/conversations', data).then(res => res.data),
-  update: (id: number, data: Partial<Conversation>) =>
-    api.patch<Conversation>(`/conversations/${id}`, data).then(res => res.data),
-  delete: (id: number) => api.delete(`/conversations/${id}`),
-  createBuildSession: (
-    conversationId: number,
-    data: { scope_object_type: "page" | "function" | "scheduler"; scope_object_id: string; ttl_seconds?: number }
-  ) =>
-    api
-      .post<BuildSession>(`/conversations/${conversationId}/build-sessions`, data)
-      .then((res) => res.data),
-  getActiveBuildSession: (conversationId: number) =>
-    api
-      .get<BuildSession>(`/conversations/${conversationId}/build-sessions/active`)
-      .then((res) => res.data),
-  heartbeatBuildSession: (conversationId: number, sessionId: number, ttl_seconds?: number) =>
-    api
-      .post<BuildSession>(`/conversations/${conversationId}/build-sessions/${sessionId}/heartbeat`, {
-        ttl_seconds,
-      })
-      .then((res) => res.data),
-  closeBuildSession: (conversationId: number, sessionId: number) =>
-    api.delete(`/conversations/${conversationId}/build-sessions/${sessionId}`),
-};
-
-export const messagesApi = {
-  list: (conversationId: number) =>
-    api.get<Message[]>(`/messages/conversation/${conversationId}`).then(res => res.data),
-  create: (data: { conversation_id: number; role: string; content: string }) =>
-    api.post<Message>('/messages', data).then(res => res.data),
-};
-
-export const chatApi = {
-  stream: (
-    conversationId: number,
-    content: string,
-    options?: {
-      signal?: AbortSignal
-      timeoutMs?: number
-      runDatasourceIds?: number[]
-      handoffId?: number
-      sceneAgent?: SceneAgentPayload
-      conversationContext?: string
-      locale?: string
-      resumeActionToken?: string
-    }
-  ) => {
-    const url = `${API_BASE_URL}/chat/${conversationId}/stream`
-    const controller = new AbortController()
-    const timeoutMs = options?.timeoutMs ?? 300000
-    const timeoutId = setTimeout(() => controller.abort(), timeoutMs)
-    const externalSignal = options?.signal
-
-    let onAbort: (() => void) | undefined
-    if (externalSignal) {
-      if (externalSignal.aborted) {
-        controller.abort()
-      } else {
-        onAbort = () => controller.abort()
-        externalSignal.addEventListener("abort", onAbort, { once: true })
-      }
-    }
-    
-    return fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        content,
-        run_datasource_ids: Array.isArray(options?.runDatasourceIds)
-          ? options?.runDatasourceIds
-          : undefined,
-        handoff_id: typeof options?.handoffId === "number" ? options.handoffId : undefined,
-        scene_agent: options?.sceneAgent,
-        conversation_context: String(options?.conversationContext || "").trim() || undefined,
-        locale: options?.locale || undefined,
-        resume_action_token: options?.resumeActionToken || undefined,
-      }),
-      signal: controller.signal,
-    }).finally(() => {
-      clearTimeout(timeoutId)
-      if (externalSignal && onAbort) {
-        externalSignal.removeEventListener("abort", onAbort)
-      }
-    })
-  },
-  saveAgentStream: (
-    conversationId: number,
-    payload?: { user_input?: string },
-    options?: { signal?: AbortSignal; timeoutMs?: number }
-  ) => {
-    const url = `${API_BASE_URL}/chat/${conversationId}/save-agent/stream`
-    const controller = new AbortController()
-    const timeoutMs = options?.timeoutMs ?? 300000
-    const timeoutId = setTimeout(() => controller.abort(), timeoutMs)
-    const externalSignal = options?.signal
-
-    let onAbort: (() => void) | undefined
-    if (externalSignal) {
-      if (externalSignal.aborted) {
-        controller.abort()
-      } else {
-        onAbort = () => controller.abort()
-        externalSignal.addEventListener("abort", onAbort, { once: true })
-      }
-    }
-
-    return fetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload ?? {}),
-      signal: controller.signal,
-    }).finally(() => {
-      clearTimeout(timeoutId)
-      if (externalSignal && onAbort) {
-        externalSignal.removeEventListener("abort", onAbort)
-      }
-    })
-  },
-  complete: (content: string) =>
-    api.post<{content: string}>('/chat/complete', { content }).then(res => res.data),
-  listEvents: (conversationId: number) =>
-    api.get<ChatEvent[]>(`/chat/${conversationId}/events`).then(res => res.data),
-  getContextStatus: (conversationId: number) =>
-    api.get<ChatContextStatus>(`/chat/${conversationId}/context`).then(res => res.data),
-  createHandoff: (data: ChatHandoffCreateInput) =>
-    api.post<ChatHandoffCreateResponse>("/chat/handoffs", data).then((res) => res.data),
-  getHandoff: (conversationId: number, handoffId: number) =>
-    api.get<ChatHandoff>(`/chat/${conversationId}/handoffs/${handoffId}`).then((res) => res.data),
-  consumeHandoff: (conversationId: number, handoffId: number) =>
-    api.post<ChatHandoff>(`/chat/${conversationId}/handoffs/${handoffId}/consume`, {}).then((res) => res.data),
-  listPendingActions: (conversationId: number) =>
-    api.get<PendingAction[]>(`/chat/${conversationId}/actions/pending`).then(res => res.data),
-  confirmPendingAction: (conversationId: number, token: string) =>
-    api.post<{success: boolean; token: string; status: string; result: any; should_resume?: boolean; error?: string; assistant_message?: string}>(
-      `/chat/${conversationId}/actions/${token}/confirm`
-    ).then(res => res.data),
-  cancelPendingAction: (conversationId: number, token: string) =>
-    api.post<{success: boolean; token: string; status: string}>(
-      `/chat/${conversationId}/actions/${token}/cancel`
-    ).then(res => res.data),
-};
 
 export const pagesApi = {
-  list: () => api.get<any[]>('/pages').then((res) => res.data),
-  navigation: () => api.get<any[]>('/pages/navigation').then((res) => res.data),
-  create: (data: { name: string; description?: string; draft_payload?: Record<string, any> }) =>
-    api.post<any>('/pages', data).then((res) => res.data),
-  get: (id: number) => api.get<any>(`/pages/${id}`).then((res) => res.data),
-  getPublished: (id: number) => api.get<any>(`/pages/${id}/published`).then((res) => res.data),
-  update: (id: number, data: Record<string, any>) =>
-    api.patch<any>(`/pages/${id}`, data).then((res) => res.data),
+  list: () => api.get<any[]>('/pages').then(res => res.data),
+  navigation: () => api.get<any[]>('/pages/navigation').then(res => res.data),
+  create: (data: { name: string; description?: string }) => api.post<any>('/pages', data).then(res => res.data),
+  get: (id: number) => api.get<any>(`/pages/${id}`).then(res => res.data),
+  update: (id: number, data: { name: string; description?: string }) => api.patch<any>(`/pages/${id}`, data).then(res => res.data),
   delete: (id: number) => api.delete(`/pages/${id}`),
-  listReleases: (id: number) => api.get<any[]>(`/pages/${id}/releases`).then((res) => res.data),
-  listBuildRuns: (id: number, limit = 20) =>
-    api.get<any[]>(`/pages/${id}/build-runs`, { params: { limit } }).then((res) => res.data),
-  getBuildRun: (id: number, runId: string) =>
-    api.get<any>(`/pages/${id}/build-runs/${runId}`).then((res) => res.data),
-  listBuildRunEvents: (id: number, runId: string) =>
-    api.get<any[]>(`/pages/${id}/build-runs/${runId}/events`).then((res) => res.data),
-  buildRun: (
-    id: number,
-    prompt: string,
-    conversationContext?: string,
-    options?: { orchestration?: PageBuildOrchestration }
-  ) =>
-    api
-      .post<any>(`/pages/${id}/build-runs`, {
-        prompt,
-        ...(conversationContext ? { conversation_context: conversationContext } : {}),
-        ...(options?.orchestration ? { orchestration: options.orchestration } : {}),
-      })
-      .then((res) => res.data),
-  buildRunStream: (
-    id: number,
-    prompt: string,
-    conversationContext?: string,
-    options?: { orchestration?: PageBuildOrchestration; signal?: AbortSignal; timeoutMs?: number }
-  ) => {
-    const url = `${API_BASE_URL}/pages/${id}/build-runs/stream`
-    const controller = new AbortController()
-    const timeoutMs = options?.timeoutMs ?? 300000
-    const timeoutId = setTimeout(() => controller.abort(), timeoutMs)
-    const externalSignal = options?.signal
-
-    let onAbort: (() => void) | undefined
-    if (externalSignal) {
-      if (externalSignal.aborted) {
-        controller.abort()
-      } else {
-        onAbort = () => controller.abort()
-        externalSignal.addEventListener("abort", onAbort, { once: true })
-      }
-    }
-
-    return fetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        prompt,
-        ...(conversationContext ? { conversation_context: conversationContext } : {}),
-        ...(options?.orchestration ? { orchestration: options.orchestration } : {}),
-      }),
-      signal: controller.signal,
-    }).finally(() => {
-      clearTimeout(timeoutId)
-      if (externalSignal && onAbort) {
-        externalSignal.removeEventListener("abort", onAbort)
-      }
-    })
-  },
-  build: (
-    id: number,
-    prompt: string,
-    conversationContext?: string,
-    options?: { orchestration?: PageBuildOrchestration }
-  ) =>
-    api
-      .post<any>(`/pages/${id}/build-runs`, {
-        prompt,
-        ...(conversationContext ? { conversation_context: conversationContext } : {}),
-        ...(options?.orchestration ? { orchestration: options.orchestration } : {}),
-      })
-      .then((res) => res.data),
-  preview: (id: number) => api.post<any>(`/pages/${id}/preview`, {}).then((res) => res.data),
-  freeze: (id: number, data?: Record<string, any>) =>
-    api.post<any>(`/pages/${id}/freeze`, data ?? {}).then((res) => res.data),
-  listSnapshots: (id: number, limit = 20) =>
-    api.get<any[]>(`/pages/${id}/snapshots`, { params: { limit } }).then((res) => res.data),
-  compile: (id: number, data?: Record<string, any>) =>
-    api.post<any>(`/pages/${id}/compile`, data ?? {}).then((res) => res.data),
-  listCompileRuns: (id: number, limit = 20) =>
-    api.get<any[]>(`/pages/${id}/compile-runs`, { params: { limit } }).then((res) => res.data),
-  publish: (id: number, data?: Record<string, any>) =>
-    api.post<any>(`/pages/${id}/publish`, data ?? {}).then((res) => res.data),
-  archive: (id: number) => api.post<any>(`/pages/${id}/archive`, {}).then((res) => res.data),
-  rollback: (id: number, releaseId: number) =>
-    api.post<any>(`/pages/${id}/rollback`, { release_id: releaseId }).then((res) => res.data),
+  archive: (id: number) => api.post(`/pages/${id}/archive`, {}).then(res => res.data),
 }
 
 export const functionsApi = {
@@ -890,73 +454,20 @@ export const functionsApi = {
   create: (data: Record<string, any>) => api.post<any>('/functions', data).then((res) => res.data),
   get: (id: number) => api.get<any>(`/functions/${id}`).then((res) => res.data),
   getBySlug: (slug: string) => api.get<any>(`/functions/by-slug/${encodeURIComponent(slug)}`).then((res) => res.data),
-  getByName: (name: string) => api.get<any>(`/functions/by-name/${encodeURIComponent(name)}`).then((res) => res.data),
   update: (id: number, data: Record<string, any>) =>
     api.patch<any>(`/functions/${id}`, data).then((res) => res.data),
   delete: (id: number) => api.delete(`/functions/${id}`),
   listReleases: (id: number) => api.get<any[]>(`/functions/${id}/releases`).then((res) => res.data),
-  listBuildRuns: (id: number, limit = 20) =>
-    api.get<any[]>(`/functions/${id}/build-runs`, { params: { limit } }).then((res) => res.data),
-  getBuildRun: (id: number, runId: string) =>
-    api.get<any>(`/functions/${id}/build-runs/${runId}`).then((res) => res.data),
-  listBuildRunEvents: (id: number, runId: string) =>
-    api.get<any[]>(`/functions/${id}/build-runs/${runId}/events`).then((res) => res.data),
   listRuns: (id: number, limit = 20) =>
     api.get<any[]>(`/functions/${id}/runs`, { params: { limit } }).then((res) => res.data),
-  build: (id: number, prompt: string, options?: { ambiguity_mode?: "clarify" | "default" }) =>
-    api
-      .post<any>(`/functions/${id}/build`, {
-        prompt,
-        ambiguity_mode: options?.ambiguity_mode ?? "default",
-      })
-      .then((res) => res.data),
-  buildChatStream: (
-    id: number,
-    data: Record<string, any>,
-    options?: { signal?: AbortSignal; timeoutMs?: number }
-  ) => {
-    const url = `${API_BASE_URL}/functions/${id}/chat/stream`
-    const controller = new AbortController()
-    const timeoutMs = options?.timeoutMs ?? 300000
-    const timeoutId = setTimeout(() => controller.abort(), timeoutMs)
-    const externalSignal = options?.signal
-
-    let onAbort: (() => void) | undefined
-    if (externalSignal) {
-      if (externalSignal.aborted) {
-        controller.abort()
-      } else {
-        onAbort = () => controller.abort()
-        externalSignal.addEventListener("abort", onAbort, { once: true })
-      }
-    }
-
-    return fetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(data || {}),
-      signal: controller.signal,
-    }).finally(() => {
-      clearTimeout(timeoutId)
-      if (externalSignal && onAbort) {
-        externalSignal.removeEventListener("abort", onAbort)
-      }
-    })
-  },
-  buildChat: (id: number, data: Record<string, any>, options?: { signal?: AbortSignal }) =>
-    api.post<any>(`/functions/${id}/chat`, data, { signal: options?.signal }).then((res) => res.data),
   suggestInput: (
     id: number,
-    data: { prompt?: string; conversation_context?: string }
+    data: { prompt?: string; runtime_path?: "production" | "draft" }
   ) => api.post<any>(`/functions/${id}/suggest-input`, data).then((res) => res.data),
-  strategy: (id: number, data: Record<string, any>) =>
-    api.post<any>(`/functions/${id}/strategy`, data).then((res) => res.data),
-  verify: (id: number, data?: Record<string, any>) =>
-    api.post<any>(`/functions/${id}/verify`, data ?? {}).then((res) => res.data),
-  release: (id: number, data?: Record<string, any>) =>
-    api.post<any>(`/functions/${id}/release`, data ?? {}).then((res) => res.data),
   invoke: (id: number, data?: Record<string, any>) =>
     api.post<any>(`/functions/${id}/invoke`, data ?? {}).then((res) => res.data),
+  cancelRun: (id: number, runId: string) =>
+    api.post<any>(`/functions/${id}/runs/${encodeURIComponent(runId)}/cancel`).then((res) => res.data),
   duplicate: (id: number) =>
     api.post<any>(`/functions/${id}/duplicate`).then((res) => res.data),
 }
@@ -1058,12 +569,7 @@ export const channelsApi = {
 }
 
 export type PlatformSettings = {
-  build_engine: "reasoning" | "external_cli"
-  external_cli_command: string
-  external_cli_pre_flags?: string
-  external_cli_post_flags?: string
   sql_allow_mutating?: boolean
-  ai_action_confirmation_bypass?: boolean
   ai_api_key_configured: boolean
   ai_model?: string
   ai_base_url?: string
@@ -1076,15 +582,6 @@ export type PlatformSettingsUpdate = Omit<Partial<PlatformSettings>, 'ai_api_key
   ai_api_key?: string
 }
 
-export type EngineTestResult = {
-  ok: boolean
-  message: string
-  suggested_command?: string
-  flags_added?: string[]
-  env_issues?: string[]
-  raw_cost?: number
-}
-
 export const settingsApi = {
   get: (): Promise<PlatformSettings> =>
     api.get('/settings').then((res) => res.data),
@@ -1092,8 +589,6 @@ export const settingsApi = {
   patch: (payload: PlatformSettingsUpdate): Promise<PlatformSettings> =>
     api.patch('/settings', payload).then((res) => res.data),
 
-  testEngine: (command?: string): Promise<EngineTestResult> =>
-    api.post('/settings/test-engine', { command: command || "" }).then((res) => res.data),
 }
 
 // ── Capabilities ──────────────────────────────────────────────

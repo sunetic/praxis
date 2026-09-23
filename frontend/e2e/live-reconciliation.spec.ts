@@ -1,0 +1,50 @@
+import { test, expect } from "@playwright/test"
+
+test("reconcile a real interrupted write, then explicitly continue without replay", async ({ page }, info) => {
+  const base = process.env.PRAXIS_LIVE_URL
+  const runId = process.env.PRAXIS_RECONCILE_RUN
+  const evidence = process.env.PRAXIS_RECONCILE_EVIDENCE
+  test.skip(!base || !runId || !evidence, "Requires the retained isolated crash fixture and independent DB evidence")
+  test.setTimeout(180_000)
+  await page.addInitScript(() => localStorage.setItem("praxis.locale", "zh-CN"))
+  const current = await (await page.request.get(`${base}/api/v1/runs/${runId}`)).json()
+  expect(current.status).toBe("interrupted")
+  const unknown = current.tool_calls.filter((call: { status: string }) => call.status === "outcome_unknown")
+  expect(unknown).toHaveLength(1)
+  const errors: string[] = []
+  page.on("pageerror", error => errors.push(error.message))
+  await page.goto(`${base}/chat?conversationId=${current.conversation_id}`)
+  const article = page.locator(`[data-run-id="${runId}"]`)
+  const call = article.locator(`[data-tool-id="${unknown[0].call_id}"]`)
+  await expect(article.getByRole("button", { name: "继续此运行" })).toBeDisabled()
+  const save = call.getByRole("button", { name: "记录核对结果", exact: true })
+  await expect(save).toBeDisabled()
+  await call.getByLabel("核对结果", { exact: true }).selectOption("succeeded")
+  await call.getByRole("textbox", { name: /核对依据/ }).fill(evidence!)
+  await expect(save).toBeDisabled()
+  await call.getByRole("checkbox", { name: /我已确认外部操作结束/ }).check()
+  await page.setViewportSize({ width: 390, height: 844 })
+  await save.scrollIntoViewIfNeeded()
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
+  await page.screenshot({ path: info.outputPath("reconciliation-mobile.png"), fullPage: true })
+  const recorded = page.waitForResponse(response => response.url().endsWith("/reconciliation") && response.request().method() === "POST")
+  await save.click()
+  expect((await recorded).status()).toBe(200)
+  await expect(call.getByText("已人工核对", { exact: true })).toBeVisible()
+  expect((await (await page.request.get(`${base}/api/v1/runs/${runId}`)).json()).status).toBe("interrupted")
+  // Restore the test datasource's direct connection only after the old target is reconciled.
+  const restored = await page.request.patch(`${base}/api/v1/datasources/${process.env.PRAXIS_RECONCILE_SOURCE}`, { data: { port: Number(process.env.PRAXIS_RECONCILE_PORT) } })
+  expect(restored.ok()).toBe(true)
+  await page.reload()
+  await expect(call.getByText("已人工核对", { exact: true })).toBeVisible()
+  await expect(article.getByRole("button", { name: "继续此运行" })).toBeEnabled()
+  await article.getByRole("button", { name: "继续此运行" }).click()
+  await expect.poll(async () => (await (await page.request.get(`${base}/api/v1/runs/${runId}`)).json()).status,
+    { timeout: 90_000, intervals: [200, 500, 1000] }).toBe("finished")
+  await expect(article.getByRole("button", { name: "停止", exact: true })).toHaveCount(0)
+  await expect(article.getByText("已人工核对", { exact: true })).toBeVisible()
+  expect(await call.count()).toBe(1)
+  await page.setViewportSize({ width: 1280, height: 900 })
+  await page.screenshot({ path: info.outputPath("reconciliation-finished.png"), fullPage: true })
+  expect(errors).toEqual([])
+})

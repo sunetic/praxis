@@ -1,285 +1,139 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react"
-import { Link, useNavigate } from "react-router-dom"
-import { ArrowLeft, Loader2, Save, Sparkles } from "lucide-react"
+import { useCallback, useEffect, useRef, useState } from "react"
+import { Link, useNavigate, useSearchParams } from "react-router-dom"
+import { isAxiosError } from "axios"
 import { toast } from "sonner"
-
-import { ChatThreadView } from "@/components/chat/ChatThreadView"
-import { useChatController } from "@/components/chat/useChatController"
-import { Badge } from "@/components/ui/badge"
-import {
-  Breadcrumb,
-  BreadcrumbItem,
-  BreadcrumbLink,
-  BreadcrumbList,
-  BreadcrumbPage,
-  BreadcrumbSeparator,
-} from "@/components/ui/breadcrumb"
+import { RunConversationView } from "@/components/chat/RunConversationView"
 import { Button } from "@/components/ui/button"
-import { Checkbox } from "@/components/ui/checkbox"
 import { Input } from "@/components/ui/input"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Textarea } from "@/components/ui/textarea"
 import { useShellI18n } from "@/i18n/shellI18n"
 import { skillsApi } from "@/lib/api"
-import type { SceneAgentPayload } from "@/lib/api"
-
-const SCOPE_OPTIONS = ["general", "mysql", "postgresql"] as const
-
-type SkillDraft = {
-  name: string
-  description: string
-  database: string
-  always_apply: boolean
-  prompt: string
-}
-
-const EMPTY_DRAFT: SkillDraft = {
-  name: "",
-  description: "",
-  database: "general",
-  always_apply: false,
-  prompt: "",
-}
-
-function extractSkillResult(text: string): SkillDraft | null {
-  const fenceMatch = text.match(/```(?:json)?\s*\n?\s*(\{[\s\S]*?"skill_(?:result|draft)"[\s\S]*?\})\s*\n?\s*```/)
-  const raw = fenceMatch ? fenceMatch[1] : null
-  if (!raw) return null
-  try {
-    const parsed = JSON.parse(raw)
-    const sr = parsed.skill_result || parsed.skill_draft
-    if (!sr || typeof sr !== "object") return null
-    return {
-      name: String(sr.name || ""),
-      description: String(sr.description || ""),
-      database: SCOPE_OPTIONS.includes(sr.database) ? sr.database : "general",
-      always_apply: sr.always_apply === true,
-      prompt: String(sr.prompt || ""),
-    }
-  } catch {
-    return null
-  }
-}
-
-function displayScope(db: string, t: ReturnType<typeof useShellI18n>["t"]): string {
-  if (db === "general") return t("skills.scope.general")
-  if (db === "mysql") return t("skills.scope.mysql")
-  if (db === "postgresql") return t("skills.scope.postgresql")
-  return db
-}
+import { agentRunsApi, type RunConversation, type RunEvent } from "@/lib/agentRuns"
+import { skillDraftsApi, type SkillDraft, type SkillDraftContent } from "@/lib/skillDrafts"
 
 export function SkillBuilderPage() {
+  const [params] = useSearchParams()
+  const createdHere = useRef<string | null>(null)
+  const id = params.get("draftId")
+  return <SkillBuilderWorkspace key={!id || id === createdHere.current ? "new" : id} onCreated={value => { createdHere.current = value }} />
+}
+
+function SkillBuilderWorkspace({ onCreated }: { onCreated: (id: string) => void }) {
   const { t } = useShellI18n()
   const navigate = useNavigate()
-
-  const [draft, setDraft] = useState<SkillDraft>(EMPTY_DRAFT)
+  const [params, setParams] = useSearchParams()
+  const [record, setRecord] = useState<SkillDraft | null>(null)
+  const [draft, setDraft] = useState<SkillDraftContent | null>(null)
+  const [conversation, setConversation] = useState<RunConversation | null>(null)
+  const [error, setError] = useState("")
+  const [stale, setStale] = useState(false)
   const [saving, setSaving] = useState(false)
-  const [sessionKey] = useState(() => `skill-builder-${Date.now()}`)
-  const lastAppliedRef = useRef<string>("")
-
-  const sceneAgentPayload = useMemo<SceneAgentPayload>(
-    () => ({
-      key: "skill_builder",
-      context: {},
-      focus_object: null,
-      tools: [],
-      skills: [],
-    }),
-    []
-  )
-
-  const controller = useChatController({
-    title: "Skill Builder",
-    datasourceId: null,
-    sceneAgentPayload,
-    sceneConversationMeta: { sceneKey: "skill_builder" },
-    fetchOnConversationChange: true,
-    freshSessionKey: sessionKey,
-  })
+  const initialized = useRef<Promise<[SkillDraft, RunConversation]> | null>(null)
+  const dirty = useRef(false)
+  const busy = useRef(false)
+  const alive = useRef(true)
+  const refreshSequence = useRef(0)
 
   useEffect(() => {
-    const msgs = controller.messages
-    const streamText = controller.streamingParts
-      .filter((p): p is { type: "text"; text: string } => p.type === "text")
-      .map((p) => p.text)
-      .join("")
-
-    const candidates: string[] = []
-    if (streamText) candidates.push(streamText)
-    for (let i = msgs.length - 1; i >= 0; i--) {
-      const msg = msgs[i]
-      if (msg.role === "assistant" && msg.content) {
-        candidates.push(msg.content)
-        break
+    alive.current = true
+    let active = true
+    initialized.current ??= (async () => {
+      const current = params.get("draftId") ? await skillDraftsApi.read(params.get("draftId")!) : await skillDraftsApi.create()
+      const conversationId = params.get("conversationId")
+      let session: RunConversation
+      if (conversationId) {
+        const existing = (await agentRunsApi.conversations()).find(item => item.id === conversationId)
+        if (!existing || existing.scene.skill_draft_ids?.length !== 1 || existing.scene.skill_draft_ids[0] !== current.id) throw new Error(t("skills.builder.scopeMismatch"))
+        session = existing
+      } else {
+        session = await agentRunsApi.createConversation(t("skills.builder.title"), {
+          skill_draft_ids: [current.id], datasource_ids: [], knowledge_base_ids: [], service_ids: [],
+        })
       }
-    }
+      return [current, session] as [SkillDraft, RunConversation]
+    })()
+    void initialized.current.then(([current, session]) => {
+      if (!active) return
+      setRecord(current); setDraft(current.content); setConversation(session)
+      if (!params.get("draftId")) onCreated(current.id)
+      setParams({ draftId: current.id, conversationId: session.id }, { replace: true })
+    }).catch(() => { if (active) setError(t("skills.builder.loadFailed")) })
+    return () => { active = false; alive.current = false }
+    // One workspace initialization, shared across StrictMode effect replays.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
-    for (const text of candidates) {
-      const result = extractSkillResult(text)
-      if (result) {
-        const key = JSON.stringify(result)
-        if (key !== lastAppliedRef.current) {
-          lastAppliedRef.current = key
-          setDraft(result)
-        }
-        return
-      }
-    }
-  }, [controller.messages, controller.streamingParts])
-
-  const handleSave = useCallback(async () => {
-    if (!draft.name.trim() || !draft.description.trim() || !draft.prompt.trim()) {
-      toast.error(t("skills.validate.required"))
-      return
-    }
-    setSaving(true)
+  const refresh = useCallback(async (discardLocal = false) => {
+    if (!record || busy.current) return
+    const sequence = ++refreshSequence.current
     try {
-      await skillsApi.create({
-        name: draft.name.trim(),
-        version: "1.0.0",
-        description: draft.description.trim(),
-        database: draft.database,
-        always_apply: draft.always_apply,
-        prompt: draft.prompt.trim(),
-      })
-      toast.success(t("skills.builder.saved"))
-      navigate("/skills")
-    } catch {
-      toast.error(t("skills.builder.saveFailed"))
-    } finally {
-      setSaving(false)
-    }
-  }, [draft, navigate, t])
+      const latest = await skillDraftsApi.read(record.id)
+      if (!alive.current || sequence !== refreshSequence.current) return
+      if (dirty.current && !discardLocal) {
+        if (latest.revision !== record.revision) setStale(true)
+      } else {
+        dirty.current = false; setRecord(latest); setDraft(latest.content); setStale(false); setError("")
+      }
+    } catch { if (alive.current) { setError(t("skills.builder.loadFailed")); setStale(true) } }
+  }, [record, t])
+  const onEvent = useCallback((event: RunEvent) => {
+    if (["tool_result", "run_finished", "run_failed", "run_cancelled"].includes(event.type)) void refresh()
+  }, [refresh])
+  const edit = (change: Partial<SkillDraftContent>) => {
+    dirty.current = true
+    setDraft(value => value ? { ...value, ...change } : value)
+  }
+  const save = async (install: boolean) => {
+    if (!record || !draft || busy.current || stale) return
+    busy.current = true; refreshSequence.current++; setSaving(true); setError("")
+    try {
+      const saved = dirty.current ? await skillDraftsApi.write(record.id, record.revision, draft) : record
+      if (alive.current) { dirty.current = false; setRecord(saved); setDraft(saved.content) }
+      if (install) {
+        await skillsApi.create(saved.content)
+        if (alive.current) { toast.success(t("skills.builder.saved")); navigate("/skills") }
+      } else if (alive.current) toast.success(t("skills.builder.draftSaved"))
+    } catch (cause) {
+      if (alive.current) {
+        if (isAxiosError(cause) && cause.response?.status === 409) setStale(true)
+        const detail = isAxiosError(cause) ? cause.response?.data?.detail : null
+        setError(typeof detail === "string" ? detail : t("skills.builder.saveFailed"))
+      }
+    } finally { busy.current = false; if (alive.current) setSaving(false) }
+  }
 
-  const hasDraft = Boolean(draft.name || draft.prompt)
-
-  return (
-    <div className="flex h-[calc(100vh-4.5rem)] min-h-0 flex-col gap-3 bg-background p-2 md:p-3 animate-in fade-in duration-500">
-      <div className="flex items-center justify-between">
-        <Breadcrumb>
-          <BreadcrumbList>
-            <BreadcrumbItem>
-              <BreadcrumbLink asChild>
-                <Link to="/skills">{t("sidebar.nav.skill")}</Link>
-              </BreadcrumbLink>
-            </BreadcrumbItem>
-            <BreadcrumbSeparator />
-            <BreadcrumbItem>
-              <BreadcrumbPage>{t("skills.builder.pageTitle")}</BreadcrumbPage>
-            </BreadcrumbItem>
-          </BreadcrumbList>
-        </Breadcrumb>
-        <div className="flex items-center gap-2">
-          <Button variant="outline" size="sm" onClick={() => navigate("/skills")}>
-            <ArrowLeft className="size-4" />
-            {t("skills.builder.backToList")}
-          </Button>
-          <Button size="sm" onClick={handleSave} disabled={saving || !hasDraft}>
-            {saving ? <Loader2 className="size-4 animate-spin" /> : <Save className="size-4" />}
-            {saving ? t("skills.builder.saving") : t("skills.builder.saveDraft")}
-          </Button>
-        </div>
+  if (!draft || !record || !conversation) return <div className="p-4">
+    {error ? <><p role="alert">{error}</p><Button onClick={() => window.location.reload()}>{t("runtime.reload")}</Button></> : <p role="status">{t("runtime.loading")}</p>}
+    <Link to="/skills" className="block py-3 underline">{t("skills.builder.backToList")}</Link>
+  </div>
+  return <div className="flex min-w-0 flex-col gap-4 lg:h-[calc(100dvh-8rem)] lg:min-h-[36rem]">
+    <header className="flex flex-wrap items-end justify-between gap-3 border-b border-border pb-3">
+      <div><Link className="inline-flex min-h-11 items-center text-xs underline" to="/skills">{t("skills.builder.backToList")}</Link><h1 className="text-xl font-semibold">{t("skills.builder.pageTitle")}</h1></div>
+      <div className="flex flex-wrap gap-2">
+        <Button variant="outline" className="min-h-11" disabled={saving || stale} onClick={() => void save(false)}>{t("skills.builder.persistDraft")}</Button>
+        <Button className="min-h-11" disabled={saving || stale || !draft.name.trim() || !draft.prompt.trim()} onClick={() => void save(true)}>{saving ? t("skills.builder.saving") : t("skills.builder.install")}</Button>
       </div>
-
-      <div className="grid min-h-0 flex-1 gap-3 xl:grid-cols-[minmax(0,1fr)_420px]">
-        <section className="flex min-h-0 flex-col rounded-xl border border-border bg-card shadow-sm animate-in fade-in slide-in-from-bottom-1 duration-500">
-          <div className="shrink-0 border-b border-border px-4 py-3">
-            <div className="flex items-center gap-2">
-              <Sparkles className="size-4 text-muted-foreground" />
-              <h2 className="text-sm font-semibold">{t("skills.builder.editorTitle")}</h2>
-              {hasDraft ? (
-                <Badge variant="secondary" className="text-[10px]">
-                  {draft.database !== "general" ? displayScope(draft.database, t) : null}
-                </Badge>
-              ) : null}
-            </div>
-          </div>
-          <div className="flex-1 overflow-y-auto p-4 space-y-4">
-            <div className="space-y-1.5">
-              <label htmlFor="builder-name" className="text-sm font-medium">
-                {t("skills.form.name")}
-              </label>
-              <Input
-                id="builder-name"
-                value={draft.name}
-                onChange={(e) => setDraft((prev) => ({ ...prev, name: e.target.value }))}
-                placeholder="slow-query-diagnosis"
-              />
-            </div>
-            <div className="space-y-1.5">
-              <label htmlFor="builder-description" className="text-sm font-medium">
-                {t("skills.form.description")}
-              </label>
-              <Input
-                id="builder-description"
-                value={draft.description}
-                onChange={(e) => setDraft((prev) => ({ ...prev, description: e.target.value }))}
-                placeholder={t("skills.form.descPlaceholder")}
-              />
-            </div>
-            <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-1.5">
-                <label className="text-sm font-medium">{t("skills.form.scope")}</label>
-                <Select
-                  value={draft.database}
-                  onValueChange={(v) => setDraft((prev) => ({ ...prev, database: v }))}
-                >
-                  <SelectTrigger className="w-full">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {SCOPE_OPTIONS.map((db) => (
-                      <SelectItem key={db} value={db}>
-                        {displayScope(db, t)}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="flex items-end pb-2">
-                <div className="flex items-center gap-2">
-                  <Checkbox
-                    id="builder-always-apply"
-                    checked={draft.always_apply}
-                    onCheckedChange={(checked) =>
-                      setDraft((prev) => ({ ...prev, always_apply: checked === true }))
-                    }
-                  />
-                  <label htmlFor="builder-always-apply" className="text-sm text-muted-foreground">
-                    {t("skills.form.alwaysApply")}
-                  </label>
-                </div>
-              </div>
-            </div>
-            <div className="space-y-1.5 flex-1">
-              <label htmlFor="builder-prompt" className="text-sm font-medium">
-                {t("skills.form.prompt")}
-              </label>
-              <Textarea
-                id="builder-prompt"
-                value={draft.prompt}
-                onChange={(e) => setDraft((prev) => ({ ...prev, prompt: e.target.value }))}
-                className="min-h-[300px] max-h-[60vh] resize-y overflow-y-auto font-mono text-sm"
-                placeholder={t("skills.form.promptPlaceholder")}
-              />
-            </div>
-          </div>
-        </section>
-
-        <aside className="flex min-h-0 flex-col rounded-xl border border-border bg-card shadow-sm animate-in fade-in slide-in-from-bottom-1 duration-500">
-          <ChatThreadView
-            controller={controller}
-            title={t("skills.builder.title")}
-            placeholder={t("skills.builder.chatPlaceholder")}
-            embedded
-            showHeader
-            enableSaveAsAgent={false}
-            enableHandoff={false}
-            enableBatchActions={false}
-            className="flex-1"
-          />
-        </aside>
-      </div>
+    </header>
+    {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
+    <div className="grid min-h-0 min-w-0 flex-1 gap-5 lg:grid-cols-[minmax(0,1fr)_minmax(20rem,0.7fr)]">
+      <section aria-label={t("skills.builder.title")} className="h-[65dvh] min-h-[28rem] min-w-0 lg:h-auto lg:min-h-0">
+        <RunConversationView conversationId={conversation.id} scene={conversation.scene} onEvent={onEvent} disabled={saving} />
+      </section>
+      <aside className="min-w-0 space-y-4 border-t border-border pt-4 lg:overflow-y-auto lg:border-l lg:border-t-0 lg:pl-5 lg:pt-0" aria-label={t("skills.builder.editorTitle")}>
+        <h2 className="font-semibold">{t("skills.builder.editorTitle")}</h2>
+        <p className="text-sm text-muted-foreground">{t("skills.builder.draftNotice")}</p>
+        {stale && <div role="alert" className="space-y-2 text-sm"><p>{t("skills.builder.conflict")}</p><Button variant="outline" onClick={() => void refresh(true)}>{t("skills.builder.loadLatest")}</Button></div>}
+        <fieldset disabled={saving} className="space-y-4 disabled:opacity-60">
+          <div className="space-y-1"><label htmlFor="builder-name">{t("skills.form.name")}</label><Input id="builder-name" value={draft.name} onChange={event => edit({ name: event.target.value })} /></div>
+          <div className="space-y-1"><label htmlFor="builder-description">{t("skills.form.description")}</label><Input id="builder-description" value={draft.description} onChange={event => edit({ description: event.target.value })} /></div>
+          <div className="space-y-1"><label htmlFor="builder-version">{t("skills.builder.version")}</label><Input id="builder-version" value={draft.version} onChange={event => edit({ version: event.target.value })} /></div>
+          <div className="space-y-1"><label htmlFor="builder-scope">{t("skills.form.scope")}</label><select id="builder-scope" className="min-h-11 w-full rounded-md border border-input bg-background px-2" value={draft.database} onChange={event => edit({ database: event.target.value })}>
+            <option value="general">{t("skills.scope.general")}</option><option value="mysql">{t("skills.scope.mysql")}</option><option value="postgresql">{t("skills.scope.postgresql")}</option><option value="oceanbase">{t("skills.scope.oceanbase")}</option>
+          </select></div>
+          <label className="flex min-h-11 items-center gap-2"><input type="checkbox" checked={draft.always_apply} onChange={event => edit({ always_apply: event.target.checked })} />{t("skills.form.alwaysApply")}</label>
+          <div className="space-y-1"><label htmlFor="builder-prompt">{t("skills.form.prompt")}</label><Textarea id="builder-prompt" className="min-h-80 max-h-[60dvh] resize-y overflow-y-auto" value={draft.prompt} onChange={event => edit({ prompt: event.target.value })} /></div>
+        </fieldset>
+      </aside>
     </div>
-  )
+  </div>
 }

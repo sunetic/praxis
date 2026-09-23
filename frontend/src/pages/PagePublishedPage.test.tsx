@@ -1,66 +1,23 @@
-import { render, screen, waitFor } from "@testing-library/react"
-import userEvent from "@testing-library/user-event"
-import { beforeEach, describe, expect, it, vi } from "vitest"
-import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom"
-
+import { screen } from "@testing-library/react"
+import { MemoryRouter, Route, Routes } from "react-router-dom"
+import { afterEach, expect, it, vi } from "vitest"
+import { renderWithShell as render } from "@/test/renderWithShell"
+import { pageArtifactsApi } from "@/lib/pageArtifacts"
 import { PagePublishedPage } from "./PagePublishedPage"
 
-const { pagesApi } = vi.hoisted(() => ({
-  pagesApi: {
-    getPublished: vi.fn(),
-  },
-}))
+afterEach(() => vi.restoreAllMocks())
+it("renders only the published immutable artifact without adding a theme or draft HTML", async () => {
+  vi.spyOn(pageArtifactsApi, "published").mockResolvedValue({ page: { id: 1, name: "Published", status: "published" }, release: { id: 7, artifact_payload: { files: {}, bindings: {}, html: "<main>Exact release</main>", artifact_hash: "release", revision_id: "r1" } } })
+  render(<MemoryRouter initialEntries={["/page/1"]}><Routes><Route path="/page/:pageId" element={<PagePublishedPage />} /></Routes></MemoryRouter>)
+  const frame = await screen.findByTitle("查看发布版本")
+  expect(frame).toHaveAttribute("srcdoc", "<main>Exact release</main>")
+  expect(frame).toHaveAttribute("sandbox", "allow-scripts")
+  expect(screen.getByRole("link", { name: "编辑页面" })).toHaveAttribute("href", "/page/workspace/1")
+})
 
-vi.mock("@/lib/api", () => ({
-  pagesApi,
-}))
-
-function LocationProbe() {
-  const location = useLocation()
-  return <div data-testid="location-probe">{`${location.pathname}${location.search}`}</div>
-}
-
-describe("PagePublishedPage", () => {
-  beforeEach(() => {
-    vi.clearAllMocks()
-    pagesApi.getPublished.mockResolvedValue({
-      page: { id: 1, name: "Page-1", status: "published" },
-      release: {
-        artifact_payload: {
-          kind: "runtime_page",
-          runtime: {
-            framework: "html",
-            preview_html: "<!doctype html><html><body><main><p>发布内容</p></main></body></html>",
-          },
-          source: { language: "tsx", code: "export default function Page(){return <main/>}" },
-          config: { title: "Page-1", description: "" },
-        },
-      },
-    })
-  })
-
-  it("navigates to build workspace when clicking edit", async () => {
-    render(
-      <MemoryRouter initialEntries={["/page/1"]}>
-        <Routes>
-          <Route
-            path="/page/:pageId"
-            element={
-              <>
-                <PagePublishedPage />
-                <LocationProbe />
-              </>
-            }
-          />
-          <Route path="/page/workspace/:pageId" element={<LocationProbe />} />
-        </Routes>
-      </MemoryRouter>
-    )
-
-    await screen.findByTitle("Published Runtime Page")
-    await userEvent.click(screen.getByRole("button", { name: "编辑" }))
-    await waitFor(() =>
-      expect(screen.getByTestId("location-probe")).toHaveTextContent("/page/workspace/1?from=published")
-    )
-  })
+it("does not fall back to drafts when the release cannot be read", async () => {
+  vi.spyOn(pageArtifactsApi, "published").mockRejectedValue(new Error("offline"))
+  render(<MemoryRouter initialEntries={["/page/1"]}><Routes><Route path="/page/:pageId" element={<PagePublishedPage />} /></Routes></MemoryRouter>)
+  expect(await screen.findByRole("alert")).toHaveTextContent("发布页面不存在")
+  expect(document.querySelector("iframe")).not.toBeInTheDocument()
 })

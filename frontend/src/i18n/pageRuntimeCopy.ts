@@ -1,0 +1,31 @@
+export const PAGE_RUNTIME_ZH_CN = {
+  "page.functionScope": "可使用的现有 Function", "page.functionScopeHelp": "本页新建的依赖自动可用。此处选择已有 Function；授权使用不等于批准发布。", "page.functionListFailed": "Function 列表暂时无法加载，已有授权不变。",
+  "page.workspace": "Page 工作区", "page.back": "返回 Page 列表", "page.preview": "编译产物预览",
+  "page.previewHelp": "预览使用当前版本的真实编译产物。能显示预览不代表运行检查通过，也不会自动发布。",
+  "page.noPreview": "当前版本尚无编译产物。保存源码并执行检查后可预览。",
+  "page.previewFailed": "无法读取当前版本的预览，请刷新产物后重试。",
+  "page.bindingUnavailable": "Function 调用桥接尚不可用；此预览不能验证绑定交互。",
+  "page.source": "源码与绑定", "page.edit": "编辑工作区", "page.files": "源文件（JSON）", "page.bindings": "Function 命名绑定（JSON）",
+  "page.sourceFormat": "源文件须为路径到文本的 JSON 对象，绑定须为 JSON 对象。",
+  "page.dependencies": "Function 依赖", "page.noDependencies": "未绑定 Function", "page.bindingChanged": "本次保存修改了绑定",
+  "page.ownedFunctions": "为此页面创建的 Function", "page.notApplicable": "不适用 · 未执行",
+  "page.compile": "源码编译", "page.bindingCheck": "依赖版本检查", "page.browserCheck": "隔离浏览器初始渲染", "page.bindingRuntime": "绑定交互",
+  "page.published": "查看发布版本", "page.publishedUnavailable": "发布页面不存在、已归档或暂时无法读取。",
+  "page.editPublished": "编辑页面", "page.choosePreview": "显示预览", "page.chooseSource": "查看源码",
+} as const
+
+export const PAGE_RUNTIME_EN: Record<keyof typeof PAGE_RUNTIME_ZH_CN, string> = {
+  "page.functionScope": "Existing Functions in scope", "page.functionScopeHelp": "Dependencies created for this Page are already available. Select existing Functions here; resource access does not approve publication.", "page.functionListFailed": "The Function list could not be loaded; existing scope is unchanged.",
+  "page.workspace": "Page workspace", "page.back": "Back to Pages", "page.preview": "Compiled artifact preview",
+  "page.previewHelp": "This is the current revision's compiled artifact. Rendering a preview does not pass runtime checks or publish a release.",
+  "page.noPreview": "This revision has no compiled artifact. Save the sources and run checks to preview it.",
+  "page.previewFailed": "Could not load this revision's preview. Refresh the artifact and retry.",
+  "page.bindingUnavailable": "Function invocation is not connected yet; this preview cannot verify binding interactions.",
+  "page.source": "Sources and bindings", "page.edit": "Edit workspace", "page.files": "Source files (JSON)", "page.bindings": "Named Function bindings (JSON)",
+  "page.sourceFormat": "Source files must map paths to text in a JSON object; bindings must be a JSON object.",
+  "page.dependencies": "Function dependencies", "page.noDependencies": "No Function bindings", "page.bindingChanged": "Bindings changed in this revision",
+  "page.ownedFunctions": "Functions created for this Page", "page.notApplicable": "Not applicable · not run",
+  "page.compile": "Source compilation", "page.bindingCheck": "Dependency versions", "page.browserCheck": "Isolated initial browser render", "page.bindingRuntime": "Binding interactions",
+  "page.published": "View published release", "page.publishedUnavailable": "The published Page does not exist, is archived, or could not be loaded.",
+  "page.editPublished": "Edit Page", "page.choosePreview": "Show preview", "page.chooseSource": "View source",
+}

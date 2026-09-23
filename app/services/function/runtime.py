@@ -2,11 +2,9 @@ from __future__ import annotations
 
 import asyncio
 import json
-import multiprocessing
 import re
 import uuid
 from collections.abc import Awaitable, Callable
-from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
@@ -27,6 +25,7 @@ from app.services.datasource.router import (
     normalize_role,
     resolve_datasource_by_role,
 )
+from app.services.function.process_execution import FunctionProcessError, FunctionProcesses
 from app.services.function.runtime_contract import get_function_runtime_contract
 from app.services.lifecycle import FunctionLifecycleService, LifecycleValidationError
 
@@ -40,6 +39,7 @@ class RuntimeErrorClass(StrEnum):
     DEPENDENCY = "dependency"
     TIMEOUT = "timeout"
     CANCELLED = "cancelled"
+    INTERRUPTED = "interrupted"
 
 
 class RuntimeErrorCode(StrEnum):
@@ -51,6 +51,8 @@ class RuntimeErrorCode(StrEnum):
     VALIDATION_ERROR = "validation_error"
     TIMEOUT = "timeout"
     DEPENDENCY_ERROR = "dependency_error"
+    CANCELLED = "cancelled"
+    EXECUTION_OWNER_LOST = "execution_owner_lost"
 
 
 class FunctionRunStatus(StrEnum):
@@ -58,6 +60,7 @@ class FunctionRunStatus(StrEnum):
     SUCCESS = "success"
     FAILED = "failed"
     CANCELLED = "cancelled"
+    INTERRUPTED = "interrupted"
 
 
 @dataclass
@@ -1076,10 +1079,48 @@ class FunctionRuntimeService:
     ):
         self._session_factory = session_factory
         self._lifecycle = lifecycle_service or FunctionLifecycleService()
-        self._executor = ProcessPoolExecutor(
-            max_workers=max_workers,
-            mp_context=multiprocessing.get_context("spawn"),
-        )
+        self._processes = FunctionProcesses(max_workers)
+        self._invocations: dict[str, asyncio.Task[Any]] = {}
+        self._explicit_cancellations: set[str] = set()
+        self._closed = False
+
+    async def start(self) -> None:
+        await asyncio.to_thread(self._recover_unowned_runs)
+
+    async def close(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
+        await self._processes.close()
+
+    async def cancel(self, run_id: str) -> FunctionRuntimeResult | None:
+        """Cancel an invocation owned by this application runtime.
+
+        A terminal run is returned as-is. ``None`` means no run with this id
+        exists. Cancellation stops the owned local process; external effects
+        completed before cancellation cannot be rolled back.
+        """
+        task = self._invocations.get(run_id)
+        if task is None:
+            result = self.get_result(run_id)
+            if result is not None and result.status == FunctionRunStatus.RUNNING.value:
+                self._interrupt_run(run_id, "Function execution owner is no longer available")
+                return self.get_result(run_id)
+            return result
+        self._explicit_cancellations.add(run_id)
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            # A concurrent application shutdown can still cancel the task as a
+            # lifecycle operation rather than an explicit user request.
+            pass
+        return self.get_result(run_id)
+
+    def get_result(self, run_id: str) -> FunctionRuntimeResult | None:
+        with self._session_factory() as db:
+            row = db.query(models.FunctionRun).filter(models.FunctionRun.run_id == run_id).first()
+            return self._result_from_row(row) if row is not None else None
 
     def bind_runtime_context(
         self,
@@ -1112,37 +1153,11 @@ class FunctionRuntimeService:
         run_id: str | None = None,
         trace_id: str | None = None,
     ) -> FunctionRuntimeResult:
+        if self._closed:
+            raise RuntimeError("Function runtime is closed")
         if function.id is None:
             raise LifecycleValidationError("Function must be persisted before runtime invocation")
-        db = self._session_factory()
-        function_ref = db.query(models.Function).filter(models.Function.id == function.id).first()
-        if function_ref is None:
-            db.close()
-            raise LifecycleValidationError(f"Function {function.id} not found")
-
-        runtime_path_normalized = str(runtime_path or "production").strip().lower()
-        if runtime_path_normalized not in {"production", "draft"}:
-            db.close()
-            raise LifecycleValidationError("runtime_path must be production or draft")
-
-        if runtime_path_normalized == "draft":
-            code_snapshot = str(function_ref.draft_code or "").strip()
-            if not code_snapshot:
-                db.close()
-                raise LifecycleValidationError(
-                    "Function draft is empty; build the function before test run"
-                )
-            runtime_release_id: int | None = None
-        else:
-            self._lifecycle.ensure_released_target(function_ref)
-            if function_ref.current_release is None or function_ref.current_release.id is None:
-                db.close()
-                raise LifecycleValidationError(
-                    "Function release must be persisted before runtime invocation"
-                )
-            code_snapshot = function_ref.current_release.code_snapshot
-            runtime_release_id = function_ref.current_release.id
-
+        run_id_value = run_id or str(uuid.uuid4())
         bound_payload, bound_context = self.bind_runtime_context(
             payload,
             datasource_id=datasource_id,
@@ -1150,34 +1165,72 @@ class FunctionRuntimeService:
         )
         if trace_id:
             bound_context["trace_id"] = trace_id
-        control_db_url = str(db.get_bind().url)
 
-        now = datetime.utcnow()
-        run_id_value = run_id or str(uuid.uuid4())
+        runtime_path_normalized = str(runtime_path or "production").strip().lower()
+        if runtime_path_normalized not in {"production", "draft"}:
+            raise LifecycleValidationError("runtime_path must be production or draft")
+
+        # Snapshot the release and create the durable running record in one
+        # short control-plane session. Never keep it open while user code runs.
+        with self._session_factory() as db:
+            if (
+                db.query(models.FunctionRun.id)
+                .filter(models.FunctionRun.run_id == run_id_value)
+                .first()
+                is not None
+            ):
+                raise LifecycleValidationError(f"Function run {run_id_value} already exists")
+            function_ref = (
+                db.query(models.Function).filter(models.Function.id == function.id).first()
+            )
+            if function_ref is None:
+                raise LifecycleValidationError(f"Function {function.id} not found")
+            function_id = int(function_ref.id)
+            if runtime_path_normalized == "draft":
+                code_snapshot = str(function_ref.draft_code or "").strip()
+                if not code_snapshot:
+                    raise LifecycleValidationError(
+                        "Function draft is empty; build the function before test run"
+                    )
+                runtime_release_id: int | None = None
+            else:
+                self._lifecycle.ensure_released_target(function_ref)
+                if function_ref.current_release is None or function_ref.current_release.id is None:
+                    raise LifecycleValidationError(
+                        "Function release must be persisted before runtime invocation"
+                    )
+                code_snapshot = function_ref.current_release.code_snapshot
+                runtime_release_id = function_ref.current_release.id
+            control_db_url = str(db.get_bind().url)
+            now = datetime.utcnow()
+            db.add(
+                models.FunctionRun(
+                    run_id=run_id_value,
+                    function_id=function_id,
+                    function_release_id=runtime_release_id,
+                    status=FunctionRunStatus.RUNNING.value,
+                    input_summary=self._summarize(bound_payload),
+                    runtime_context=bound_context,
+                    started_at=now,
+                    created_at=now,
+                )
+            )
+            db.commit()
+
         logger.info(
             "function_runtime_start %s",
             fmt_kv(
                 trace_id=trace_id,
                 run_id=run_id_value,
-                function_id=function_ref.id,
+                function_id=function_id,
                 release_id=runtime_release_id,
                 runtime_path=runtime_path_normalized,
             ),
         )
-        run = models.FunctionRun(
-            run_id=run_id_value,
-            function_id=function_ref.id,
-            function_release_id=runtime_release_id,
-            status=FunctionRunStatus.RUNNING.value,
-            input_summary=self._summarize(bound_payload),
-            runtime_context=bound_context,
-            started_at=now,
-            created_at=now,
-        )
-        db.add(run)
-        db.commit()
-        db.refresh(run)
-
+        current_task = asyncio.current_task()
+        if current_task is None:
+            raise RuntimeError("Function invocation requires an asyncio task")
+        self._invocations[run_id_value] = current_task
         started_at = datetime.utcnow()
         try:
             output = await self._execute_in_process(
@@ -1189,18 +1242,19 @@ class FunctionRuntimeService:
             )
             finished_at = datetime.utcnow()
             duration_ms = int((finished_at - started_at).total_seconds() * 1000)
-
-            run.status = FunctionRunStatus.SUCCESS.value
-            run.duration_ms = duration_ms
-            run.output_summary = self._summarize(output)
-            run.finished_at = finished_at
-            db.commit()
+            self._finish_run(
+                run_id_value,
+                status=FunctionRunStatus.SUCCESS,
+                duration_ms=duration_ms,
+                output=output,
+                finished_at=finished_at,
+            )
             logger.info(
                 "function_runtime_success %s",
                 fmt_kv(
                     trace_id=trace_id,
                     run_id=run_id_value,
-                    function_id=function_ref.id,
+                    function_id=function_id,
                     release_id=runtime_release_id,
                     runtime_path=runtime_path_normalized,
                     duration_ms=duration_ms,
@@ -1218,20 +1272,49 @@ class FunctionRuntimeService:
         except asyncio.CancelledError:
             finished_at = datetime.utcnow()
             duration_ms = int((finished_at - started_at).total_seconds() * 1000)
-            run.status = FunctionRunStatus.CANCELLED.value
-            run.duration_ms = duration_ms
-            run.error_class = RuntimeErrorClass.CANCELLED.value
-            run.error_message = "Function invocation cancelled"
-            run.finished_at = finished_at
-            db.commit()
+            explicit = run_id_value in self._explicit_cancellations
+            interrupted = self._closed and not explicit
+            status = FunctionRunStatus.INTERRUPTED if interrupted else FunctionRunStatus.CANCELLED
+            error_class = (
+                RuntimeErrorClass.INTERRUPTED if interrupted else RuntimeErrorClass.CANCELLED
+            )
+            error_code = (
+                RuntimeErrorCode.EXECUTION_OWNER_LOST if interrupted else RuntimeErrorCode.CANCELLED
+            )
+            error_message = (
+                "Function invocation interrupted by application shutdown; local process stopped. "
+                "External effects are not rolled back."
+                if interrupted
+                else "Function invocation cancelled; local process stopped. "
+                "External effects are not rolled back."
+            )
+            self._finish_run(
+                run_id_value,
+                status=status,
+                duration_ms=duration_ms,
+                error_class=error_class.value,
+                error_code=error_code.value,
+                error_message=error_message,
+                finished_at=finished_at,
+            )
             logger.warning(
                 "function_runtime_cancelled %s",
                 fmt_kv(
                     trace_id=trace_id,
                     run_id=run_id_value,
-                    function_id=function_ref.id,
+                    function_id=function_id,
                 ),
             )
+            if explicit:
+                return FunctionRuntimeResult(
+                    run_id=run_id_value,
+                    status=FunctionRunStatus.CANCELLED.value,
+                    output=None,
+                    error_class=RuntimeErrorClass.CANCELLED.value,
+                    error_code=RuntimeErrorCode.CANCELLED.value,
+                    error_message=error_message,
+                    duration_ms=duration_ms,
+                )
             raise
         except Exception as exc:
             finished_at = datetime.utcnow()
@@ -1239,18 +1322,21 @@ class FunctionRuntimeService:
             error_class = self._classify_error(exc)
             error_code = self._classify_error_code(exc, error_class)
             error_message = self._format_exception_message(exc)
-            run.status = FunctionRunStatus.FAILED.value
-            run.duration_ms = duration_ms
-            run.error_class = error_class.value
-            run.error_message = error_message
-            run.finished_at = finished_at
-            db.commit()
+            self._finish_run(
+                run_id_value,
+                status=FunctionRunStatus.FAILED,
+                duration_ms=duration_ms,
+                error_class=error_class.value,
+                error_code=error_code,
+                error_message=error_message,
+                finished_at=finished_at,
+            )
             logger.exception(
                 "function_runtime_failed %s",
                 fmt_kv(
                     trace_id=trace_id,
                     run_id=run_id_value,
-                    function_id=function_ref.id,
+                    function_id=function_id,
                     error_class=error_class.value,
                     error_code=str(error_code or ""),
                     error=error_message,
@@ -1266,7 +1352,84 @@ class FunctionRuntimeService:
                 duration_ms=duration_ms,
             )
         finally:
-            db.close()
+            if self._invocations.get(run_id_value) is current_task:
+                self._invocations.pop(run_id_value, None)
+            self._explicit_cancellations.discard(run_id_value)
+
+    def _recover_unowned_runs(self) -> None:
+        with self._session_factory() as db:
+            run_ids = [
+                value
+                for (value,) in db.query(models.FunctionRun.run_id)
+                .filter(models.FunctionRun.status == FunctionRunStatus.RUNNING.value)
+                .all()
+            ]
+        for run_id in run_ids:
+            self._interrupt_run(
+                run_id,
+                "Function execution owner was lost before a terminal result was recorded",
+            )
+
+    def _interrupt_run(self, run_id: str, message: str) -> None:
+        finished_at = datetime.utcnow()
+        with self._session_factory() as db:
+            row = (
+                db.query(models.FunctionRun)
+                .filter(
+                    models.FunctionRun.run_id == run_id,
+                    models.FunctionRun.status == FunctionRunStatus.RUNNING.value,
+                )
+                .first()
+            )
+            if row is None:
+                return
+            row.status = FunctionRunStatus.INTERRUPTED.value
+            row.duration_ms = max(
+                0,
+                int((finished_at - (row.started_at or row.created_at)).total_seconds() * 1000),
+            )
+            row.error_class = RuntimeErrorClass.INTERRUPTED.value
+            row.error_code = RuntimeErrorCode.EXECUTION_OWNER_LOST.value
+            row.error_message = f"{message}. External effects may be unknown."
+            row.finished_at = finished_at
+            db.commit()
+
+    def _finish_run(
+        self,
+        run_id: str,
+        *,
+        status: FunctionRunStatus,
+        duration_ms: int,
+        output: Any | None = None,
+        error_class: str | None = None,
+        error_code: str | None = None,
+        error_message: str | None = None,
+        finished_at: datetime,
+    ) -> None:
+        with self._session_factory() as db:
+            row = db.query(models.FunctionRun).filter(models.FunctionRun.run_id == run_id).one()
+            row.status = status.value
+            row.duration_ms = duration_ms
+            row.output_payload = output
+            row.output_summary = (
+                self._summarize(output) if status == FunctionRunStatus.SUCCESS else None
+            )
+            row.error_class = error_class
+            row.error_code = error_code
+            row.error_message = error_message
+            row.finished_at = finished_at
+            db.commit()
+
+    def _result_from_row(self, row: models.FunctionRun) -> FunctionRuntimeResult:
+        return FunctionRuntimeResult(
+            run_id=row.run_id,
+            status=row.status,
+            output=row.output_payload,
+            error_class=row.error_class,
+            error_code=row.error_code,
+            error_message=row.error_message,
+            duration_ms=int(row.duration_ms or 0),
+        )
 
     async def _execute_in_process(
         self,
@@ -1277,23 +1440,35 @@ class FunctionRuntimeService:
         *,
         timeout_seconds: float,
     ) -> Any:
-        loop = asyncio.get_running_loop()
-        future = loop.run_in_executor(
-            self._executor,
-            _execute_code_snapshot,
-            code_snapshot,
-            payload,
-            context,
-            runtime_services,
-        )
         try:
-            return await asyncio.wait_for(asyncio.shield(future), timeout=timeout_seconds)
-        except TimeoutError as exc:
-            future.cancel()
-            raise TimeoutError("Function execution timed out") from exc
-        except asyncio.CancelledError:
-            future.cancel()
-            raise
+            return await self._processes.execute(
+                {
+                    "code_snapshot": code_snapshot,
+                    "payload": payload,
+                    "context": context,
+                    "runtime_services": runtime_services,
+                },
+                timeout=timeout_seconds,
+            )
+        except FunctionProcessError as exc:
+            # Preserve known business diagnostics without unpickling child objects
+            # or importing a class selected by generated code.
+            error_types = {
+                cls.__name__: cls
+                for cls in (
+                    RuntimeDatasourceRequiredError,
+                    RuntimeDatasourceAccessError,
+                    RuntimePlatformAccessError,
+                    LifecycleValidationError,
+                    ModuleNotFoundError,
+                    ImportError,
+                    ValueError,
+                    TypeError,
+                    TimeoutError,
+                )
+            }
+            error_type = error_types.get(exc.error_type, RuntimeError)
+            raise error_type(str(exc)) from exc
 
     def _classify_error(self, exc: Exception) -> RuntimeErrorClass:
         if isinstance(exc, LifecycleValidationError):

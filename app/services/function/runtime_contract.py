@@ -4,7 +4,7 @@ import json
 from typing import Any
 
 _FUNCTION_RUNTIME_CONTRACT: dict[str, Any] = {
-    "contract_version": "function-runtime-v3",
+    "contract_version": "function-runtime-v5",
     "entrypoints": {
         "main": {
             "signature": "main(payload, context)",
@@ -523,10 +523,10 @@ _FUNCTION_RUNTIME_CONTRACT: dict[str, Any] = {
                     "type": "object",
                     "additional_properties": False,
                     "properties": {
-                        "artifact_payload": {"type": "object"},
-                        "artifact_uri": {"type": "string", "min_length": 1},
-                        "release_notes": {"one_of": [{"type": "string"}, {"type": "null"}]},
+                        "expected_revision": {"type": "string", "min_length": 64, "max_length": 64},
+                        "validation_id": {"type": "string", "min_length": 1},
                     },
+                    "constraints": {"required": ["expected_revision", "validation_id"]},
                 },
                 "archive": {"type": "object", "additional_properties": False, "properties": {}},
                 "rollback": {
@@ -560,15 +560,10 @@ _FUNCTION_RUNTIME_CONTRACT: dict[str, Any] = {
                     "type": "object",
                     "additional_properties": False,
                     "properties": {
-                        "code_snapshot": {"type": "string", "min_length": 1},
-                        "requirement": {"type": "string", "min_length": 1},
-                        "contract": {"type": "object"},
-                        "force_strategy": {"type": "string", "enum": ["reuse", "extend", "create"]},
-                        "reuse_threshold": {"type": "number", "minimum": 0, "maximum": 1},
-                        "extend_threshold": {"type": "number", "minimum": 0, "maximum": 1},
-                        "dependency_manifest": {"type": "object"},
-                        "release_metadata": {"type": "object"},
+                        "expected_revision": {"type": "string", "min_length": 64, "max_length": 64},
+                        "validation_id": {"type": "string", "min_length": 1},
                     },
+                    "constraints": {"required": ["expected_revision", "validation_id"]},
                 },
                 "invoke": {
                     "type": "object",

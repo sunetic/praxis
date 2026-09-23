@@ -145,7 +145,7 @@ async def test_function_runtime_success_with_context_binding(session_factory):
             timeout_seconds=3,
         )
     finally:
-        service._executor.shutdown(cancel_futures=True)
+        await service.close()
 
     assert result.status == FunctionRunStatus.SUCCESS.value
     assert result.output == {"value": 6, "datasource": 42}
@@ -154,6 +154,8 @@ async def test_function_runtime_success_with_context_binding(session_factory):
     row = verify_db.query(models.FunctionRun).filter_by(run_id=result.run_id).one()
     assert row.status == FunctionRunStatus.SUCCESS.value
     assert row.error_class is None
+    assert row.error_code is None
+    assert row.output_payload == {"value": 6, "datasource": 42}
     assert row.runtime_context == {
         "datasource_id": 42,
         "scope": {"scope_object_id": "page-1"},
@@ -174,7 +176,7 @@ async def test_function_runtime_timeout_classification(session_factory):
     try:
         result = await service.invoke(fn, {"value": 1}, timeout_seconds=0.1)
     finally:
-        service._executor.shutdown(cancel_futures=True)
+        await service.close()
 
     assert result.status == FunctionRunStatus.FAILED.value
     assert result.error_class == RuntimeErrorClass.TIMEOUT.value
@@ -194,7 +196,7 @@ async def test_function_runtime_dependency_classification(session_factory):
     try:
         result = await service.invoke(fn, {"value": 1}, timeout_seconds=1)
     finally:
-        service._executor.shutdown(cancel_futures=True)
+        await service.close()
 
     assert result.status == FunctionRunStatus.FAILED.value
     assert result.error_class == RuntimeErrorClass.DEPENDENCY.value
@@ -218,7 +220,7 @@ async def test_function_runtime_datasource_required_error_code(session_factory):
             timeout_seconds=1,
         )
     finally:
-        service._executor.shutdown(cancel_futures=True)
+        await service.close()
 
     assert result.status == FunctionRunStatus.FAILED.value
     assert result.error_code == RuntimeErrorCode.DATASOURCE_REQUIRED.value
@@ -240,14 +242,95 @@ async def test_function_runtime_cancellation_marks_run_cancelled(session_factory
 
     with pytest.raises(asyncio.CancelledError):
         await task
-    service._executor.shutdown(cancel_futures=True)
+    await service.close()
 
     verify_db = session_factory()
     row = verify_db.query(models.FunctionRun).order_by(models.FunctionRun.id.desc()).first()
     assert row is not None
     assert row.status == FunctionRunStatus.CANCELLED.value
     assert row.error_class == RuntimeErrorClass.CANCELLED.value
+    assert row.error_code == RuntimeErrorCode.CANCELLED.value
     verify_db.close()
+
+
+@pytest.mark.anyio
+async def test_function_runtime_explicit_cancel_returns_terminal_result(session_factory):
+    db = session_factory()
+    fn = _create_released_function(
+        db,
+        code_snapshot="import time\ntime.sleep(2)\nresult = payload",
+    )
+    db.close()
+
+    service = FunctionRuntimeService(session_factory=session_factory)
+    run_id = uuid4().hex
+    task = asyncio.create_task(service.invoke(fn, {"value": 1}, timeout_seconds=5, run_id=run_id))
+    try:
+        async with asyncio.timeout(2):
+            while service.get_result(run_id) is None:
+                await asyncio.sleep(0.01)
+        cancelled = await service.cancel(run_id)
+        original = await task
+    finally:
+        await service.close()
+
+    assert cancelled is not None
+    assert cancelled.status == FunctionRunStatus.CANCELLED.value
+    assert cancelled.error_code == RuntimeErrorCode.CANCELLED.value
+    assert original == cancelled
+    assert service.get_result(run_id) == cancelled
+
+
+@pytest.mark.anyio
+async def test_function_runtime_start_interrupts_unowned_running_records(session_factory):
+    with session_factory() as db:
+        fn = _create_released_function(db, code_snapshot="result = 1")
+        run_id = uuid4().hex
+        db.add(
+            models.FunctionRun(
+                run_id=run_id,
+                function_id=fn.id,
+                status=FunctionRunStatus.RUNNING.value,
+                started_at=datetime.utcnow() - timedelta(seconds=2),
+            )
+        )
+        db.commit()
+
+    service = FunctionRuntimeService(session_factory=session_factory)
+    try:
+        await service.start()
+        recovered = service.get_result(run_id)
+    finally:
+        await service.close()
+
+    assert recovered is not None
+    assert recovered.status == FunctionRunStatus.INTERRUPTED.value
+    assert recovered.error_code == RuntimeErrorCode.EXECUTION_OWNER_LOST.value
+
+
+@pytest.mark.anyio
+async def test_function_runtime_shutdown_interrupts_active_invocation(session_factory):
+    with session_factory() as db:
+        fn = _create_released_function(
+            db,
+            code_snapshot="import time\ntime.sleep(5)\nresult = payload",
+        )
+
+    service = FunctionRuntimeService(session_factory=session_factory)
+    run_id = uuid4().hex
+    task = asyncio.create_task(service.invoke(fn, {}, timeout_seconds=10, run_id=run_id))
+    async with asyncio.timeout(2):
+        while service.get_result(run_id) is None:
+            await asyncio.sleep(0.01)
+
+    await service.close()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    interrupted = service.get_result(run_id)
+    assert interrupted is not None
+    assert interrupted.status == FunctionRunStatus.INTERRUPTED.value
+    assert interrupted.error_code == RuntimeErrorCode.EXECUTION_OWNER_LOST.value
 
 
 @pytest.mark.anyio
@@ -272,7 +355,7 @@ async def test_function_runtime_supports_class_based_entrypoint(session_factory)
             timeout_seconds=3,
         )
     finally:
-        service._executor.shutdown(cancel_futures=True)
+        await service.close()
 
     assert result.status == FunctionRunStatus.SUCCESS.value
     assert result.output == {"next": 6, "datasource": 12}
@@ -711,7 +794,12 @@ def test_runtime_platform_capability_blocks_mutation_in_plan_mode(session_factor
         RuntimePlatformAccessError,
         match="Control plane operate actions are forbidden in plan mode",
     ):
-        platform.operate(object_type="function", action="release", object_id=1, payload={})
+        platform.operate(
+            object_type="function",
+            action="release",
+            object_id=1,
+            payload={"expected_revision": "a" * 64, "validation_id": "b" * 32},
+        )
 
 
 def test_runtime_platform_capability_rejects_undeclared_scheduler_payload_fields(session_factory):

@@ -127,3 +127,75 @@ async def test_generic_http_service_disables_environment_proxy_by_default() -> N
     )
 
     assert captured["trust_env"] is False
+
+
+@pytest.mark.anyio
+async def test_stream_is_bounded_before_buffering_and_closed() -> None:
+    class LargeBody(httpx.AsyncByteStream):
+        count = 0
+        closed = False
+
+        async def __aiter__(self):
+            for _ in range(100):
+                self.count += 1
+                yield b"x" * 16384
+
+        async def aclose(self):
+            self.closed = True
+
+    body = LargeBody()
+    result = await call_http_service(
+        service_id=1,
+        service_type="http_api",
+        raw_secrets=None,
+        raw_config={"base_url": "http://fixture.invalid", "max_response_bytes": 1024},
+        method="GET",
+        path="/large",
+        client_factory=_client_factory(lambda request: httpx.Response(200, stream=body)),
+    )
+    assert body.count == 1 and body.closed
+    assert result["data"]["truncated"] is True
+    assert len(result["data"]["response_preview"]) == 1024
+    assert result["data"]["total_bytes"] is None
+
+
+@pytest.mark.anyio
+async def test_redirect_does_not_send_stored_credentials_to_another_host() -> None:
+    requests = []
+
+    def handler(request):
+        requests.append(request)
+        return httpx.Response(302, headers={"location": "http://another.invalid/steal"})
+
+    with pytest.raises(ServiceHTTPError) as caught:
+        await call_http_service(
+            service_id=1,
+            service_type="http_api",
+            raw_secrets={"bearer_token": "sensitive-token"},
+            raw_config={"base_url": "http://fixture.invalid", "auth_type": "bearer"},
+            method="GET",
+            path="/redirect",
+            client_factory=_client_factory(handler),
+        )
+    assert len(requests) == 1 and caught.value.http_status == 302
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("method", ["GET", "DELETE"])
+async def test_unsupported_body_is_not_silently_discarded(method) -> None:
+    requests = []
+    with pytest.raises(ServiceHTTPError) as caught:
+        await call_http_service(
+            service_id=1,
+            service_type="http_api",
+            raw_secrets=None,
+            raw_config={"base_url": "http://fixture.invalid"},
+            method=method,
+            path="/item",
+            body={"id": "item"},
+            client_factory=_client_factory(
+                lambda request: requests.append(request) or httpx.Response(200)
+            ),
+        )
+    assert caught.value.code == "invalid_body" and not caught.value.outcome_unknown
+    assert not requests

@@ -64,6 +64,12 @@ dev:
 test:
 	$(UV_ENV) uv run pytest
 
+.PHONY: test-agent-runtime
+# Native contracts run against the product's locked dependencies.
+test-agent-runtime:
+	uv run --locked python -m pytest \
+		-c tests/agent_runtime/pyproject.toml --confcutdir tests/agent_runtime tests/agent_runtime
+
 eval:
 	uv run python -m $(EVAL_MODULE) \
 		--case "$(EVAL_CASE)" \

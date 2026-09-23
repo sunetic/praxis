@@ -10,7 +10,8 @@
     "lint:i18n": "node --test eslint.i18n.config.selftest.js && node scripts/check-i18n.mjs",
     "lint:i18n:update": "node scripts/check-i18n.mjs --update",
     "preview": "vite preview",
-    "test": "vitest run"
+    "test": "vitest run",
+    "test:e2e": "npm run build && playwright test"
   },
   "dependencies": {
     "@ai-sdk/react": "^3.0.186",
@@ -18,12 +19,14 @@
     "@assistant-ui/react-markdown": "^0.14.0",
     "@fontsource/inter": "^5.2.8",
     "@fontsource/jetbrains-mono": "^5.2.8",
+    "@playwright/test": "1.63.0",
     "@radix-ui/react-select": "^2.2.6",
     "ai": "^6.0.184",
     "axios": "^1.13.6",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "echarts": "^5.6.0",
+    "esbuild": "0.27.3",
     "framer-motion": "^12.35.0",
     "lucide-react": "^0.577.0",
     "next-themes": "^0.4.6",

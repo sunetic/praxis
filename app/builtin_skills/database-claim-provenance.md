@@ -1,6 +1,6 @@
 ---
 name: database-claim-provenance
-version: 1.0.0
+version: 1.1.0
 description: Database analysis claim provenance — audit metrics, classifications, ratings, absence claims, and causal conclusions against query evidence before reporting
 database: general
 always_apply: false
@@ -21,7 +21,3 @@ Produce database analysis whose material claims can be independently traced to s
 5. If the user authorizes a heuristic based on names, keywords, or free text, label it as heuristic and show the rule. Otherwise, do not present it as a source-backed dimension.
 6. Treat absence as a factual claim. Inspect the relevant schema or data before saying that a field, relationship, population, or dimension is missing; uninspected means unknown.
 7. In the final answer, distinguish directly observed facts, derived conclusions, assumptions, and unavailable information.
-
-<completion_verification_policy>
-For database analysis, verify every material claim against the actual query request and returned evidence, not its alias or narrative intent. Numeric claims must use compatible populations, units, grains, filters, and inclusion rules; reconcile totals with displayed components and reject conclusions based on sampled or truncated rows when a complete aggregate is required. When a headline population includes unmapped or orphan records but an entity breakdown excludes them, require an explicit reconciliation at the point where those values are presented. Audit joins, fan-out, deduplication, null handling, and authored constants for circular evidence. Classifications, ratings, rankings, severity levels, and causal conclusions require a source field or an explicit rubric mapped to evidenced inputs. Name-, keyword-, or free-text heuristics are allowed only when the user requested them and the answer labels both the rule and result as heuristic. Absence claims require direct inspection of the relevant schema or data; uninspected means unknown.
-</completion_verification_policy>

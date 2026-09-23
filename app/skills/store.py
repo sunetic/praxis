@@ -7,12 +7,12 @@ from urllib.parse import quote
 
 import yaml
 
-from app.core.config import BUILTIN_SKILLS_DIR, DEFAULT_DATA_DIR
+from app.core.config import BUILTIN_SKILLS_DIR, get_settings
 from app.core.logging import fmt_kv, get_logger
 
 logger = get_logger("skills.store")
 
-_DEFAULT_SKILLS_DIR = str(DEFAULT_DATA_DIR / "skills")
+_DEFAULT_SKILLS_DIR = str(Path(get_settings().data_dir) / "skills")
 _DEFAULT_BUILTIN_SKILLS_DIR = str(BUILTIN_SKILLS_DIR)
 
 
@@ -202,8 +202,11 @@ class SkillStore:
             raise SkillValidationError(f"Built-in skill '{skill.name}' is read-only")
 
     def load(self) -> list[Skill]:
-        self.skills = {}
-        self.errors = []
+        # Each resolver builds its own complete snapshot. Publishing partial
+        # shared dictionaries let concurrent runs erase or consume each other's
+        # always-apply instructions and report false duplicate-name errors.
+        skills: dict[str, Skill] = {}
+        errors: list[dict[str, str]] = []
         self._ensure_skills_dir()
         loaded: list[Skill] = []
         scanned_count = 0
@@ -223,20 +226,20 @@ class SkillStore:
                     try:
                         skill = self._parse_skill_file(path)
                     except SkillValidationError as e:
-                        self.errors.append({"path": path, "error": str(e)})
+                        errors.append({"path": path, "error": str(e)})
                         logger.warning("skill_parse_failed %s error=%s", fmt_kv(path=path), str(e))
                         continue
-                    if skill.name in self.skills:
-                        conflict = self.skills[skill.name]
+                    if skill.name in skills:
+                        conflict = skills[skill.name]
                         logger.warning(
                             "skill_name_conflict %s",
                             fmt_kv(name=skill.name, kept=conflict.path, ignored=path),
                         )
-                        self.errors.append(
+                        errors.append(
                             {"path": path, "error": f"Duplicate skill name '{skill.name}', ignored"}
                         )
                         continue
-                    self.skills[skill.name] = skill
+                    skills[skill.name] = skill
                     loaded.append(skill)
         logger.info(
             "skill_load_done %s",
@@ -244,9 +247,10 @@ class SkillStore:
                 skills_dir=self.skills_dir,
                 scanned=scanned_count,
                 loaded=len(loaded),
-                errors=len(self.errors),
+                errors=len(errors),
             ),
         )
+        self.skills, self.errors = skills, errors
         return loaded
 
     def get(self, name: str) -> Skill | None:

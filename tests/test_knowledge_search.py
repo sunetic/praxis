@@ -7,12 +7,8 @@ from pathlib import Path
 
 import pytest
 
-from app.services.knowledge.query_expansion import build_query_plan
 from app.services.knowledge.search_tools import (
-    KnowledgeToolExecutor,
-    SearchTarget,
     discover,
-    execute_tool,
     outline,
     read,
     resolve_search_targets,
@@ -177,31 +173,6 @@ class TestOutline:
             outline(1, "nonexistent.md")
 
 
-class TestExecuteTool:
-    @pytest.mark.asyncio
-    async def test_discover_via_executor(self, kb_dir: Path) -> None:
-        result = await execute_tool("kb_discover", {"kb_id": 1, "query": "rank"})
-        assert result["success"] is True
-        assert isinstance(result["data"], list)
-
-    @pytest.mark.asyncio
-    async def test_read_via_executor(self, kb_dir: Path) -> None:
-        result = await execute_tool("kb_read", {"kb_id": 1, "path": "indexes.md"})
-        assert result["success"] is True
-        assert "content" in result["data"]
-
-    @pytest.mark.asyncio
-    async def test_unknown_tool(self, kb_dir: Path) -> None:
-        result = await execute_tool("kb_unknown", {"kb_id": 1})
-        assert result["success"] is False
-
-    @pytest.mark.asyncio
-    async def test_not_found_error(self, kb_dir: Path) -> None:
-        result = await execute_tool("kb_read", {"kb_id": 1, "path": "nope.md"})
-        assert result["success"] is False
-        assert result["error"]["code"] == "not_found"
-
-
 def _run_git(repo: Path, *args: str) -> str:
     result = subprocess.run(
         ["git", "-C", str(repo), *args],
@@ -343,90 +314,3 @@ class TestVersionPinnedGitSearch:
     ) -> None:
         with pytest.raises(ValueError, match="not available"):
             await resolve_search_targets(kb_ids=[2], db_type=None, version="9.9")
-
-
-class TestQueryCoverage:
-    def test_error_query_expands_exact_identifiers_and_bilingual_terms(self) -> None:
-        plan = build_query_plan(
-            '排查错误 "Deadlock found when trying to get lock" ER_LOCK_DEADLOCK SQLSTATE 40001'
-        )
-
-        assert any("Deadlock" in value for value in plan.groups["exact_phrases"])
-        assert "ER_LOCK_DEADLOCK" in plan.groups["identifiers"]
-        assert any("40001" in value for value in plan.groups["identifiers"])
-        assert "错误" in plan.groups["semantic_variants"]
-        assert "error" in plan.groups["semantic_variants"]
-        assert "failed" in plan.groups["semantic_variants"]
-        assert "critical" in plan.groups["semantic_variants"]
-
-    @pytest.mark.asyncio
-    async def test_executor_enforces_full_seed_coverage(self, kb_dir: Path) -> None:
-        (kb_dir / "errors.md").write_text(
-            "A critical operation failed with an exception.\n",
-            encoding="utf-8",
-        )
-        target = (await resolve_search_targets(kb_ids=[1], db_type=None, version=None))[0]
-        plan = build_query_plan("查询错误信息")
-        executor = KnowledgeToolExecutor([target], plan)
-
-        result = await executor.execute("kb_search", {"kb_id": 1, "query": "错误"})
-        coverage = executor.coverage_report()
-
-        assert result["success"] is True
-        assert any("failed" in item["context"] for item in result["data"])
-        assert coverage["coverage_complete"] is True
-        assert coverage["uncovered_groups"] == {}
-        assert "failed" in coverage["searched_patterns"]
-
-    @pytest.mark.asyncio
-    async def test_coverage_is_required_for_every_target(self, kb_dir: Path) -> None:
-        plan = build_query_plan("index error")
-        targets = [
-            SearchTarget(kb_id=1, source_type="filesystem", root=kb_dir),
-            SearchTarget(kb_id=2, source_type="filesystem", root=kb_dir),
-        ]
-        executor = KnowledgeToolExecutor(targets, plan)
-
-        first = await executor.execute("kb_search", {"kb_id": 1, "query": "index"})
-        partial_coverage = executor.coverage_report()
-        second = await executor.execute("kb_search", {"kb_id": 2, "query": "index"})
-        complete_coverage = executor.coverage_report()
-
-        assert first["success"] is True
-        assert second["success"] is True
-        assert partial_coverage["coverage_complete"] is False
-        assert partial_coverage["target_coverage"]["1"]["coverage_complete"] is True
-        assert partial_coverage["target_coverage"]["2"]["coverage_complete"] is False
-        assert complete_coverage["coverage_complete"] is True
-
-    @pytest.mark.asyncio
-    async def test_failed_search_does_not_count_as_coverage(
-        self,
-        kb_dir: Path,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        def failed_search(*args, **kwargs):
-            return subprocess.CompletedProcess(
-                args=args[0],
-                returncode=2,
-                stdout="",
-                stderr="invalid search pattern",
-            )
-
-        monkeypatch.setattr(
-            "app.services.knowledge.search_tools.subprocess.run",
-            failed_search,
-        )
-        target = SearchTarget(kb_id=1, source_type="filesystem", root=kb_dir)
-        executor = KnowledgeToolExecutor([target], build_query_plan("index error"))
-
-        result = await executor.execute("kb_search", {"kb_id": 1, "query": "("})
-        coverage = executor.coverage_report()
-
-        assert result["success"] is False
-        assert coverage["coverage_complete"] is False
-        assert coverage["searched_patterns"] == []
-
-    def test_search_rejects_path_escape(self, kb_dir: Path) -> None:
-        with pytest.raises(ValueError, match="Invalid knowledge base path"):
-            search(1, "root", paths=["../../etc"])

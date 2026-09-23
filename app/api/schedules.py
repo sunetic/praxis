@@ -6,18 +6,20 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from fastapi import APIRouter, Depends, HTTPException, Response, status
-from sqlalchemy.orm import Session, sessionmaker
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
+from pydantic import ValidationError
+from sqlalchemy import update
+from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
 from app.core.logging import fmt_kv, get_logger
 from app.db.database import get_db
 from app.models import models
-from app.services.function.runtime import FunctionRuntimeService
+from app.services.agent.persistence import run_db
 from app.services.lifecycle import LifecycleValidationError, ScheduleLifecycleService
 from app.services.scheduler.builder import SchedulerBuilderService
+from app.services.scheduler.projection import project_schedule_run
 from app.services.scheduler.runtime_state import get_scheduler_worker
-from app.services.scheduler.worker import SchedulerWorker
 
 router = APIRouter(prefix="/schedules", tags=["Schedules"])
 SUPPORTED_SCHEDULE_TARGETS: set[str] = {"function", "agent"}
@@ -185,7 +187,18 @@ def _apply_schedule_target(schedule: models.Schedule, resolved_target: dict[str,
 
 
 def _validate_target_input_contract(*, target_type: str, input_prompt: Any) -> str | None:
-    return str(input_prompt or "").strip() or None
+    prompt = str(input_prompt or "").strip() or None
+    if target_type == "agent" and not prompt:
+        raise HTTPException(status_code=400, detail="Agent schedule requires input_prompt")
+    return prompt
+
+
+def _validate_agent_retry_policy(schedule: models.Schedule) -> None:
+    if schedule.target_type == "agent" and schedule.max_retries != 0:
+        raise HTTPException(
+            status_code=400,
+            detail="Agent schedules require max_retries=0; retrying an entire run can repeat effects",
+        )
 
 
 def _normalize_schedule_kind(raw_kind: Any, *, default: str = "custom") -> str:
@@ -267,6 +280,10 @@ def _repair_schedule_run_or_404(
     )
     if run is None:
         raise HTTPException(status_code=404, detail=f"Schedule run {run_id} not found")
+    if run.target_type == "agent":
+        raise HTTPException(
+            status_code=409, detail="Use the native run cancellation or recovery API"
+        )
     if str(run.status or "").strip().lower() != "running":
         raise HTTPException(status_code=409, detail="Only running schedule runs can be repaired")
     started_at = run.started_at or run.created_at
@@ -313,7 +330,7 @@ def list_all_schedule_runs(
         response.headers["X-Total-Count"] = str(total)
         response.headers["X-Limit"] = str(normalized_limit)
         response.headers["X-Offset"] = str(normalized_offset)
-    return [_serialize(item) for item in runs]
+    return [project_schedule_run(db, item) for item in runs]
 
 
 @router.get("/worker-health")
@@ -363,6 +380,7 @@ def create_schedule(payload: dict[str, Any], db: Session = Depends(get_db)):
             schedule_type=schedule_type,
             cron_expression=cron_expression,
             interval_seconds=interval_seconds,
+            timezone=timezone,
         )
         if status_value == "active"
         else None
@@ -396,6 +414,7 @@ def create_schedule(payload: dict[str, Any], db: Session = Depends(get_db)):
         max_retries=int(payload.get("max_retries", 0)),
         retry_backoff_seconds=int(payload.get("retry_backoff_seconds", 60)),
     )
+    _validate_agent_retry_policy(schedule)
     db.add(schedule)
     db.commit()
     db.refresh(schedule)
@@ -465,10 +484,12 @@ def update_schedule(schedule_id: int, payload: dict[str, Any], db: Session = Dep
             schedule_type=schedule.schedule_type,
             cron_expression=schedule.cron_expression,
             interval_seconds=schedule.interval_seconds,
+            timezone=schedule.timezone,
         )
     else:
         schedule.next_run_at = None
     schedule.updated_at = _utc_now_naive()
+    _validate_agent_retry_policy(schedule)
     db.commit()
     db.refresh(schedule)
     _refresh_scheduler_runtime("update", schedule_id=schedule.id)
@@ -476,23 +497,74 @@ def update_schedule(schedule_id: int, payload: dict[str, Any], db: Session = Dep
 
 
 @router.post("/{schedule_id}/build")
-def build_schedule(schedule_id: int, payload: dict[str, Any], db: Session = Depends(get_db)):
-    lifecycle = ScheduleLifecycleService()
-    schedule = _get_schedule_or_404(db, schedule_id)
+async def build_schedule(schedule_id: int, payload: dict[str, Any], request: Request):
+    runtime = request.app.state.agent_runtime
     prompt = str(payload.get("prompt") or "").strip()
     if not prompt:
         raise HTTPException(status_code=400, detail="prompt is required")
-    builder = SchedulerBuilderService()
+
+    def snapshot():
+        with runtime.sessions() as db:
+            return _serialize(_get_schedule_or_404(db, schedule_id))
+
+    current = await run_db(snapshot)
+    build = await _propose_schedule(runtime.models, prompt, current)
+
+    def save():
+        with runtime.sessions() as db:
+            return _save_schedule_build(schedule_id, current, build, db)
+
+    return await run_db(save)
+
+
+async def _propose_schedule(models_factory, prompt: str, current: dict):
     try:
-        build = builder.apply_prompt(prompt, _serialize(schedule))
+        return await SchedulerBuilderService(models_factory).apply_prompt(prompt, current)
+    except ValidationError as err:
+        logger.warning(
+            "schedule_proposal_invalid errors=%s",
+            [{"type": item["type"], "loc": item["loc"]} for item in err.errors()],
+        )
+        raise HTTPException(
+            422, "Model returned an invalid schedule proposal; no changes were saved"
+        ) from err
+    except ValueError as err:
+        raise HTTPException(
+            422, "Model returned an invalid schedule proposal; no changes were saved"
+        ) from err
     except Exception as err:
-        raise HTTPException(status_code=400, detail=f"scheduler build failed: {err}") from err
+        logger.warning("schedule_model_request_failed error_type=%s", type(err).__name__)
+        raise HTTPException(502, "Model request failed; no changes were saved") from err
+
+
+def _save_schedule_build(schedule_id: int, expected: dict, build, db: Session):
+    # Claim the exact configuration version atomically before reading/mutating
+    # the row. SQLite gets a write lock; other databases lock this row. The
+    # transaction rolls back on every validation error, including stale input.
+    stamp = _utc_now_naive()
+    previous_stamp = (
+        datetime.fromisoformat(expected["updated_at"]) if expected["updated_at"] else None
+    )
+    claimed = db.execute(
+        update(models.Schedule)
+        .where(models.Schedule.id == schedule_id, models.Schedule.updated_at == previous_stamp)
+        .values(updated_at=stamp)
+        .execution_options(synchronize_session=False)
+    )
+    if claimed.rowcount != 1:
+        raise HTTPException(
+            409,
+            "Schedule changed while the proposal was generated; submit against the current configuration",
+        )
+    lifecycle = ScheduleLifecycleService()
+    schedule = _get_schedule_or_404(db, schedule_id)
+    actual = _serialize(schedule)
+    actual["updated_at"] = expected["updated_at"]
+    if actual != expected:
+        raise HTTPException(
+            409, "Schedule changed while the proposal was generated; no changes were saved"
+        )
     _ensure_mutable_schedule_payload(schedule, build.patch)
-    if _is_built_in_schedule(schedule):
-        build.patch.pop("name", None)
-        build.patch.pop("description", None)
-        build.patch.pop("max_retries", None)
-        build.patch.pop("retry_backoff_seconds", None)
     for field, value in build.patch.items():
         setattr(schedule, field, value)
     schedule.timezone = _normalize_timezone(schedule.timezone, default=DEFAULT_SCHEDULE_TIMEZONE)
@@ -500,20 +572,25 @@ def build_schedule(schedule_id: int, payload: dict[str, Any], db: Session = Depe
         target_type=schedule.target_type,
         input_prompt=schedule.input_prompt,
     )
-    lifecycle.validate_definition(
-        schedule_type=schedule.schedule_type,
-        cron_expression=schedule.cron_expression,
-        interval_seconds=schedule.interval_seconds,
-    )
+    try:
+        lifecycle.validate_definition(
+            schedule_type=schedule.schedule_type,
+            cron_expression=schedule.cron_expression,
+            interval_seconds=schedule.interval_seconds,
+        )
+    except LifecycleValidationError as err:
+        raise HTTPException(422, str(err)) from err
     if schedule.status == "active":
         schedule.next_run_at = lifecycle.calculate_next_run_at(
             schedule_type=schedule.schedule_type,
             cron_expression=schedule.cron_expression,
             interval_seconds=schedule.interval_seconds,
+            timezone=schedule.timezone,
         )
     else:
         schedule.next_run_at = None
     schedule.updated_at = _utc_now_naive()
+    _validate_agent_retry_policy(schedule)
     db.commit()
     db.refresh(schedule)
     _refresh_scheduler_runtime("build", schedule_id=schedule.id)
@@ -524,87 +601,41 @@ def build_schedule(schedule_id: int, payload: dict[str, Any], db: Session = Depe
 
 
 @router.post("/ai-create", status_code=status.HTTP_201_CREATED)
-def ai_create_schedule(payload: dict[str, Any], db: Session = Depends(get_db)):
-    lifecycle = ScheduleLifecycleService()
+async def ai_create_schedule(payload: dict[str, Any], request: Request):
+    runtime = request.app.state.agent_runtime
     prompt = str(payload.get("prompt") or "").strip()
     if not prompt:
         raise HTTPException(status_code=400, detail="prompt is required")
 
-    resolved_target = _resolve_schedule_target(db, payload)
-    _ensure_user_visible_target_type(resolved_target["target_type"])
-    datasource_id = _normalize_datasource_id(db, payload.get("datasource_id"))
-    current_timezone = _normalize_timezone(payload.get("timezone"))
-    builder = SchedulerBuilderService()
-    current = {
-        "schedule_type": "cron",
-        "cron_expression": "0 9 * * *",
-        "interval_seconds": None,
-        "timezone": current_timezone,
-    }
-    try:
-        build = builder.apply_prompt(prompt, current)
-    except Exception as err:
-        raise HTTPException(status_code=400, detail=f"scheduler build failed: {err}") from err
-    schedule_type = str(build.patch.get("schedule_type") or current["schedule_type"])
-    cron_expression = build.patch.get("cron_expression")
-    interval_seconds = build.patch.get("interval_seconds")
-    timezone = _normalize_timezone(
-        build.patch.get("timezone") or current["timezone"], default=current["timezone"]
-    )
-    status_value = _normalize_schedule_status(build.patch.get("status") or payload.get("status"))
-    max_retries = int(build.patch.get("max_retries") or payload.get("max_retries", 0))
-    input_prompt = _validate_target_input_contract(
-        target_type=resolved_target["target_type"],
-        input_prompt=payload.get("input_prompt"),
-    )
+    def snapshot():
+        with runtime.sessions() as db:
+            target = _resolve_schedule_target(db, payload)
+            _ensure_user_visible_target_type(target["target_type"])
+            _normalize_datasource_id(db, payload.get("datasource_id"))
+            _validate_target_input_contract(
+                target_type=target["target_type"], input_prompt=payload.get("input_prompt")
+            )
+            return {
+                "target_type": target["target_type"],
+                "schedule_type": "cron",
+                "cron_expression": "0 9 * * *",
+                "interval_seconds": None,
+                "timezone": _normalize_timezone(payload.get("timezone")),
+                "status": _normalize_schedule_status(payload.get("status")),
+                "max_retries": int(payload.get("max_retries", 0)),
+            }
 
-    lifecycle.validate_definition(
-        schedule_type=schedule_type,
-        cron_expression=cron_expression,
-        interval_seconds=interval_seconds,
-    )
-    next_run_at = (
-        lifecycle.calculate_next_run_at(
-            schedule_type=schedule_type,
-            cron_expression=cron_expression,
-            interval_seconds=interval_seconds,
-        )
-        if status_value == "active"
-        else None
-    )
-    schedule = models.Schedule(
-        name=str(
-            payload.get("name")
-            or f"schedule-{resolved_target['target_type']}-{resolved_target['target_id']}"
-        ),
-        description=str(payload.get("description") or "").strip() or None,
-        kind="custom",
-        status=status_value,
-        target_type=resolved_target["target_type"],
-        target_id=resolved_target["target_id"],
-        schedule_type=schedule_type,
-        cron_expression=cron_expression,
-        interval_seconds=interval_seconds,
-        timezone=timezone,
-        datasource_id=datasource_id,
-        function_id=resolved_target["function_id"],
-        function_release_id=resolved_target["function_release_id"],
-        input_payload=payload.get("input_payload")
-        if isinstance(payload.get("input_payload"), dict)
-        else None,
-        input_prompt=input_prompt,
-        next_run_at=next_run_at,
-        max_retries=max_retries,
-        retry_backoff_seconds=int(payload.get("retry_backoff_seconds", 60)),
-    )
-    db.add(schedule)
-    db.commit()
-    db.refresh(schedule)
-    _refresh_scheduler_runtime("ai_create", schedule_id=schedule.id)
-    return {
-        "schedule": _serialize(schedule),
-        "build_summary": build.summary,
-    }
+    current = await run_db(snapshot)
+    build = await _propose_schedule(runtime.models, prompt, current)
+
+    def save():
+        with runtime.sessions() as db:
+            # Re-check target publication/authorization using the same domain
+            # create operation as the non-AI API; the model cannot choose it.
+            saved = create_schedule({**payload, **current, **build.patch}, db)
+            return {"schedule": saved, "build_summary": build.summary}
+
+    return await run_db(save)
 
 
 @router.delete("/{schedule_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -640,7 +671,7 @@ def list_schedule_runs(
         response.headers["X-Total-Count"] = str(total)
         response.headers["X-Limit"] = str(normalized_limit)
         response.headers["X-Offset"] = str(normalized_offset)
-    return [_serialize(item) for item in runs]
+    return [project_schedule_run(db, item) for item in runs]
 
 
 @router.post("/{schedule_id}/runs/{run_id}/repair")
@@ -711,30 +742,15 @@ def enable_schedule(schedule_id: int, db: Session = Depends(get_db)):
 
 
 @router.post("/{schedule_id}/run-now")
-async def run_schedule_now(schedule_id: int, db: Session = Depends(get_db)):
-    _get_schedule_or_404(db, schedule_id)
+async def run_schedule_now(schedule_id: int):
     trace_id = str(uuid.uuid4())
     worker = get_scheduler_worker()
-    if worker is not None and worker.health().get("running"):
+    if worker is None or worker.health().get("shutting_down"):
+        raise HTTPException(status_code=503, detail="Scheduler submission service is unavailable")
+    try:
         run_id, schedule_run_id = await worker.submit_now(schedule_id, trace_id=trace_id)
-        return {
-            "trace_id": trace_id,
-            "schedule_id": schedule_id,
-            "run_id": run_id,
-            "schedule_run_id": schedule_run_id,
-        }
-
-    runtime_session_factory = sessionmaker(
-        bind=db.get_bind(),
-        autocommit=False,
-        autoflush=False,
-        expire_on_commit=False,
-    )
-    fallback_worker = SchedulerWorker(
-        session_factory=runtime_session_factory,
-        runtime_service=FunctionRuntimeService(session_factory=runtime_session_factory),
-    )
-    run_id, schedule_run_id = await fallback_worker.submit_now(schedule_id, trace_id=trace_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail="Schedule not found") from exc
     return {
         "trace_id": trace_id,
         "schedule_id": schedule_id,

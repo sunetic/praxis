@@ -26,6 +26,7 @@ from app.services.function.identity import (
     normalize_function_slug,
     validate_function_display_name,
 )
+from app.services.function.native_authoring import AuthoringError, FunctionAuthoringStore
 from app.services.function.runtime import FunctionRuntimeService
 from app.services.function.strategy import (
     FunctionStrategyDecider,
@@ -688,23 +689,21 @@ class ObjectToolService:
             if action == "preview":
                 self._page_lifecycle.transition(page, target_state=PageState.PREVIEWING)
             elif action == "publish":
-                release = self._page_lifecycle.publish(
-                    page,
-                    artifact_payload=payload.get("artifact_payload") or page.draft_payload or {},
-                    artifact_uri=payload.get("artifact_uri"),
-                    release_notes=payload.get("release_notes"),
-                )
+                from app.services.page.native_authoring import PageAuthoringStore
+
+                if set(payload) != {"expected_revision", "validation_id"}:
+                    raise ObjectToolError(
+                        code="invalid_payload",
+                        message="Page publication requires expected_revision and validation_id only",
+                    )
+                try:
+                    result = PageAuthoringStore(self._resolve_session_factory()).publish(
+                        page.id, db=db, **payload
+                    )
+                except AuthoringError as exc:
+                    raise ObjectToolError(code="invalid_payload", message=str(exc)) from exc
                 db.commit()
-                db.refresh(page)
-                db.refresh(release)
-                return {
-                    "object_type": "page",
-                    "action": action,
-                    "id": page.id,
-                    "status": page.status,
-                    "current_release_id": page.current_release_id,
-                    "release": self._serialize_model(release),
-                }
+                return {"object_type": "page", "action": action, **result}
             elif action == "archive":
                 self._page_lifecycle.archive(page)
             elif action == "rollback":
@@ -769,80 +768,25 @@ class ObjectToolService:
                     "verification": verification,
                 }
             if action == "release":
-                code_snapshot = payload.get("code_snapshot") or function.draft_code
-                if not code_snapshot:
+                if set(payload) != {"expected_revision", "validation_id"}:
                     raise ObjectToolError(
-                        code="missing_code_snapshot",
-                        message="release requires code_snapshot or existing draft_code",
+                        code="invalid_release",
+                        message="Release requires expected_revision and validation_id, not source or claimed verification",
                     )
-                requirement_text = str(
-                    payload.get("requirement") or function.description or function.name or ""
-                )
-                contract = (
-                    payload.get("contract") if isinstance(payload.get("contract"), dict) else None
-                )
-                strategy_decision = self._function_strategy.decide(
-                    db,
-                    requirement_text=requirement_text,
-                    contract=contract,
-                    exclude_function_id=function.id,
-                    force_strategy=(
-                        payload.get("force_strategy")
-                        if isinstance(payload.get("force_strategy"), str)
-                        else None
-                    ),
-                    thresholds=StrategyThresholds(
-                        reuse=float(payload.get("reuse_threshold", 0.82)),
-                        extend=float(payload.get("extend_threshold", 0.45)),
-                    ),
-                )
-                verification = self._function_verifier.verify_draft(
-                    code_snapshot=code_snapshot,
-                    dependency_manifest=payload.get("dependency_manifest")
-                    or function.draft_dependencies,
-                )
-                if not verification["passed"]:
-                    raise ObjectToolError(
-                        code="verification_failed",
-                        message="Function verification failed before release",
-                        details={
-                            "diagnostics": verification["diagnostics"],
-                            "checks": verification["checks"],
-                            "strategy": strategy_decision["strategy"],
-                        },
+                try:
+                    released = FunctionAuthoringStore(self._resolve_session_factory()).publish(
+                        function.id,
+                        expected_revision=payload["expected_revision"],
+                        validation_id=payload["validation_id"],
+                        db=db,
                     )
-                release_metadata = payload.get("release_metadata")
-                if release_metadata is None:
-                    release_metadata = {}
-                if not isinstance(release_metadata, dict):
-                    raise ObjectToolError(
-                        code="invalid_release_metadata",
-                        message="release_metadata must be an object",
-                    )
-                enriched_metadata = {
-                    **release_metadata,
-                    "strategy_decision": strategy_decision,
-                    "verification": verification,
-                }
-                release = self._function_lifecycle.release(
-                    function,
-                    code_snapshot=code_snapshot,
-                    dependency_manifest=payload.get("dependency_manifest")
-                    or function.draft_dependencies,
-                    release_metadata=enriched_metadata,
-                )
+                except AuthoringError as exc:
+                    raise ObjectToolError(code="verification_failed", message=str(exc)) from exc
                 db.commit()
-                db.refresh(function)
-                db.refresh(release)
                 return {
                     "object_type": "function",
                     "action": action,
-                    "id": function.id,
-                    "status": function.status,
-                    "current_release_id": function.current_release_id,
-                    "strategy": strategy_decision["strategy"],
-                    "verification_passed": verification["passed"],
-                    "release": self._serialize_model(release),
+                    **released,
                 }
             if action == "invoke":
                 runtime = FunctionRuntimeService(session_factory=self._resolve_session_factory())
@@ -857,7 +801,7 @@ class ObjectToolService:
                         trace_id=trace_id,
                     )
                 finally:
-                    runtime._executor.shutdown(cancel_futures=True)
+                    await runtime.close()
                 return {
                     "object_type": "function",
                     "action": action,
@@ -1057,6 +1001,7 @@ class ObjectToolService:
                     schedule_type=schedule_type,
                     cron_expression=cron_expression,
                     interval_seconds=interval_seconds,
+                    timezone=str(payload.get("timezone") or "UTC"),
                 )
             return models.Schedule(
                 name=str(payload.get("name") or f"schedule-{target_type}-{raw_target_id}"),
@@ -1259,6 +1204,7 @@ class ObjectToolService:
                     schedule_type=item.schedule_type,
                     cron_expression=item.cron_expression,
                     interval_seconds=item.interval_seconds,
+                    timezone=item.timezone,
                 )
             else:
                 item.next_run_at = None

@@ -60,39 +60,9 @@
     "count": 1
   },
   {
-    "file": "src/components/chat/ChatThreadView.tsx",
-    "message": "Do not hard-code visible UI copy. Add a shellI18n key and call t(...).",
-    "source": "tokens ·",
-    "count": 1
-  },
-  {
     "file": "src/components/layout/Topbar.tsx",
     "message": "Do not hard-code visible UI copy. Add a shellI18n key and call t(...).",
     "source": "A",
-    "count": 1
-  },
-  {
-    "file": "src/components/page/PagePreviewRenderer.tsx",
-    "message": "Do not hard-code Chinese UI copy. Add a shellI18n key and call t(...).",
-    "source": "\"描述页面需求后，这里会显示实时结果。\"",
-    "count": 1
-  },
-  {
-    "file": "src/components/page/PagePreviewRenderer.tsx",
-    "message": "Do not hard-code user-facing attributes. Add a shellI18n key and call t(...).",
-    "source": "\"Page Runtime Preview\"",
-    "count": 1
-  },
-  {
-    "file": "src/components/page/PagePreviewRenderer.tsx",
-    "message": "Do not hard-code visible UI copy. Add a shellI18n key and call t(...).",
-    "source": "Describe your page idea in Build Chat. The preview will appear here with smooth updates.",
-    "count": 1
-  },
-  {
-    "file": "src/components/page/PagePreviewRenderer.tsx",
-    "message": "Do not hard-code visible UI copy. Add a shellI18n key and call t(...).",
-    "source": "Preview Canvas Is Ready",
     "count": 1
   },
   {
@@ -135,90 +105,6 @@
     "file": "src/components/ui/pagination.tsx",
     "message": "Do not hard-code visible UI copy. Add a shellI18n key and call t(...).",
     "source": "More pages",
-    "count": 1
-  },
-  {
-    "file": "src/lib/buildChatRuntime.ts",
-    "message": "Do not hard-code Chinese UI copy. Add a shellI18n key and call t(...).",
-    "source": "} 失败${",
-    "count": 1
-  },
-  {
-    "file": "src/lib/buildChatRuntime.ts",
-    "message": "Do not hard-code Chinese UI copy. Add a shellI18n key and call t(...).",
-    "source": "} 成功${",
-    "count": 1
-  },
-  {
-    "file": "src/lib/buildChatRuntime.ts",
-    "message": "Do not hard-code Chinese UI copy. Add a shellI18n key and call t(...).",
-    "source": "`Retry · 发起 Attempt ${",
-    "count": 1
-  },
-  {
-    "file": "src/lib/runtimeStream.ts",
-    "message": "Do not hard-code Chinese UI copy. Add a shellI18n key and call t(...).",
-    "source": "\"反思调整\"",
-    "count": 1
-  },
-  {
-    "file": "src/lib/runtimeStream.ts",
-    "message": "Do not hard-code Chinese UI copy. Add a shellI18n key and call t(...).",
-    "source": "\"变更执行\"",
-    "count": 1
-  },
-  {
-    "file": "src/lib/runtimeStream.ts",
-    "message": "Do not hard-code Chinese UI copy. Add a shellI18n key and call t(...).",
-    "source": "\"开始第$1轮\"",
-    "count": 1
-  },
-  {
-    "file": "src/lib/runtimeStream.ts",
-    "message": "Do not hard-code Chinese UI copy. Add a shellI18n key and call t(...).",
-    "source": "\"第$1轮执行中\"",
-    "count": 1
-  },
-  {
-    "file": "src/lib/runtimeStream.ts",
-    "message": "Do not hard-code Chinese UI copy. Add a shellI18n key and call t(...).",
-    "source": "\"第$1轮构建失败：\"",
-    "count": 1
-  },
-  {
-    "file": "src/lib/runtimeStream.ts",
-    "message": "Do not hard-code Chinese UI copy. Add a shellI18n key and call t(...).",
-    "source": "\"第$1轮校验中\"",
-    "count": 1
-  },
-  {
-    "file": "src/lib/runtimeStream.ts",
-    "message": "Do not hard-code Chinese UI copy. Add a shellI18n key and call t(...).",
-    "source": "\"第$1轮校验失败：\"",
-    "count": 1
-  },
-  {
-    "file": "src/lib/runtimeStream.ts",
-    "message": "Do not hard-code Chinese UI copy. Add a shellI18n key and call t(...).",
-    "source": "\"第$1轮校验通过\"",
-    "count": 1
-  },
-  {
-    "file": "src/lib/runtimeStream.ts",
-    "message": "Do not hard-code Chinese UI copy. Add a shellI18n key and call t(...).",
-    "source": "\"结果校验\"",
-    "count": 1
-  },
-  {
-    "file": "src/lib/runtimeStream.ts",
-    "message": "Do not hard-code Chinese UI copy. Add a shellI18n key and call t(...).",
-    "source": "\"重试执行\"",
-    "count": 1
-  },
-  {
-    "file": "src/lib/runtimeStream.ts",
-    "message": "Do not hard-code Chinese UI copy. Add a shellI18n key and call t(...).",
-    "source": "\"需求规划\"",
     "count": 1
   },
   {
@@ -324,24 +210,6 @@
     "count": 1
   },
   {
-    "file": "src/pages/FunctionBuildPage.tsx",
-    "message": "Do not hard-code user-facing attributes. Add a shellI18n key and call t(...).",
-    "source": "\"Build Chat\"",
-    "count": 1
-  },
-  {
-    "file": "src/pages/FunctionBuildPage.tsx",
-    "message": "Do not hard-code visible UI copy. Add a shellI18n key and call t(...).",
-    "source": "Functions",
-    "count": 1
-  },
-  {
-    "file": "src/pages/FunctionBuildPage.tsx",
-    "message": "Do not hard-code visible UI copy. Add a shellI18n key and call t(...).",
-    "source": "Run ID:",
-    "count": 1
-  },
-  {
     "file": "src/pages/FunctionListPage.tsx",
     "message": "Do not hard-code visible UI copy. Add a shellI18n key and call t(...).",
     "source": "ID",
@@ -393,162 +261,6 @@
     "file": "src/pages/OnboardingPage.tsx",
     "message": "Do not hard-code visible UI copy. Add a shellI18n key and call t(...).",
     "source": "Praxis",
-    "count": 1
-  },
-  {
-    "file": "src/pages/PageConsolePage.tsx",
-    "message": "Do not hard-code Chinese UI copy. Add a shellI18n key and call t(...).",
-    "source": "\"Page 名称\"",
-    "count": 1
-  },
-  {
-    "file": "src/pages/PageConsolePage.tsx",
-    "message": "Do not hard-code Chinese UI copy. Add a shellI18n key and call t(...).",
-    "source": "\"Page 已发布\"",
-    "count": 1
-  },
-  {
-    "file": "src/pages/PageConsolePage.tsx",
-    "message": "Do not hard-code Chinese UI copy. Add a shellI18n key and call t(...).",
-    "source": "\"保存 Page 名称失败\"",
-    "count": 1
-  },
-  {
-    "file": "src/pages/PageConsolePage.tsx",
-    "message": "Do not hard-code Chinese UI copy. Add a shellI18n key and call t(...).",
-    "source": "\"加载 Page 失败\"",
-    "count": 1
-  },
-  {
-    "file": "src/pages/PageConsolePage.tsx",
-    "message": "Do not hard-code Chinese UI copy. Add a shellI18n key and call t(...).",
-    "source": "\"发布失败，请稍后重试\"",
-    "count": 1
-  },
-  {
-    "file": "src/pages/PageConsolePage.tsx",
-    "message": "Do not hard-code Chinese UI copy. Add a shellI18n key and call t(...).",
-    "source": "\"已完成页面更新。\"",
-    "count": 1
-  },
-  {
-    "file": "src/pages/PageConsolePage.tsx",
-    "message": "Do not hard-code Chinese UI copy. Add a shellI18n key and call t(...).",
-    "source": "\"已完成页面更新\"",
-    "count": 1
-  },
-  {
-    "file": "src/pages/PageConsolePage.tsx",
-    "message": "Do not hard-code Chinese UI copy. Add a shellI18n key and call t(...).",
-    "source": "\"描述你要构建的页面，我会逐步生成并更新预览\"",
-    "count": 1
-  },
-  {
-    "file": "src/pages/PageConsolePage.tsx",
-    "message": "Do not hard-code Chinese UI copy. Add a shellI18n key and call t(...).",
-    "source": "\"描述页面需求，我会边构建边更新预览。\"",
-    "count": 1
-  },
-  {
-    "file": "src/pages/PageConsolePage.tsx",
-    "message": "Do not hard-code Chinese UI copy. Add a shellI18n key and call t(...).",
-    "source": "\"放大预览\"",
-    "count": 1
-  },
-  {
-    "file": "src/pages/PageConsolePage.tsx",
-    "message": "Do not hard-code Chinese UI copy. Add a shellI18n key and call t(...).",
-    "source": "\"构建失败，请继续描述调整方向\"",
-    "count": 1
-  },
-  {
-    "file": "src/pages/PageConsolePage.tsx",
-    "message": "Do not hard-code Chinese UI copy. Add a shellI18n key and call t(...).",
-    "source": "\"编译失败，请稍后重试\"",
-    "count": 1
-  },
-  {
-    "file": "src/pages/PageConsolePage.tsx",
-    "message": "Do not hard-code Chinese UI copy. Add a shellI18n key and call t(...).",
-    "source": "\"缩小预览\"",
-    "count": 1
-  },
-  {
-    "file": "src/pages/PageConsolePage.tsx",
-    "message": "Do not hard-code Chinese UI copy. Add a shellI18n key and call t(...).",
-    "source": "\"需要补充信息后再继续构建\"",
-    "count": 1
-  },
-  {
-    "file": "src/pages/PageConsolePage.tsx",
-    "message": "Do not hard-code Chinese UI copy. Add a shellI18n key and call t(...).",
-    "source": "\"页面定稿\"",
-    "count": 1
-  },
-  {
-    "file": "src/pages/PageConsolePage.tsx",
-    "message": "Do not hard-code Chinese UI copy. Add a shellI18n key and call t(...).",
-    "source": "\"页面已更新\"",
-    "count": 3
-  },
-  {
-    "file": "src/pages/PageConsolePage.tsx",
-    "message": "Do not hard-code Chinese UI copy. Add a shellI18n key and call t(...).",
-    "source": "\"页面草稿已更新。\"",
-    "count": 1
-  },
-  {
-    "file": "src/pages/PageConsolePage.tsx",
-    "message": "Do not hard-code Chinese UI copy. Add a shellI18n key and call t(...).",
-    "source": "\"页面草稿已更新\"",
-    "count": 1
-  },
-  {
-    "file": "src/pages/PageConsolePage.tsx",
-    "message": "Do not hard-code Chinese UI copy. Add a shellI18n key and call t(...).",
-    "source": "\"预览缩放\"",
-    "count": 1
-  },
-  {
-    "file": "src/pages/PageConsolePage.tsx",
-    "message": "Do not hard-code user-facing attributes. Add a shellI18n key and call t(...).",
-    "source": "\"Build Chat\"",
-    "count": 1
-  },
-  {
-    "file": "src/pages/PageConsolePage.tsx",
-    "message": "Do not hard-code user-facing attributes. Add a shellI18n key and call t(...).",
-    "source": "\"Page 名称\"",
-    "count": 1
-  },
-  {
-    "file": "src/pages/PageConsolePage.tsx",
-    "message": "Do not hard-code visible UI copy. Add a shellI18n key and call t(...).",
-    "source": "Pages",
-    "count": 1
-  },
-  {
-    "file": "src/pages/PageConsolePage.tsx",
-    "message": "Do not hard-code visible UI copy. Add a shellI18n key and call t(...).",
-    "source": "加载 Page...",
-    "count": 1
-  },
-  {
-    "file": "src/pages/PageConsolePage.tsx",
-    "message": "Do not hard-code visible UI copy. Add a shellI18n key and call t(...).",
-    "source": "发布",
-    "count": 1
-  },
-  {
-    "file": "src/pages/PageConsolePage.tsx",
-    "message": "Do not hard-code visible UI copy. Add a shellI18n key and call t(...).",
-    "source": "暂无可编辑的 Page 草稿",
-    "count": 1
-  },
-  {
-    "file": "src/pages/PageListPage.tsx",
-    "message": "Do not hard-code Chinese UI copy. Add a shellI18n key and call t(...).",
-    "source": "\"<!doctype html><html><head><meta charset='utf-8' /></head><body style='margin:0;background:var(--color-background);font-family:-apple-system,BlinkMacSystemFont,\\\"Segoe UI\\\",sans-serif;'><main style='max-width:960px;margin:0 auto;padding:24px;color:var(--color-muted-foreground);'>描述页面需求后，这里会显示实时结果。</main></body></html>\"",
     "count": 1
   },
   {
@@ -732,36 +444,6 @@
     "count": 1
   },
   {
-    "file": "src/pages/PagePublishedPage.tsx",
-    "message": "Do not hard-code user-facing attributes. Add a shellI18n key and call t(...).",
-    "source": "\"Published Runtime Page\"",
-    "count": 1
-  },
-  {
-    "file": "src/pages/PagePublishedPage.tsx",
-    "message": "Do not hard-code visible UI copy. Add a shellI18n key and call t(...).",
-    "source": "加载发布页面...",
-    "count": 1
-  },
-  {
-    "file": "src/pages/PagePublishedPage.tsx",
-    "message": "Do not hard-code visible UI copy. Add a shellI18n key and call t(...).",
-    "source": "发布内容不可用",
-    "count": 1
-  },
-  {
-    "file": "src/pages/PagePublishedPage.tsx",
-    "message": "Do not hard-code visible UI copy. Add a shellI18n key and call t(...).",
-    "source": "编辑",
-    "count": 1
-  },
-  {
-    "file": "src/pages/PagePublishedPage.tsx",
-    "message": "Do not hard-code visible UI copy. Add a shellI18n key and call t(...).",
-    "source": "页面未发布或不存在",
-    "count": 1
-  },
-  {
     "file": "src/pages/SchedulerConsolePage.tsx",
     "message": "Do not hard-code user-facing attributes. Add a shellI18n key and call t(...).",
     "source": "'{\"tenant_id\": 1001}'",
@@ -873,12 +555,6 @@
     "file": "src/pages/SettingsPage.tsx",
     "message": "Do not hard-code visible UI copy. Add a shellI18n key and call t(...).",
     "source": "Base URL",
-    "count": 1
-  },
-  {
-    "file": "src/pages/SkillBuilderPage.tsx",
-    "message": "Do not hard-code user-facing attributes. Add a shellI18n key and call t(...).",
-    "source": "\"slow-query-diagnosis\"",
     "count": 1
   },
   {

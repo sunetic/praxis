@@ -100,17 +100,6 @@ export function PageListPage() {
       const name = nextPageName(pages)
       const created = await pagesApi.create({
         name,
-        draft_payload: {
-          version: "page-runtime-v2",
-          config: { title: name, description: "" },
-          source: { language: "tsx", code: "" },
-          runtime: {
-            framework: "html",
-            preview_html:
-              "<!doctype html><html><head><meta charset='utf-8' /></head><body style='margin:0;background:var(--color-background);font-family:-apple-system,BlinkMacSystemFont,\"Segoe UI\",sans-serif;'><main style='max-width:960px;margin:0 auto;padding:24px;color:var(--color-muted-foreground);'>描述页面需求后，这里会显示实时结果。</main></body></html>",
-          },
-          meta: { updated_at: new Date().toISOString(), history: [], plan: { goal: "", todos: [] } },
-        },
       })
       setPages((prev) => [created, ...prev])
       navigate(`/page/workspace/${created.id}`)

@@ -10,7 +10,7 @@ from app.services.function.runtime_contract import (
 def test_function_runtime_contract_is_machine_readable():
     contract = get_function_runtime_contract()
     assert isinstance(contract, dict)
-    assert contract.get("contract_version") == "function-runtime-v3"
+    assert contract.get("contract_version") == "function-runtime-v5"
     context_contract = contract.get("context_contract") or {}
     assert context_contract.get("type") == "dict"
     assert context_contract.get("access_style") == "dict_get_only"
@@ -45,3 +45,12 @@ def test_function_runtime_contract_json_is_stable_shape():
     assert platform_api.get("main_helper") == "platform"
     assert "list(object_type, filters=?, limit=?)" in (platform_api.get("methods") or [])
     assert "context['db']" in (parsed.get("context_contract", {}).get("forbidden_patterns") or [])
+
+
+def test_release_contract_requires_server_validation_identity_not_generated_claims():
+    schema = get_function_runtime_contract()["platform_api"]["operate_payload_schemas"]["function"][
+        "release"
+    ]
+    assert set(schema["properties"]) == {"expected_revision", "validation_id"}
+    assert set(schema["constraints"]["required"]) == {"expected_revision", "validation_id"}
+    assert schema["additional_properties"] is False

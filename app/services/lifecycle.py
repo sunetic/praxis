@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 
 from app.models import models
+from app.services.scheduler.triggers import cron_trigger
 
 
 class LifecycleValidationError(ValueError):
@@ -217,6 +218,8 @@ class ScheduleLifecycleService:
         interval_seconds: int | None,
     ) -> None:
         if schedule_type == "interval":
+            if cron_expression is not None:
+                raise LifecycleValidationError("interval schedule must not define cron_expression")
             if interval_seconds is None or interval_seconds <= 0:
                 raise LifecycleValidationError(
                     "interval schedule must define positive interval_seconds"
@@ -224,9 +227,14 @@ class ScheduleLifecycleService:
             return
 
         if schedule_type == "cron":
+            if interval_seconds is not None:
+                raise LifecycleValidationError("cron schedule must not define interval_seconds")
             if not cron_expression:
                 raise LifecycleValidationError("cron schedule must define cron_expression")
-            self._parse_cron(cron_expression)
+            try:
+                cron_trigger(cron_expression)
+            except (ValueError, KeyError) as err:
+                raise LifecycleValidationError(str(err)) from err
             return
 
         raise LifecycleValidationError(f"Unsupported schedule_type: {schedule_type}")
@@ -238,22 +246,32 @@ class ScheduleLifecycleService:
         cron_expression: str | None,
         interval_seconds: int | None,
         now: datetime | None = None,
+        timezone: str = "UTC",
     ) -> datetime:
-        now = now or datetime.utcnow()
+        now = now or datetime.now(UTC)
+        now = now.replace(tzinfo=UTC) if now.tzinfo is None else now.astimezone(UTC)
         if schedule_type == "interval":
             self.validate_definition(
                 schedule_type=schedule_type,
                 cron_expression=cron_expression,
                 interval_seconds=interval_seconds,
             )
-            return now + timedelta(seconds=interval_seconds or 0)
+            return (now + timedelta(seconds=interval_seconds or 0)).replace(tzinfo=None)
 
         self.validate_definition(
             schedule_type=schedule_type,
             cron_expression=cron_expression,
             interval_seconds=interval_seconds,
         )
-        return self._next_cron_time(cron_expression or "* * * * *", now)
+        try:
+            result = cron_trigger(cron_expression or "", timezone).get_next_fire_time(
+                None, now + timedelta(microseconds=1)
+            )
+        except (ValueError, KeyError) as err:
+            raise LifecycleValidationError(str(err)) from err
+        if result is None:
+            raise LifecycleValidationError("Cron expression has no future occurrence")
+        return result.astimezone(UTC).replace(tzinfo=None)
 
     def pause(self, schedule: models.Schedule) -> None:
         self.checker.ensure_operation_allowed("schedule", schedule.status, "pause")
@@ -270,46 +288,5 @@ class ScheduleLifecycleService:
             cron_expression=schedule.cron_expression,
             interval_seconds=schedule.interval_seconds,
             now=now,
+            timezone=schedule.timezone or "UTC",
         )
-
-    def _next_cron_time(self, expression: str, now: datetime) -> datetime:
-        minute_expr, hour_expr, day_expr, month_expr, weekday_expr = self._parse_cron(expression)
-        candidate = now.replace(second=0, microsecond=0) + timedelta(minutes=1)
-        for _ in range(0, 366 * 24 * 60):
-            if self._matches(minute_expr, candidate.minute) and self._matches(
-                hour_expr, candidate.hour
-            ):
-                if self._matches(day_expr, candidate.day) and self._matches(
-                    month_expr, candidate.month
-                ):
-                    # Python weekday: Monday=0. Cron weekday: Sunday=0/7.
-                    cron_weekday = (candidate.weekday() + 1) % 7
-                    if self._matches(weekday_expr, cron_weekday):
-                        return candidate
-            candidate += timedelta(minutes=1)
-        raise LifecycleValidationError(f"Unable to calculate next run time from cron: {expression}")
-
-    def _parse_cron(self, expression: str) -> tuple[str, str, str, str, str]:
-        parts = expression.split()
-        if len(parts) != 5:
-            raise LifecycleValidationError("cron expression must have 5 fields")
-        return tuple(parts)  # type: ignore[return-value]
-
-    def _matches(self, expr: str, value: int) -> bool:
-        if expr == "*":
-            return True
-        if expr.isdigit():
-            return int(expr) == value
-        if "/" in expr:
-            base, step_text = expr.split("/", 1)
-            if not step_text.isdigit():
-                raise LifecycleValidationError(f"Unsupported cron token: {expr}")
-            step = int(step_text)
-            if step <= 0:
-                raise LifecycleValidationError(f"Invalid cron step: {expr}")
-            if base == "*":
-                return value % step == 0
-            if base.isdigit():
-                start = int(base)
-                return value >= start and (value - start) % step == 0
-        raise LifecycleValidationError(f"Unsupported cron token: {expr}")

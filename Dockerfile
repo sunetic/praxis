@@ -8,6 +8,7 @@ RUN --mount=type=cache,target=/root/.npm npm ci --registry="${NPM_CONFIG_REGISTR
 
 COPY frontend/ ./
 RUN npm run build
+RUN npm prune --omit=dev
 
 # ── Stage 2: Build backend ────────────────────────────────────────────────────
 FROM python:3.11-slim AS backend-builder
@@ -17,12 +18,9 @@ WORKDIR /app
 COPY --from=ghcr.io/astral-sh/uv:0.11.32 /uv /uvx /bin/
 
 COPY pyproject.toml uv.lock README.md ./
-ARG LITELLM_WHEEL_URL=https://files.pythonhosted.org/packages/1c/38/e6a4abb062e039d18d59538cc4e6fc370c2c10cd2bff4a2e546acb69dcb9/litellm-1.85.0-py3-none-any.whl
-ADD --checksum=sha256:2bb449153610691faffd76f5b94a8c29e4b66fc5394156ebf54fd4fe92759b1a \
-    "${LITELLM_WHEEL_URL}" /tmp/wheels/litellm-1.85.0-py3-none-any.whl
 ARG UV_INDEX_URL=https://pypi.org/simple
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --frozen --no-dev --index-url "${UV_INDEX_URL}" --find-links /tmp/wheels
+    uv sync --frozen --no-dev --index-url "${UV_INDEX_URL}"
 
 # ── Stage 3: Runtime image ────────────────────────────────────────────────────
 FROM python:3.11-slim AS runtime
@@ -30,6 +28,10 @@ FROM python:3.11-slim AS runtime
 ENV PYTHONUNBUFFERED=1
 
 WORKDIR /app
+
+# Function authoring checks fail closed if the host/container policy denies
+# user/network namespaces; installing the launcher alone does not grant them.
+RUN apt-get update && apt-get install -y --no-install-recommends bubblewrap git ripgrep && apt-get clean
 
 # Copy Python env from builder
 COPY --from=backend-builder /app/.venv /app/.venv
@@ -43,6 +45,12 @@ COPY tools/ ./tools/
 
 # Copy frontend build output
 COPY --from=frontend-builder /frontend/dist ./frontend/dist
+
+# Deterministic Page compilation and isolated browser validation, not a Node
+# Agent service. Generated source is only parsed here, never imported by Node.
+COPY --from=frontend-builder /usr/local/bin/node /usr/local/bin/node
+COPY --from=frontend-builder /frontend/node_modules ./frontend/node_modules
+RUN node frontend/node_modules/playwright/cli.js install --with-deps chromium
 
 COPY docker-entrypoint.sh .
 RUN chmod +x docker-entrypoint.sh

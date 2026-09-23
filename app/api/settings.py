@@ -9,12 +9,9 @@ from app.db.database import get_db
 from app.schemas.schemas import (
     PlatformSettingsResponse,
     PlatformSettingsUpdateRequest,
-    SettingsEngineTestRequest,
-    SettingsEngineTestResponse,
 )
 from app.services.platform.settings_store import (
     DEFAULT_PLATFORM_SETTINGS,
-    get_setting,
     load_settings,
     upsert_setting,
 )
@@ -50,34 +47,3 @@ def patch_settings(
     db.commit()
     logger.info("patch_settings %s", fmt_kv(keys=list(update_data.keys())))
     return _get_response(db)
-
-
-@router.post("/test-engine", response_model=SettingsEngineTestResponse)
-def test_engine(
-    payload: SettingsEngineTestRequest,
-    db: Session = Depends(get_db),
-) -> SettingsEngineTestResponse:
-    """Probe the configured external CLI command via EngineProbeAgent."""
-    command = payload.command.strip()
-    if not command:
-        stored = get_setting(db, "external_cli_command")
-        command = str(stored or "").strip()
-    if not command:
-        return SettingsEngineTestResponse(ok=False, message="No CLI command configured")
-
-    from app.services.engine_probe_agent import get_engine_probe_agent
-
-    agent = get_engine_probe_agent()
-    result = agent.probe(command)
-    logger.info(
-        "test_engine %s",
-        fmt_kv(command=command, ok=result.ok, flags=result.flags_added),
-    )
-
-    return SettingsEngineTestResponse(
-        ok=result.ok,
-        message=result.message,
-        suggested_command=result.suggested_command,
-        flags_added=result.flags_added,
-        env_issues=result.env_issues,
-    )

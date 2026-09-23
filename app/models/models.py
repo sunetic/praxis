@@ -4,7 +4,6 @@ from typing import Any, Optional
 
 from sqlalchemy import (
     JSON,
-    Boolean,
     Column,
     DateTime,
     ForeignKey,
@@ -17,7 +16,8 @@ from sqlalchemy import (
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.security import EncryptedJSON, EncryptedString
-from app.db.database import Base
+from app.db.base import Base
+from app.models import agent_runs as native_agent_tables  # noqa: F401
 
 service_knowledge_bases = Table(
     "service_knowledge_bases",
@@ -60,9 +60,6 @@ class DataSource(Base):
         DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
     )
 
-    conversations: Mapped[list["Conversation"]] = relationship(
-        back_populates="datasource", cascade="all, delete-orphan"
-    )
     agents: Mapped[list["Agent"]] = relationship(
         secondary="agent_datasources", back_populates="datasources"
     )
@@ -84,133 +81,6 @@ class Channel(Base):
     )
 
 
-class Conversation(Base):
-    __tablename__ = "conversations"
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
-    title: Mapped[str] = mapped_column(String(500), default="New Conversation")
-    datasource_id: Mapped[int | None] = mapped_column(
-        Integer, ForeignKey("datasources.id"), nullable=True
-    )
-    agent_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("agents.id"), nullable=True)
-    active_skills: Mapped[str | None] = mapped_column(JSON, nullable=True)
-    category: Mapped[str] = mapped_column(String(20), nullable=False, default="primary")
-    scene_key: Mapped[str | None] = mapped_column(String(100), nullable=True)
-    read_only: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
-    updated_at: Mapped[datetime] = mapped_column(
-        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
-    )
-
-    datasource: Mapped[Optional["DataSource"]] = relationship(back_populates="conversations")
-    agent: Mapped[Optional["Agent"]] = relationship(back_populates="conversations")
-    messages: Mapped[list["Message"]] = relationship(
-        back_populates="conversation", cascade="all, delete-orphan"
-    )
-    chat_events: Mapped[list["ChatEvent"]] = relationship(
-        back_populates="conversation", cascade="all, delete-orphan"
-    )
-    pending_actions: Mapped[list["PendingAction"]] = relationship(
-        back_populates="conversation", cascade="all, delete-orphan"
-    )
-    build_sessions: Mapped[list["BuildSession"]] = relationship(
-        back_populates="conversation", cascade="all, delete-orphan"
-    )
-    context_snapshots: Mapped[list["ConversationContextSnapshot"]] = relationship(
-        back_populates="conversation", cascade="all, delete-orphan"
-    )
-
-
-class Message(Base):
-    __tablename__ = "messages"
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
-    conversation_id: Mapped[int] = mapped_column(
-        Integer, ForeignKey("conversations.id"), nullable=False
-    )
-    role: Mapped[str] = mapped_column(String(50), nullable=False)
-    content: Mapped[str] = mapped_column(Text, nullable=False)
-    agent_name: Mapped[str | None] = mapped_column(String(100), nullable=True)
-    tool_calls: Mapped[list | None] = mapped_column(JSON, nullable=True)
-    content_parts: Mapped[list | None] = mapped_column(JSON, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
-
-    conversation: Mapped["Conversation"] = relationship(back_populates="messages")
-
-
-class ConversationContextSnapshot(Base):
-    """Versioned long-term memory produced by conversation compaction."""
-
-    __tablename__ = "conversation_context_snapshots"
-    __table_args__ = (
-        UniqueConstraint("conversation_id", "revision", name="uq_context_snapshot_revision"),
-        UniqueConstraint(
-            "conversation_id",
-            "through_message_id",
-            name="uq_context_snapshot_boundary",
-        ),
-    )
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
-    conversation_id: Mapped[int] = mapped_column(
-        Integer, ForeignKey("conversations.id"), nullable=False, index=True
-    )
-    revision: Mapped[int] = mapped_column(Integer, nullable=False)
-    through_message_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
-    summary: Mapped[str] = mapped_column(Text, nullable=False)
-    source_message_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    source_token_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    summary_token_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    model_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    prompt_version: Mapped[str] = mapped_column(String(50), nullable=False, default="v1")
-    details: Mapped[dict | None] = mapped_column(JSON, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
-
-    conversation: Mapped["Conversation"] = relationship(back_populates="context_snapshots")
-
-
-class ChatEvent(Base):
-    __tablename__ = "chat_events"
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
-    conversation_id: Mapped[int] = mapped_column(
-        Integer, ForeignKey("conversations.id"), nullable=False
-    )
-    event_type: Mapped[str] = mapped_column(String(50), nullable=False)
-    phase: Mapped[str | None] = mapped_column(String(50), nullable=True)
-    turn_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
-    turn_seq: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
-    part_seq: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    role: Mapped[str | None] = mapped_column(String(20), nullable=True)
-    agent_name: Mapped[str | None] = mapped_column(String(100), nullable=True)
-    payload: Mapped[dict | None] = mapped_column(JSON, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
-
-    conversation: Mapped["Conversation"] = relationship(back_populates="chat_events")
-
-
-class PendingAction(Base):
-    __tablename__ = "pending_actions"
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
-    conversation_id: Mapped[int] = mapped_column(
-        Integer, ForeignKey("conversations.id"), nullable=False
-    )
-    token: Mapped[str] = mapped_column(String(64), nullable=False, unique=True, index=True)
-    action_type: Mapped[str] = mapped_column(String(50), nullable=False, default="execute_sql")
-    status: Mapped[str] = mapped_column(String(20), nullable=False, default="pending")
-    payload: Mapped[dict | None] = mapped_column(JSON, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
-    updated_at: Mapped[datetime] = mapped_column(
-        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
-    )
-    confirmed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
-    executed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
-    cancelled_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
-
-    conversation: Mapped["Conversation"] = relationship(back_populates="pending_actions")
-
-
 class Agent(Base):
     __tablename__ = "agents"
 
@@ -227,15 +97,13 @@ class Agent(Base):
         DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
     )
 
-    conversations: Mapped[list["Conversation"]] = relationship(
-        back_populates="agent", cascade="all, delete-orphan"
-    )
     datasources: Mapped[list["DataSource"]] = relationship(
         secondary="agent_datasources", back_populates="agents"
     )
-    tool_executions: Mapped[list["ToolExecution"]] = relationship(
-        back_populates="agent", cascade="all, delete-orphan"
-    )
+
+    @property
+    def datasource_ids(self) -> list[int]:
+        return [item.id for item in self.datasources]
 
 
 class AgentDataSource(Base):
@@ -245,23 +113,6 @@ class AgentDataSource(Base):
     datasource_id: Mapped[int] = mapped_column(
         Integer, ForeignKey("datasources.id"), primary_key=True
     )
-
-
-class ToolExecution(Base):
-    __tablename__ = "tool_executions"
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
-    agent_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("agents.id"), nullable=True)
-    conversation_id: Mapped[int | None] = mapped_column(
-        Integer, ForeignKey("conversations.id"), nullable=True
-    )
-    tool_name: Mapped[str] = mapped_column(String(255), nullable=False)
-    parameters: Mapped[str | None] = mapped_column(JSON, nullable=True)
-    result: Mapped[str | None] = mapped_column(Text, nullable=True)
-    error: Mapped[str | None] = mapped_column(Text, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
-
-    agent: Mapped[Optional["Agent"]] = relationship(back_populates="tool_executions")
 
 
 class Page(Base):
@@ -276,7 +127,14 @@ class Page(Base):
     current_commit_sha: Mapped[str | None] = mapped_column(String(64), nullable=True)
     release_commit_sha: Mapped[str | None] = mapped_column(String(64), nullable=True)
     current_release_id: Mapped[int | None] = mapped_column(
-        Integer, ForeignKey("page_releases.id", ondelete="SET NULL"), nullable=True
+        Integer,
+        ForeignKey(
+            "page_releases.id",
+            name="fk_pages_current_release_id",
+            ondelete="SET NULL",
+            use_alter=True,
+        ),
+        nullable=True,
     )
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(
@@ -441,7 +299,14 @@ class Function(Base):
     current_commit_sha: Mapped[str | None] = mapped_column(String(64), nullable=True)
     release_commit_sha: Mapped[str | None] = mapped_column(String(64), nullable=True)
     current_release_id: Mapped[int | None] = mapped_column(
-        Integer, ForeignKey("function_releases.id", ondelete="SET NULL"), nullable=True
+        Integer,
+        ForeignKey(
+            "function_releases.id",
+            name="fk_functions_current_release_id",
+            ondelete="SET NULL",
+            use_alter=True,
+        ),
+        nullable=True,
     )
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(
@@ -463,11 +328,6 @@ class Function(Base):
         back_populates="function",
         cascade="all, delete-orphan",
         foreign_keys="FunctionRun.function_id",
-    )
-    build_runs: Mapped[list["FunctionBuildRun"]] = relationship(
-        back_populates="function",
-        cascade="all, delete-orphan",
-        foreign_keys="FunctionBuildRun.function_id",
     )
 
 
@@ -512,7 +372,11 @@ class FunctionRun(Base):
     duration_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
     input_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
     output_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    output_payload: Mapped[dict | list | str | int | float | bool | None] = mapped_column(
+        JSON, nullable=True
+    )
     error_class: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    error_code: Mapped[str | None] = mapped_column(String(80), nullable=True)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     runtime_context: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     started_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
@@ -522,58 +386,6 @@ class FunctionRun(Base):
     function: Mapped["Function"] = relationship(back_populates="runs", foreign_keys=[function_id])
     function_release: Mapped[Optional["FunctionRelease"]] = relationship(
         back_populates="runs", foreign_keys=[function_release_id]
-    )
-
-
-class FunctionBuildRun(Base):
-    __tablename__ = "function_build_runs"
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
-    run_id: Mapped[str] = mapped_column(String(64), nullable=False, unique=True, index=True)
-    function_id: Mapped[int] = mapped_column(
-        Integer, ForeignKey("functions.id", ondelete="CASCADE"), nullable=False, index=True
-    )
-    action: Mapped[str] = mapped_column(String(50), nullable=False, default="build")
-    status: Mapped[str] = mapped_column(String(50), nullable=False, default="running")
-    phase: Mapped[str | None] = mapped_column(String(50), nullable=True)
-    prompt: Mapped[str] = mapped_column(Text, nullable=False, default="")
-    result_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
-    error_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
-    started_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
-    finished_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
-    updated_at: Mapped[datetime] = mapped_column(
-        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
-    )
-
-    function: Mapped["Function"] = relationship(
-        back_populates="build_runs", foreign_keys=[function_id]
-    )
-    events: Mapped[list["FunctionBuildEvent"]] = relationship(
-        back_populates="build_run",
-        cascade="all, delete-orphan",
-        foreign_keys="FunctionBuildEvent.build_run_id",
-    )
-
-
-class FunctionBuildEvent(Base):
-    __tablename__ = "function_build_events"
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
-    build_run_id: Mapped[int] = mapped_column(
-        Integer,
-        ForeignKey("function_build_runs.id", ondelete="CASCADE"),
-        nullable=False,
-        index=True,
-    )
-    phase: Mapped[str] = mapped_column(String(50), nullable=False)
-    status: Mapped[str] = mapped_column(String(50), nullable=False, default="running")
-    summary: Mapped[str | None] = mapped_column(Text, nullable=True)
-    payload: Mapped[dict | None] = mapped_column(JSON, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
-
-    build_run: Mapped["FunctionBuildRun"] = relationship(
-        back_populates="events", foreign_keys=[build_run_id]
     )
 
 
@@ -630,7 +442,7 @@ class ScheduleRun(Base):
     schedule_id: Mapped[int] = mapped_column(
         Integer, ForeignKey("schedules.id", ondelete="CASCADE"), nullable=False
     )
-    run_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    run_id: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
     status: Mapped[str] = mapped_column(String(50), nullable=False, default="queued")
     trigger_type: Mapped[str] = mapped_column(String(20), nullable=False, default="scheduled")
     attempt: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
@@ -640,8 +452,8 @@ class ScheduleRun(Base):
     target_type: Mapped[str | None] = mapped_column(String(20), nullable=True)
     runtime_run_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     runtime_status: Mapped[str | None] = mapped_column(String(50), nullable=True)
-    conversation_id: Mapped[int | None] = mapped_column(
-        Integer, ForeignKey("conversations.id"), nullable=True
+    conversation_id: Mapped[str | None] = mapped_column(
+        String(128), ForeignKey("agent_conversations.id"), nullable=True
     )
     error_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
     output_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -651,28 +463,6 @@ class ScheduleRun(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
     schedule: Mapped["Schedule"] = relationship(back_populates="runs")
-
-
-class BuildSession(Base):
-    __tablename__ = "build_sessions"
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
-    conversation_id: Mapped[int | None] = mapped_column(
-        Integer, ForeignKey("conversations.id", ondelete="CASCADE"), nullable=True
-    )
-    scope_type: Mapped[str] = mapped_column(String(50), nullable=False, default="builder")
-    scope_object_type: Mapped[str] = mapped_column(String(50), nullable=False)
-    scope_object_id: Mapped[str] = mapped_column(String(64), nullable=False)
-    ttl_seconds: Mapped[int] = mapped_column(Integer, nullable=False, default=1800)
-    heartbeat_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
-    expires_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
-    status: Mapped[str] = mapped_column(String(50), nullable=False, default="active")
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
-    updated_at: Mapped[datetime] = mapped_column(
-        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
-    )
-
-    conversation: Mapped[Optional["Conversation"]] = relationship(back_populates="build_sessions")
 
 
 class ObjectAuditLog(Base):

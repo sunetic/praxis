@@ -7,8 +7,8 @@ from sqlalchemy.orm import sessionmaker
 
 from app.db.database import Base
 from app.models import models
-from app.services.platform.object_tools import ObjectToolService
-from app.tools.registry import ObjectCrudTool, ObjectOperateTool
+from app.services.function.native_authoring import FunctionAuthoringStore, static_checks
+from app.services.platform.object_tools import ObjectToolError, ObjectToolService
 
 
 @pytest.fixture
@@ -28,14 +28,34 @@ def session_factory(tmp_path: Path):
         engine.dispose()
 
 
-def _tool_pair(session_factory):
-    service = ObjectToolService(session_factory=session_factory)
-    return ObjectCrudTool(service=service), ObjectOperateTool(service=service)
-
-
-def _tool_pair_with_delivery(session_factory, channel_delivery):
-    service = ObjectToolService(session_factory=session_factory, channel_delivery=channel_delivery)
-    return ObjectCrudTool(service=service), ObjectOperateTool(service=service)
+def _publication_fixture(session_factory, function_id, *, code=None):
+    """Seed validator output to test publication policy, not runtime correctness."""
+    store = FunctionAuthoringStore(session_factory)
+    current = store.read(function_id)
+    code = code if code is not None else "def main(payload, context):\n    return payload\n"
+    revision = store.write(
+        function_id,
+        expected_revision=current["revision_hash"],
+        code=code,
+        dependencies={},
+        run_id=None,
+    )
+    check = store.record_validation(
+        function_id,
+        revision_id=revision["revision_id"],
+        revision_hash=revision["revision_hash"],
+        run_id=None,
+        checks=[
+            *static_checks(code),
+            {
+                "name": "controlled_runtime",
+                "status": "passed",
+                "executed": True,
+                "diagnostic": "Synthetic validator fixture; no runtime executed by this test",
+            },
+        ],
+    )
+    return {"expected_revision": revision["revision_hash"], "validation_id": check["id"]}
 
 
 def _create_schedule_with_runs(session_factory):
@@ -82,17 +102,16 @@ def _create_schedule_with_runs(session_factory):
 
 @pytest.mark.anyio
 async def test_object_crud_page_create_and_audit(session_factory):
-    crud_tool, _ = _tool_pair(session_factory)
-    result = await crud_tool.execute(
+    service = ObjectToolService(session_factory=session_factory)
+    result = await service.crud(
         object_type="page",
         action="create",
         payload={"name": "slow-sql-dashboard", "description": "d1"},
         actor="test-user",
     )
-    assert result.success is True
-    page_id = result.data["id"]
+    page_id = result["id"]
     assert page_id > 0
-    assert result.data["status"] == "draft"
+    assert result["status"] == "draft"
 
     db = session_factory()
     logs = db.query(models.ObjectAuditLog).order_by(models.ObjectAuditLog.id.asc()).all()
@@ -106,30 +125,30 @@ async def test_object_crud_page_create_and_audit(session_factory):
 
 @pytest.mark.anyio
 async def test_object_operate_page_lifecycle_rejection_and_failure_audit(session_factory):
-    crud_tool, operate_tool = _tool_pair(session_factory)
-    created = await crud_tool.execute(
+    service = ObjectToolService(session_factory=session_factory)
+    created = await service.crud(
         object_type="page",
         action="create",
         payload={"name": "ops-page"},
     )
-    page_id = created.data["id"]
+    page_id = created["id"]
 
-    archived = await operate_tool.execute(
+    archived = await service.operate(
         object_type="page",
         action="archive",
         object_id=page_id,
     )
-    assert archived.success is True
-    assert archived.data["status"] == "archived"
+    assert archived["status"] == "archived"
 
-    publish = await operate_tool.execute(
-        object_type="page",
-        action="publish",
-        object_id=page_id,
-        payload={"artifact_payload": {"v": 1}},
-    )
-    assert publish.success is False
-    assert publish.error["code"] == "lifecycle_constraint"
+    with pytest.raises(ObjectToolError) as publish:
+        await service.operate(
+            object_type="page",
+            action="publish",
+            object_id=page_id,
+            payload={"expected_revision": "revision", "validation_id": "validation"},
+        )
+    assert publish.value.code == "invalid_payload"
+    assert "Archived Pages" in publish.value.message
 
     db = session_factory()
     failure_logs = (
@@ -145,9 +164,9 @@ async def test_object_operate_page_lifecycle_rejection_and_failure_audit(session
 
 @pytest.mark.anyio
 async def test_object_crud_datasource_persists_attributes(session_factory):
-    crud_tool, _ = _tool_pair(session_factory)
+    service = ObjectToolService(session_factory=session_factory)
 
-    created = await crud_tool.execute(
+    created = await service.crud(
         object_type="datasource",
         action="create",
         payload={
@@ -164,10 +183,9 @@ async def test_object_crud_datasource_persists_attributes(session_factory):
         },
         actor="test-user",
     )
-    assert created.success is True
-    datasource_id = created.data["id"]
+    datasource_id = created["id"]
 
-    updated = await crud_tool.execute(
+    await service.crud(
         object_type="datasource",
         action="update",
         object_id=datasource_id,
@@ -180,7 +198,6 @@ async def test_object_crud_datasource_persists_attributes(session_factory):
         },
         actor="test-user",
     )
-    assert updated.success is True
 
     db = session_factory()
     row = db.query(models.DataSource).filter(models.DataSource.id == datasource_id).one()
@@ -194,31 +211,32 @@ async def test_object_crud_datasource_persists_attributes(session_factory):
 
 @pytest.mark.anyio
 async def test_object_tools_function_and_scheduler_operations(session_factory):
-    crud_tool, operate_tool = _tool_pair(session_factory)
+    service = ObjectToolService(session_factory=session_factory)
 
-    fn_created = await crud_tool.execute(
+    fn_created = await service.crud(
         object_type="function",
         action="create",
         payload={"name": "日报函数", "draft_code": "result = {'ok': True}"},
     )
-    assert fn_created.success is True
-    function_id = fn_created.data["id"]
-    assert fn_created.data["name"] == "日报函数"
-    assert str(fn_created.data["slug"]).startswith("fn-")
+    function_id = fn_created["id"]
+    assert fn_created["name"] == "日报函数"
+    assert str(fn_created["slug"]).startswith("fn-")
 
-    released = await operate_tool.execute(
+    released = await service.operate(
         object_type="function",
         action="release",
         object_id=function_id,
-        payload={"code_snapshot": "result = {'ok': True, 'payload': payload}"},
+        payload=_publication_fixture(session_factory, function_id),
     )
-    assert released.success is True
-    assert released.data["status"] == "released"
-    assert released.data["verification_passed"] is True
-    assert released.data["strategy"] in {"reuse", "extend", "create"}
-    assert released.data["release"]["release_metadata"]["verification"]["passed"] is True
+    with session_factory() as db:
+        function = db.get(models.Function, function_id)
+        assert function.status == "released"
+        release = db.get(models.FunctionRelease, released["release_id"])
+        assert function.current_release_id == release.id
+        assert release.release_metadata["revision_hash"] == released["revision_hash"]
+        assert release.code_snapshot == "def main(payload, context):\n    return payload\n"
 
-    scheduler_created = await crud_tool.execute(
+    scheduler_created = await service.crud(
         object_type="scheduler",
         action="create",
         payload={
@@ -230,25 +248,22 @@ async def test_object_tools_function_and_scheduler_operations(session_factory):
             "retry_backoff_seconds": 0,
         },
     )
-    assert scheduler_created.success is True
-    scheduler_id = scheduler_created.data["id"]
+    scheduler_id = scheduler_created["id"]
 
-    run_now = await operate_tool.execute(
+    run_now = await service.operate(
         object_type="scheduler",
         action="run-now",
         object_id=scheduler_id,
     )
-    assert run_now.success is True
-    assert isinstance(run_now.data["run_id"], str)
+    assert isinstance(run_now["run_id"], str)
 
-    runs = await operate_tool.execute(
+    runs = await service.operate(
         object_type="scheduler",
         action="list-runs",
         object_id=scheduler_id,
         payload={"limit": 5},
     )
-    assert runs.success is True
-    assert runs.data["count"] >= 1
+    assert runs["count"] >= 1
 
     db = session_factory()
     audit_actions = {
@@ -263,116 +278,114 @@ async def test_object_tools_function_and_scheduler_operations(session_factory):
 
 @pytest.mark.anyio
 async def test_function_release_is_blocked_when_verification_fails(session_factory):
-    crud_tool, operate_tool = _tool_pair(session_factory)
-    fn_created = await crud_tool.execute(
+    service = ObjectToolService(session_factory=session_factory)
+    fn_created = await service.crud(
         object_type="function",
         action="create",
         payload={"name": "broken-fn", "draft_code": "def broken("},
     )
-    assert fn_created.success is True
-    function_id = fn_created.data["id"]
+    function_id = fn_created["id"]
 
-    released = await operate_tool.execute(
-        object_type="function",
-        action="release",
-        object_id=function_id,
-    )
-    assert released.success is False
-    assert released.error["code"] == "verification_failed"
-    assert released.error["details"]["diagnostics"]
+    with pytest.raises(ObjectToolError) as released:
+        await service.operate(
+            object_type="function",
+            action="release",
+            object_id=function_id,
+            payload=_publication_fixture(session_factory, function_id, code="def broken("),
+        )
+    assert released.value.code == "verification_failed"
+    assert "Required checks have not passed" in released.value.message
+    with session_factory() as db:
+        assert db.get(models.Function, function_id).current_release_id is None
+        assert db.query(models.FunctionRelease).count() == 0
 
 
 @pytest.mark.anyio
 async def test_function_strategy_action_returns_candidate_decision(session_factory):
-    crud_tool, operate_tool = _tool_pair(session_factory)
+    service = ObjectToolService(session_factory=session_factory)
 
-    baseline = await crud_tool.execute(
+    baseline = await service.crud(
         object_type="function",
         action="create",
         payload={"name": "slow-query-report", "draft_code": "result = {'ok': True}"},
     )
-    assert baseline.success is True
-    baseline_id = baseline.data["id"]
-    baseline_released = await operate_tool.execute(
+    baseline_id = baseline["id"]
+    await service.operate(
         object_type="function",
         action="release",
         object_id=baseline_id,
+        payload=_publication_fixture(session_factory, baseline_id),
     )
-    assert baseline_released.success is True
 
-    target = await crud_tool.execute(
+    target = await service.crud(
         object_type="function",
         action="create",
         payload={"name": "new-fn", "description": "Need slow sql analysis"},
     )
-    assert target.success is True
 
-    strategy = await operate_tool.execute(
+    strategy = await service.operate(
         object_type="function",
         action="strategy",
-        object_id=target.data["id"],
+        object_id=target["id"],
         payload={
             "requirement": "slow sql analysis",
             "reuse_threshold": 0.1,
             "extend_threshold": 0.05,
         },
     )
-    assert strategy.success is True
-    assert strategy.data["strategy"] == "reuse"
-    assert strategy.data["top_candidate"]["function_id"] == baseline_id
-    assert strategy.data["top_candidate"]["slug"]
+    assert strategy["strategy"] == "reuse"
+    assert strategy["top_candidate"]["function_id"] == baseline_id
+    assert strategy["top_candidate"]["slug"]
 
 
 @pytest.mark.anyio
 async def test_function_object_tool_rejects_client_managed_slug(session_factory):
-    crud_tool, _ = _tool_pair(session_factory)
+    service = ObjectToolService(session_factory=session_factory)
 
-    created = await crud_tool.execute(
-        object_type="function",
-        action="create",
-        payload={"name": "任意名称", "slug": "manual-slug"},
-    )
-    assert created.success is False
-    assert created.error["code"] == "invalid_payload"
-    assert "slug" in created.error["message"]
+    with pytest.raises(ObjectToolError) as created:
+        await service.crud(
+            object_type="function",
+            action="create",
+            payload={"name": "任意名称", "slug": "manual-slug"},
+        )
+    assert created.value.code == "invalid_payload"
+    assert "slug" in created.value.message
 
 
 @pytest.mark.anyio
 async def test_sensitive_action_requires_non_empty_actor(session_factory):
-    crud_tool, operate_tool = _tool_pair(session_factory)
-    fn_created = await crud_tool.execute(
+    service = ObjectToolService(session_factory=session_factory)
+    fn_created = await service.crud(
         object_type="function",
         action="create",
         payload={"name": "policy-fn", "draft_code": "result = {'ok': True}"},
     )
-    assert fn_created.success is True
-    function_id = fn_created.data["id"]
+    function_id = fn_created["id"]
 
-    release = await operate_tool.execute(
-        object_type="function",
-        action="release",
-        object_id=function_id,
-        actor="",
-    )
-    assert release.success is False
-    assert release.error["code"] == "policy_violation"
+    with pytest.raises(ObjectToolError) as release:
+        await service.operate(
+            object_type="function",
+            action="release",
+            object_id=function_id,
+            actor="",
+        )
+    assert release.value.code == "policy_violation"
 
 
 @pytest.mark.anyio
 async def test_scheduler_history_crud_supports_list_and_filtered_delete(session_factory):
-    crud_tool, _ = _tool_pair(session_factory)
+    service = ObjectToolService(session_factory=session_factory)
     schedule, old_run, fresh_run = _create_schedule_with_runs(session_factory)
 
-    listed = await crud_tool.execute(
+    listed = await service.crud(
         object_type="scheduler_history",
         action="list",
         payload={"schedule_id": schedule.id, "limit": 10},
         actor="test-user",
     )
-    assert listed.success is True
-    assert listed.data["count"] == 2
+    assert listed["count"] == 2
 
-    dry_run = await crud_tool.execute(
+    dry_run = await service.crud(
         object_type="scheduler_history",
         action="delete",
         payload={
@@ -382,12 +395,11 @@ async def test_scheduler_history_crud_supports_list_and_filtered_delete(session_
         },
         actor="test-user",
     )
-    assert dry_run.success is True
-    assert dry_run.data["dry_run"] is True
-    assert dry_run.data["candidate_count"] == 1
-    assert dry_run.data["sample_runs"][0]["id"] == old_run.id
+    assert dry_run["dry_run"] is True
+    assert dry_run["candidate_count"] == 1
+    assert dry_run["sample_runs"][0]["id"] == old_run.id
 
-    deleted = await crud_tool.execute(
+    deleted = await service.crud(
         object_type="scheduler_history",
         action="delete",
         payload={
@@ -397,8 +409,7 @@ async def test_scheduler_history_crud_supports_list_and_filtered_delete(session_
         },
         actor="test-user",
     )
-    assert deleted.success is True
-    assert deleted.data["deleted_count"] == 1
+    assert deleted["deleted_count"] == 1
 
     db = session_factory()
     remaining_ids = {
@@ -425,16 +436,16 @@ async def test_scheduler_history_crud_supports_list_and_filtered_delete(session_
 
 @pytest.mark.anyio
 async def test_scheduler_history_delete_requires_scope_filter(session_factory):
-    crud_tool, _ = _tool_pair(session_factory)
+    service = ObjectToolService(session_factory=session_factory)
 
-    deleted = await crud_tool.execute(
-        object_type="scheduler_history",
-        action="delete",
-        payload={"dry_run": True},
-        actor="test-user",
-    )
-    assert deleted.success is False
-    assert deleted.error["code"] == "missing_delete_scope"
+    with pytest.raises(ObjectToolError) as deleted:
+        await service.crud(
+            object_type="scheduler_history",
+            action="delete",
+            payload={"dry_run": True},
+            actor="test-user",
+        )
+    assert deleted.value.code == "missing_delete_scope"
 
 
 class _FakeChannelDelivery:
@@ -455,9 +466,9 @@ class _FakeChannelDelivery:
 @pytest.mark.anyio
 async def test_object_tools_channel_crud_and_send_operation(session_factory):
     fake_delivery = _FakeChannelDelivery()
-    crud_tool, operate_tool = _tool_pair_with_delivery(session_factory, fake_delivery)
+    service = ObjectToolService(session_factory=session_factory, channel_delivery=fake_delivery)
 
-    created = await crud_tool.execute(
+    created = await service.crud(
         object_type="channel",
         action="create",
         payload={
@@ -475,19 +486,17 @@ async def test_object_tools_channel_crud_and_send_operation(session_factory):
         },
         actor="test-user",
     )
-    assert created.success is True
-    channel_id = created.data["id"]
+    channel_id = created["id"]
 
-    sent = await operate_tool.execute(
+    sent = await service.operate(
         object_type="channel",
         action="send",
         object_id=channel_id,
         payload={"content": "报警: cpu > 90%"},
         actor="test-user",
     )
-    assert sent.success is True
-    assert sent.data["object_type"] == "channel"
-    assert sent.data["provider"] == "dingtalk"
+    assert sent["object_type"] == "channel"
+    assert sent["provider"] == "dingtalk"
     assert fake_delivery.calls and fake_delivery.calls[0]["channel_id"] == channel_id
 
     db = session_factory()

@@ -4,7 +4,6 @@ from sqlalchemy.orm import sessionmaker
 
 from app.db.database import Base
 from app.models import models
-from app.services.chat.turn_context import build_agent_turn_context
 from app.services.datasource.router import (
     DataSourceRoutingError,
     list_available_access_levels,
@@ -182,39 +181,3 @@ def test_unsupported_engine_does_not_advertise_cross_credential_routing(db_sessi
         resolve_datasource_by_access_level(db_session, user.id, "admin")
 
     assert exc_info.value.code == "admin_routing_not_supported"
-
-
-def test_chat_context_exposes_available_access_levels_to_the_llm(db_session):
-    user = _datasource(
-        name="app-user",
-        db_type="mysql",
-        cluster_key="prompt-cluster",
-        access_level="user",
-    )
-    admin = _datasource(
-        name="database-admin",
-        db_type="mysql",
-        cluster_key="prompt-cluster",
-        access_level="admin",
-    )
-    db_session.add_all([user, admin])
-    db_session.commit()
-    conversation = models.Conversation(title="Routing prompt", datasource_id=user.id)
-    db_session.add(conversation)
-    db_session.commit()
-
-    system_prompt, tools, _ = build_agent_turn_context(
-        conversation,
-        db_session,
-        declared_tool_names=[],
-        selected_skills=[],
-    )
-
-    assert "selected_access_level: user" in system_prompt
-    assert "available_access_levels: user, admin" in system_prompt
-    assert "retry through the same tool with `access_level='admin'`" in system_prompt
-    assert "do not emit the legacy `role` argument" in system_prompt
-    assert "Do not substitute an adjacent successful check" in system_prompt
-    execute_sql = next(tool for tool in tools if tool["function"]["name"] == "execute_sql")
-    access_schema = execute_sql["function"]["parameters"]["properties"]["access_level"]
-    assert access_schema["enum"] == ["user", "admin"]

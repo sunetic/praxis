@@ -3,9 +3,13 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import os
 import re
+import selectors
+import signal
 import subprocess
 import threading
+import time
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -13,16 +17,13 @@ from pathlib import Path, PurePosixPath
 from typing import Any
 
 from app.core.config import get_settings
-from app.core.logging import fmt_kv, get_logger
-from app.services.knowledge.query_expansion import QueryPlan
-
-logger = get_logger("knowledge.search_tools")
 
 _DATA_ROOT = Path(get_settings().data_dir) / "knowledge"
 _SEARCH_TIMEOUT = 15
 _FETCH_TIMEOUT = 300
 _MAX_OUTPUT_BYTES = 300_000
 _MAX_READ_LINES = 200
+_MAX_DOCUMENT_BYTES = 2_000_000
 _KB_META_FILE = ".kb_meta.json"
 _REPO_LOCKS_GUARD = threading.Lock()
 _REPO_LOCKS: dict[Path, threading.Lock] = {}
@@ -149,19 +150,63 @@ def _run_git(
     timeout: int = _SEARCH_TIMEOUT,
     allowed_codes: tuple[int, ...] = (0,),
 ) -> subprocess.CompletedProcess[bytes]:
+    return _run_command(
+        ["git", "-C", str(repo), *args], timeout=timeout, allowed_codes=allowed_codes
+    )
+
+
+def _run_command(args, *, timeout=_SEARCH_TIMEOUT, allowed_codes=(0,), max_bytes=4_000_000):
+    # Bound output as it arrives; neither memory nor a temporary file may grow
+    # without limit. Kill/reap the process group on a deadline or output breach.
+    process = subprocess.Popen(
+        args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True
+    )
+    output, error = bytearray(), bytearray()
+    deadline = time.monotonic() + timeout
+    selector = selectors.DefaultSelector()
+    selector.register(process.stdout, selectors.EVENT_READ, "stdout")
+    selector.register(process.stderr, selectors.EVENT_READ, "stderr")
+    completed = False
     try:
-        proc = subprocess.run(
-            ["git", "-C", str(repo), *args],
-            capture_output=True,
-            timeout=timeout,
-            check=False,
+        while selector.get_map():
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise RuntimeError("Knowledge operation timed out; no complete result is available")
+            for key, _ in selector.select(min(remaining, 0.2)):
+                chunk = os.read(key.fd, 65536)
+                if not chunk:
+                    selector.unregister(key.fileobj)
+                elif key.data == "stdout":
+                    output.extend(chunk)
+                    if len(output) > max_bytes:
+                        raise RuntimeError(
+                            "Knowledge output limit exceeded; narrow the paths or search pattern"
+                        )
+                else:
+                    error.extend(chunk[: max(0, 2000 - len(error))])
+        try:
+            process.wait(timeout=max(0, deadline - time.monotonic()))
+            completed = True
+        except subprocess.TimeoutExpired as exc:
+            raise RuntimeError(
+                "Knowledge operation timed out; no complete result is available"
+            ) from exc
+    finally:
+        selector.close()
+        if not completed:
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+        process.wait()
+        process.stdout.close()
+        process.stderr.close()
+    if process.returncode not in allowed_codes:
+        message = error.decode("utf-8", errors="replace").strip()
+        raise RuntimeError(
+            message or f"Knowledge operation failed with exit code {process.returncode}"
         )
-    except subprocess.TimeoutExpired as exc:
-        raise RuntimeError(f"git {' '.join(args[:2])} timed out") from exc
-    if proc.returncode not in allowed_codes:
-        message = proc.stderr.decode("utf-8", errors="replace").strip()
-        raise RuntimeError(message or f"git command failed with exit code {proc.returncode}")
-    return proc
+    return subprocess.CompletedProcess(args, process.returncode, bytes(output), bytes(error))
 
 
 @contextmanager
@@ -448,6 +493,8 @@ def _git_read_text(target: SearchTarget, path: str) -> str:
         raise ValueError("Git search target is incomplete")
     repo_path = _repo_path(target, path)
     proc = _run_git(target.repo, ["show", f"{target.commit_sha}:{repo_path}"])
+    if len(proc.stdout) > _MAX_DOCUMENT_BYTES:
+        raise ValueError("Knowledge document exceeds the supported size limit")
     return proc.stdout.decode("utf-8", errors="replace")
 
 
@@ -505,7 +552,7 @@ def _git_grep(
     proc = _run_git(target.repo, args, allowed_codes=(0, 1))
     if proc.returncode == 1:
         return []
-    records = _parse_git_grep_records(proc.stdout[:_MAX_OUTPUT_BYTES], target.commit_sha)
+    records = _parse_git_grep_records(proc.stdout, target.commit_sha)
     prefix = f"{target.subdirectory}/" if target.subdirectory else ""
     return [
         (path.removeprefix(prefix), line, content)
@@ -514,21 +561,34 @@ def _git_grep(
     ]
 
 
-def _extract_frontmatter_title(path: Path) -> str:
-    try:
-        with path.open(encoding="utf-8", errors="replace") as handle:
-            in_frontmatter = False
-            for line in handle:
-                stripped = line.strip()
-                if stripped == "---" and not in_frontmatter:
-                    in_frontmatter = True
-                    continue
-                if stripped == "---" and in_frontmatter:
-                    break
-                if in_frontmatter and stripped.casefold().startswith("title:"):
-                    return stripped.split(":", 1)[1].strip().strip("'\"")
-    except OSError:
-        pass
+def _extract_document_title(path: Path) -> str:
+    with path.open("rb") as handle:
+        content = handle.read(_MAX_DOCUMENT_BYTES + 1)
+    if len(content) > _MAX_DOCUMENT_BYTES:
+        raise ValueError("Knowledge document exceeds the supported size limit")
+    lines = content.decode("utf-8-sig", errors="replace").splitlines()
+    in_frontmatter = bool(lines and lines[0].strip() == "---")
+    fence = None
+    for line in lines[1:] if in_frontmatter else lines:
+        stripped = line.strip()
+        if in_frontmatter:
+            if stripped in {"---", "..."}:
+                in_frontmatter = False
+            elif stripped.casefold().startswith("title:"):
+                title = stripped.split(":", 1)[1].strip().strip("'\"")
+                if title:
+                    return title
+            continue
+        marker = re.match(r"^ {0,3}(`{3,}|~{3,})", line)
+        if marker:
+            delimiter = marker.group(1)
+            if fence is None:
+                fence = delimiter
+            elif delimiter[0] == fence[0] and len(delimiter) >= len(fence):
+                fence = None
+            continue
+        if fence is None and (heading := re.match(r"^ {0,3}#[ \t]+(.+?)\s*$", line)):
+            return re.sub(r"[ \t]+#+$", "", heading.group(1)).strip()
     return ""
 
 
@@ -588,10 +648,12 @@ def discover(
                 )
     else:
         for md_path in sorted(target.root.rglob("*.md")):
+            if not md_path.resolve().is_relative_to(target.root.resolve()):
+                continue
             if md_path.name.casefold() == "readme.md":
                 continue
             relative = str(md_path.relative_to(target.root))
-            title = _extract_frontmatter_title(md_path)
+            title = _extract_document_title(md_path)
             searchable = f"{relative} {title}".casefold()
             score = sum(1 for term in terms if term in searchable)
             if score:
@@ -670,53 +732,25 @@ def search(
                     "file": path,
                     "line": line_number,
                     "match": match_text,
-                    "context": "\n".join(lines[start:end]),
+                    "context": "\n".join(
+                        f"{index + 1}: {lines[index]}" for index in range(start, end)
+                    ),
                     "patterns": normalized_patterns,
                     **_target_metadata(target),
                 }
             )
         return results
 
-    args = ["rg", "--json", f"-C{context_lines}"]
+    args = ["rg", "--json", "--glob", "*.md", f"-C{context_lines}"]
     if not case_sensitive:
         args.append("-i")
     for pattern in normalized_patterns:
         args.extend(["-e", pattern])
     args.extend(str(path) for path in _filesystem_search_paths(target.root, paths))
-    try:
-        proc = subprocess.run(
-            args,
-            capture_output=True,
-            text=True,
-            timeout=_SEARCH_TIMEOUT,
-            check=False,
-        )
-        if proc.returncode not in (0, 1):
-            raise ValueError(proc.stderr.strip() or "Invalid knowledge search pattern")
-        results = _parse_rg_json_output(proc.stdout[:_MAX_OUTPUT_BYTES], target.root, max_results)
-    except FileNotFoundError:
-        grep_args = ["grep", "-rHn"]
-        if not case_sensitive:
-            grep_args.append("-i")
-        for pattern in normalized_patterns:
-            grep_args.extend(["-e", pattern])
-        grep_args.extend(str(path) for path in _filesystem_search_paths(target.root, paths))
-        try:
-            proc = subprocess.run(
-                grep_args,
-                capture_output=True,
-                text=True,
-                timeout=_SEARCH_TIMEOUT,
-                check=False,
-            )
-            if proc.returncode not in (0, 1):
-                raise ValueError(proc.stderr.strip() or "Invalid knowledge search pattern")
-        except (subprocess.TimeoutExpired, FileNotFoundError):
-            return []
-        results = _parse_grep_output(proc.stdout[:_MAX_OUTPUT_BYTES], target.root, max_results)
-    except subprocess.TimeoutExpired:
-        logger.warning("kb_search timeout patterns=%s", normalized_patterns[:5])
-        return []
+    proc = _run_command(args, allowed_codes=(0, 1), max_bytes=_MAX_OUTPUT_BYTES)
+    results = _parse_rg_json_output(
+        proc.stdout.decode("utf-8", errors="replace"), target.root, max_results, context_lines
+    )
 
     for item in results:
         item.update(_target_metadata(target))
@@ -724,17 +758,20 @@ def search(
     return results
 
 
-def _parse_rg_json_output(stdout: str, root: Path, max_results: int) -> list[dict[str, Any]]:
+def _parse_rg_json_output(
+    stdout: str, root: Path, max_results: int, context_lines=3
+) -> list[dict[str, Any]]:
     results: list[dict[str, Any]] = []
-    contexts: dict[tuple[str, int], list[str]] = {}
+    contexts: dict[str, dict[int, str]] = {}
     matches: dict[tuple[str, int], dict[str, Any]] = {}
-    active_key: tuple[str, int] | None = None
-    for raw_line in stdout.splitlines()[:5000]:
+    for raw_line in stdout.splitlines():
         try:
             obj = json.loads(raw_line)
         except json.JSONDecodeError:
             continue
         message_type = obj.get("type")
+        if message_type not in {"match", "context"}:
+            continue
         data = obj.get("data", {})
         path_obj = data.get("path", {})
         absolute = path_obj.get("text", "") if isinstance(path_obj, dict) else str(path_obj)
@@ -745,44 +782,24 @@ def _parse_rg_json_output(stdout: str, root: Path, max_results: int) -> list[dic
         lines = data.get("lines", {})
         text = lines.get("text", "") if isinstance(lines, dict) else str(lines)
         text = text.rstrip("\n")
+        line_number = int(data.get("line_number") or 0)
+        contexts.setdefault(relative, {})[line_number] = text
         if message_type == "match":
-            active_key = (relative, int(data.get("line_number") or 0))
-            matches[active_key] = {
+            matches[(relative, line_number)] = {
                 "file": relative,
-                "line": active_key[1],
+                "line": line_number,
                 "match": text,
             }
-            contexts.setdefault(active_key, []).append(text)
-        elif message_type == "context" and active_key:
-            contexts.setdefault(active_key, []).append(text)
-    for key, match in matches.items():
-        match["context"] = "\n".join(contexts.get(key, []))
-        results.append(match)
-        if len(results) >= max_results:
-            break
-    return results
-
-
-def _parse_grep_output(stdout: str, root: Path, max_results: int) -> list[dict[str, Any]]:
-    results: list[dict[str, Any]] = []
-    pattern = re.compile(r"^(.*):(\d+):(.*)$")
-    for line in stdout.splitlines():
-        match = pattern.match(line)
-        if not match:
-            continue
-        path = Path(match.group(1))
-        try:
-            relative = str(path.relative_to(root))
-        except ValueError:
-            relative = str(path)
-        results.append(
-            {
-                "file": relative,
-                "line": int(match.group(2)),
-                "match": match.group(3),
-                "context": match.group(3),
-            }
+    for (path, line_number), match in matches.items():
+        lines = contexts[path]
+        match["context"] = "\n".join(
+            f"{number}: {lines[number]}"
+            for number in range(
+                max(1, line_number - context_lines), line_number + context_lines + 1
+            )
+            if number in lines
         )
+        results.append(match)
         if len(results) >= max_results:
             break
     return results
@@ -805,14 +822,25 @@ def read(
         file_path = _filesystem_path(target.root, path)
         if not file_path.is_file():
             raise FileNotFoundError(f"Document not found: {path}")
-        content = file_path.read_text(encoding="utf-8", errors="replace")
+        with file_path.open("rb") as handle:
+            raw = handle.read(_MAX_DOCUMENT_BYTES + 1)
+        if len(raw) > _MAX_DOCUMENT_BYTES:
+            raise ValueError("Knowledge document exceeds the supported size limit")
+        content = raw.decode("utf-8", errors="replace")
 
     lines = content.splitlines()
     start_line = max(1, start_line)
     end_line = min(start_line + _MAX_READ_LINES - 1, end_line, len(lines))
+    excerpt = "\n".join(f"{index + 1}: {lines[index]}" for index in range(start_line - 1, end_line))
+    if len(excerpt) > 64_000:
+        raise ValueError("Knowledge excerpt is too large; request fewer lines")
     return {
         "file": path,
-        "content": "\n".join(lines[start_line - 1 : end_line]),
+        "content": excerpt,
+        "line_format": "one-based line-number: original text",
+        "content_hash": hashlib.sha256(content.encode("utf-8")).hexdigest(),
+        "truncated": end_line < len(lines),
+        "next_line": end_line + 1 if end_line < len(lines) else None,
         "total_lines": len(lines),
         "start_line": start_line,
         "end_line": end_line,
@@ -866,238 +894,3 @@ def target_document_count(target: SearchTarget) -> int:
     if target.source_type == "git":
         return len(_git_list_markdown(target))
     return sum(1 for path in target.root.rglob("*.md") if path.name.casefold() != "readme.md")
-
-
-TOOL_SCHEMAS: list[dict[str, Any]] = [
-    {
-        "type": "function",
-        "function": {
-            "name": "kb_discover",
-            "description": (
-                "Find documents by file name, directory, and title. Start here, using all "
-                "relevant original-language, English, identifier, and domain keyword variants."
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "kb_id": {"type": "integer", "description": "Knowledge base ID"},
-                    "query": {"type": "string", "description": "Concise discovery terms"},
-                    "keywords": {
-                        "type": "array",
-                        "items": {"type": "string"},
-                        "description": "Additional filename/title keyword variants",
-                    },
-                    "max_results": {"type": "integer", "default": 20},
-                },
-                "required": ["kb_id", "query"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "kb_search",
-            "description": (
-                "Search document contents using one or more regular-expression patterns. "
-                "Always include exact errors/codes plus bilingual and domain variants."
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "kb_id": {"type": "integer", "description": "Knowledge base ID"},
-                    "query": {"type": "string", "description": "Primary search pattern"},
-                    "patterns": {
-                        "type": "array",
-                        "items": {"type": "string"},
-                        "description": "Additional regex patterns; all are searched with OR semantics",
-                    },
-                    "paths": {
-                        "type": "array",
-                        "items": {"type": "string"},
-                        "description": "Relative files/directories from kb_discover",
-                    },
-                    "context_lines": {"type": "integer", "default": 3},
-                    "case_sensitive": {"type": "boolean", "default": False},
-                    "max_results": {"type": "integer", "default": 15},
-                },
-                "required": ["kb_id", "query"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "kb_read",
-            "description": "Read a document section after a search match.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "kb_id": {"type": "integer", "description": "Knowledge base ID"},
-                    "path": {"type": "string", "description": "Relative document path"},
-                    "start_line": {"type": "integer", "default": 1},
-                    "end_line": {"type": "integer", "default": 100},
-                },
-                "required": ["kb_id", "path"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "kb_outline",
-            "description": "Get Markdown headings before reading a long document.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "kb_id": {"type": "integer", "description": "Knowledge base ID"},
-                    "path": {"type": "string", "description": "Relative document path"},
-                },
-                "required": ["kb_id", "path"],
-            },
-        },
-    },
-]
-
-_TOOL_DISPATCH: dict[str, Any] = {
-    "kb_discover": discover,
-    "kb_search": search,
-    "kb_read": read,
-    "kb_outline": outline,
-}
-
-
-class KnowledgeToolExecutor:
-    def __init__(self, targets: list[SearchTarget], query_plan: QueryPlan) -> None:
-        self._targets = {target.kb_id: target for target in targets}
-        self._query_plan = query_plan
-        self._searched_patterns: dict[int, set[str]] = {target.kb_id: set() for target in targets}
-        self._expanded_targets: set[int] = set()
-
-    async def execute(self, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
-        fn = _TOOL_DISPATCH.get(name)
-        if fn is None:
-            return {"success": False, "error": f"Unknown tool: {name}"}
-        values = dict(arguments)
-        values.pop("_runtime", None)
-        try:
-            kb_id = int(values.get("kb_id"))
-        except (TypeError, ValueError):
-            return {
-                "success": False,
-                "error": {"code": "invalid_argument", "message": "kb_id is required"},
-            }
-        target = self._targets.get(kb_id)
-        if target is None:
-            return {
-                "success": False,
-                "error": {
-                    "code": "scope_violation",
-                    "message": f"Knowledge base {kb_id} is not part of this search snapshot",
-                },
-            }
-
-        if name == "kb_discover" and kb_id not in self._expanded_targets:
-            supplied = values.get("keywords") if isinstance(values.get("keywords"), list) else []
-            values["keywords"] = list(dict.fromkeys([*supplied, *self._query_plan.discovery_terms]))
-        effective_patterns: list[str] = []
-        inject_plan = False
-        if name == "kb_search":
-            supplied = values.get("patterns") if isinstance(values.get("patterns"), list) else []
-            effective = [str(values.get("query") or ""), *map(str, supplied)]
-            inject_plan = kb_id not in self._expanded_targets
-            if inject_plan:
-                effective.extend(self._query_plan.all_patterns)
-            effective_patterns = _normalize_patterns("", effective)
-            values["patterns"] = effective_patterns
-            values["query"] = ""
-
-        try:
-            result = await asyncio.to_thread(fn, **values, target=target)
-            if name == "kb_search":
-                if inject_plan:
-                    self._expanded_targets.add(kb_id)
-                self._searched_patterns[kb_id].update(
-                    pattern.casefold() for pattern in effective_patterns
-                )
-            return {"success": True, "data": result}
-        except FileNotFoundError as exc:
-            return {"success": False, "error": {"code": "not_found", "message": str(exc)}}
-        except ValueError as exc:
-            return {
-                "success": False,
-                "error": {"code": "invalid_argument", "message": str(exc)},
-            }
-        except Exception as exc:
-            logger.exception("kb_tool_error %s", fmt_kv(tool=name, kb_id=kb_id))
-            return {
-                "success": False,
-                "error": {"code": "execution_error", "message": str(exc)},
-            }
-
-    def coverage_report(self) -> dict[str, Any]:
-        searched_groups: dict[str, list[str]] = {}
-        uncovered_groups: dict[str, list[str]] = {}
-        target_coverage: dict[str, dict[str, Any]] = {}
-        for kb_id, searched_patterns in self._searched_patterns.items():
-            target_uncovered: dict[str, list[str]] = {}
-            for name, patterns in self._query_plan.groups.items():
-                missing = [
-                    pattern for pattern in patterns if pattern.casefold() not in searched_patterns
-                ]
-                if missing:
-                    target_uncovered[name] = missing
-            target_coverage[str(kb_id)] = {
-                "coverage_complete": bool(searched_patterns) and not target_uncovered,
-                "uncovered_groups": target_uncovered,
-                "searched_patterns": sorted(searched_patterns),
-            }
-
-        for name, patterns in self._query_plan.groups.items():
-            if not patterns:
-                continue
-            searched = [
-                pattern
-                for pattern in patterns
-                if all(
-                    pattern.casefold() in target_patterns
-                    for target_patterns in self._searched_patterns.values()
-                )
-            ]
-            missing = [pattern for pattern in patterns if pattern not in searched]
-            searched_groups[name] = searched
-            if missing:
-                uncovered_groups[name] = missing
-        all_searched_patterns = {
-            pattern
-            for target_patterns in self._searched_patterns.values()
-            for pattern in target_patterns
-        }
-        return {
-            "searched_term_groups": searched_groups,
-            "uncovered_groups": uncovered_groups,
-            "coverage_complete": bool(target_coverage)
-            and all(item["coverage_complete"] for item in target_coverage.values()),
-            "searched_patterns": sorted(all_searched_patterns),
-            "target_coverage": target_coverage,
-        }
-
-
-async def execute_tool(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
-    fn = _TOOL_DISPATCH.get(name)
-    if fn is None:
-        return {"success": False, "error": f"Unknown tool: {name}"}
-    values = dict(arguments)
-    values.pop("_runtime", None)
-    try:
-        result = await asyncio.to_thread(fn, **values)
-        return {"success": True, "data": result}
-    except FileNotFoundError as exc:
-        return {"success": False, "error": {"code": "not_found", "message": str(exc)}}
-    except ValueError as exc:
-        return {"success": False, "error": {"code": "invalid_argument", "message": str(exc)}}
-    except Exception as exc:
-        logger.exception("kb_tool_error %s", fmt_kv(tool=name))
-        return {
-            "success": False,
-            "error": {"code": "execution_error", "message": str(exc)},
-        }

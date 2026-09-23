@@ -1,4 +1,4 @@
-"""Boot-time wiring for built-ins, scene agents, and schedule targets."""
+"""Boot-time wiring for built-ins and schedule targets."""
 
 from __future__ import annotations
 
@@ -9,7 +9,6 @@ logger = get_logger("app.bootstrap")
 
 def bootstrap() -> None:
     _register_builtins()
-    _register_scene_agents()
     _register_schedule_targets()
     logger.info("bootstrap_done")
 
@@ -36,14 +35,6 @@ def _register_builtins() -> None:
         register_builtin_knowledge_packs()
     except Exception as exc:
         logger.warning("builtin_knowledge_packs_bootstrap_failed error=%s", exc)
-
-
-def _register_scene_agents() -> None:
-    from app.services.chat.scene_agents.registry import register_scene_agent
-    from app.services.page.chat_agent import PageChatAgent
-
-    register_scene_agent(PageChatAgent())
-    logger.info("scene_agents_registered count=1")
 
 
 def _register_schedule_targets() -> None:

@@ -16,11 +16,13 @@ from sqlalchemy.orm import Session, sessionmaker
 from app.core.logging import fmt_kv, get_logger
 from app.db.database import SessionLocal
 from app.models import models
+from app.services.agent.persistence import run_db
 from app.services.agent.scheduled_runner import ScheduledAgentRunner
 from app.services.function.runtime import FunctionRuntimeService
 from app.services.lifecycle import ScheduleLifecycleService
 from app.services.scheduler.result import ScheduleRuntimeResult
 from app.services.scheduler.runtime import ScheduleTargetRuntimeService
+from app.services.scheduler.triggers import cron_trigger
 
 tracer = trace.get_tracer("app.services.scheduler.worker")
 
@@ -99,7 +101,7 @@ class SchedulerWorker:
                 )
             except TimeoutError:
                 logger.warning("scheduler_background_tasks_timeout")
-        self._target_runtime.shutdown()
+        await self._target_runtime.shutdown()
 
     async def run_now(self, schedule_id: int, trace_id: str | None = None) -> str:
         return await self._execute_schedule(
@@ -288,6 +290,16 @@ class SchedulerWorker:
     async def _submit_schedule(
         self, *, schedule_id: int, trigger_type: str, trace_id: str | None = None
     ) -> tuple[str, int]:
+        return await run_db(
+            self._reserve_schedule,
+            schedule_id=schedule_id,
+            trigger_type=trigger_type,
+            trace_id=trace_id,
+        )
+
+    def _reserve_schedule(
+        self, *, schedule_id: int, trigger_type: str, trace_id: str | None = None
+    ) -> tuple[str, int]:
         """Phase 1+2: load schedule and create run record. Returns (run_id_str, run_pk)."""
         correlation_id = str(uuid.uuid4())
         trace_id = trace_id or correlation_id
@@ -310,7 +322,7 @@ class SchedulerWorker:
                 trigger_type=trigger_type,
                 attempt=1,
                 retry_count=0,
-                max_retries=max(schedule.max_retries, 0),
+                max_retries=0 if schedule.target_type == "agent" else max(schedule.max_retries, 0),
                 correlation_id=correlation_id,
                 target_type=schedule.target_type,
                 started_at=datetime.utcnow(),
@@ -335,24 +347,13 @@ class SchedulerWorker:
         trace_id: str | None = None,
     ) -> None:
         """Phase 3+4: invoke runtime and write result for an already-created run record."""
-        db = self._session_factory()
-        try:
-            schedule = db.query(models.Schedule).filter(models.Schedule.id == schedule_id).first()
-            if schedule is None:
-                return
-            schedule_snapshot = schedule
-            schedule_id_val = schedule.id
-            schedule_type = schedule.schedule_type
-            schedule_status = schedule.status
-            cron_expression = schedule.cron_expression
-            interval_seconds = schedule.interval_seconds
-        finally:
-            db.close()
+        schedule_snapshot = await run_db(self._load_schedule, schedule_id)
+        schedule_id_val = schedule_snapshot.id
 
         cancelled_error: asyncio.CancelledError | None = None
         try:
             runtime_result = await self._invoke_runtime(
-                schedule_snapshot, trigger_type, trace_id=trace_id
+                schedule_snapshot, trigger_type, trace_id=trace_id, schedule_run_id=run_id_str
             )
         except asyncio.CancelledError as exc:
             cancelled_error = exc
@@ -379,11 +380,50 @@ class SchedulerWorker:
                 error_message=str(exc),
                 duration_ms=0,
             )
+        await run_db(self._persist_submitted_result, schedule_snapshot, run_pk, runtime_result)
+        if cancelled_error is not None:
+            raise cancelled_error
+
+    def _load_schedule(self, schedule_id: int) -> models.Schedule:
+        with self._session_factory() as db:
+            schedule = db.get(models.Schedule, schedule_id)
+            if schedule is None:
+                raise ValueError(f"Schedule {schedule_id} not found")
+            db.expunge(schedule)
+            return schedule
+
+    def _persist_submitted_result(self, schedule_snapshot, run_pk, runtime_result):
+        schedule_id_val = schedule_snapshot.id
         finished_at = datetime.utcnow()
 
         db = self._session_factory()
         try:
             run = db.query(models.ScheduleRun).filter(models.ScheduleRun.id == run_pk).first()
+            if schedule_snapshot.target_type == "agent":
+                if run is not None:
+                    run.runtime_run_id = runtime_result.run_id or None
+                    run.runtime_status = runtime_result.status
+                    run.status = runtime_result.status
+                    run.error_summary = runtime_result.error_message
+                    if runtime_result.conversation_id:
+                        run.conversation_id = runtime_result.conversation_id
+                    # Output and subsequent status are projected from agent_runs.
+                    # Approval waiting is not a finished schedule invocation.
+                    if runtime_result.status not in {"queued", "running", "waiting_approval"}:
+                        run.finished_at = finished_at
+                schedule_row = db.get(models.Schedule, schedule_id_val)
+                if schedule_row is not None:
+                    schedule_row.last_run_at = finished_at
+                    if schedule_row.status == "active":
+                        schedule_row.next_run_at = self._lifecycle_service.calculate_next_run_at(
+                            schedule_type=schedule_row.schedule_type,
+                            cron_expression=schedule_row.cron_expression,
+                            interval_seconds=schedule_row.interval_seconds,
+                            now=finished_at,
+                            timezone=schedule_row.timezone,
+                        )
+                db.commit()
+                return
             if run is not None:
                 run.runtime_run_id = runtime_result.run_id or None
                 run.runtime_status = runtime_result.status
@@ -401,12 +441,13 @@ class SchedulerWorker:
                 )
                 if schedule_row is not None:
                     schedule_row.last_run_at = finished_at
-                    if schedule_status == "active":
+                    if schedule_row.status == "active":
                         schedule_row.next_run_at = self._lifecycle_service.calculate_next_run_at(
-                            schedule_type=schedule_type,
-                            cron_expression=cron_expression,
-                            interval_seconds=interval_seconds,
+                            schedule_type=schedule_row.schedule_type,
+                            cron_expression=schedule_row.cron_expression,
+                            interval_seconds=schedule_row.interval_seconds,
                             now=finished_at,
+                            timezone=schedule_row.timezone,
                         )
                 db.commit()
             else:
@@ -414,14 +455,32 @@ class SchedulerWorker:
                     run.error_summary = runtime_result.error_message
                     run.status = "failed"
                 db.commit()
-                if cancelled_error is not None:
-                    raise cancelled_error
         finally:
             db.close()
 
     async def _execute_schedule(
         self, *, schedule_id: int, trigger_type: str, trace_id: str | None = None
     ) -> str:
+        schedule = await run_db(self._load_schedule, schedule_id)
+        if trigger_type == "scheduled" and schedule.status != "active":
+            return ""
+        is_agent = schedule.target_type == "agent"
+        if is_agent:
+            # One occurrence owns one logical Agent run. Provider retries belong
+            # to its pinned transport; scheduler retries must not repeat effects.
+            run_id, run_pk = await self._submit_schedule(
+                schedule_id=schedule_id,
+                trigger_type=trigger_type,
+                trace_id=trace_id,
+            )
+            await self._execute_schedule_from_run(
+                schedule_id=schedule_id,
+                run_id_str=run_id,
+                run_pk=run_pk,
+                trigger_type=trigger_type,
+                trace_id=trace_id,
+            )
+            return run_id
         correlation_id = str(uuid.uuid4())
         trace_id = trace_id or correlation_id
         logger.info(
@@ -456,10 +515,6 @@ class SchedulerWorker:
                     return ""
                 # Snapshot fields needed after session close.
                 schedule_id_val = schedule.id
-                schedule_type = schedule.schedule_type
-                schedule_status = schedule.status
-                cron_expression = schedule.cron_expression
-                interval_seconds = schedule.interval_seconds
                 max_retries = max(schedule.max_retries, 0)
                 retry_backoff_seconds = schedule.retry_backoff_seconds
                 schedule_snapshot = schedule  # kept in memory for runtime; not used for DB writes
@@ -558,13 +613,14 @@ class SchedulerWorker:
                         )
                         if schedule_row is not None:
                             schedule_row.last_run_at = finished_at
-                            if schedule_status == "active":
+                            if schedule_row.status == "active":
                                 schedule_row.next_run_at = (
                                     self._lifecycle_service.calculate_next_run_at(
-                                        schedule_type=schedule_type,
-                                        cron_expression=cron_expression,
-                                        interval_seconds=interval_seconds,
+                                        schedule_type=schedule_row.schedule_type,
+                                        cron_expression=schedule_row.cron_expression,
+                                        interval_seconds=schedule_row.interval_seconds,
                                         now=finished_at,
+                                        timezone=schedule_row.timezone,
                                     )
                                 )
                         db.commit()
@@ -635,6 +691,7 @@ class SchedulerWorker:
         schedule: models.Schedule,
         trigger_type: str,
         trace_id: str | None = None,
+        schedule_run_id: str | None = None,
     ) -> ScheduleRuntimeResult:
         with tracer.start_as_current_span(
             "scheduler.invoke_runtime",
@@ -647,6 +704,7 @@ class SchedulerWorker:
                 schedule,
                 trigger_type=trigger_type,
                 trace_id=trace_id,
+                schedule_run_id=schedule_run_id,
             )
 
     def _build_trigger(self, schedule: models.Schedule) -> CronTrigger | IntervalTrigger:
@@ -655,18 +713,7 @@ class SchedulerWorker:
                 raise ValueError("interval schedule requires interval_seconds")
             return IntervalTrigger(seconds=schedule.interval_seconds, timezone=schedule.timezone)
 
-        parts = (schedule.cron_expression or "").split()
-        if len(parts) != 5:
-            raise ValueError("cron_expression must contain 5 fields")
-        minute, hour, day, month, day_of_week = parts
-        return CronTrigger(
-            minute=minute,
-            hour=hour,
-            day=day,
-            month=month,
-            day_of_week=day_of_week,
-            timezone=schedule.timezone,
-        )
+        return cron_trigger(schedule.cron_expression or "", schedule.timezone)
 
     def _is_retryable(self, result: ScheduleRuntimeResult) -> bool:
         return result.error_class in {"runtime", "dependency", "timeout"}

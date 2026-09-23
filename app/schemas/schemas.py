@@ -422,232 +422,6 @@ class KnowledgePackInstallStatus(BaseModel):
     error_message: str | None = None
 
 
-_VALID_CONVERSATION_CATEGORIES = {"primary", "scene", "agent_run", "scheduler_run"}
-
-
-def _normalize_conversation_category(value: str) -> str:
-    normalized = value.strip().lower()
-    if normalized not in _VALID_CONVERSATION_CATEGORIES:
-        raise ValueError(
-            f"category must be one of: {', '.join(sorted(_VALID_CONVERSATION_CATEGORIES))}"
-        )
-    return normalized
-
-
-class ConversationBase(BaseModel):
-    title: str = "New Conversation"
-    datasource_id: int | None = None
-    agent_id: int | None = None
-    active_skills: list[str] | None = None
-    category: str = "primary"
-    scene_key: str | None = None
-    read_only: bool = False
-
-    @field_validator("category")
-    @classmethod
-    def validate_conversation_category(cls, value: str) -> str:
-        return _normalize_conversation_category(value)
-
-    @field_validator("scene_key")
-    @classmethod
-    def validate_scene_key(cls, value: str | None) -> str | None:
-        if value is None:
-            return value
-        normalized = value.strip()
-        return normalized or None
-
-
-class ConversationCreate(ConversationBase):
-    pass
-
-
-class ConversationUpdate(BaseModel):
-    title: str | None = None
-    datasource_id: int | None = None
-    agent_id: int | None = None
-    active_skills: list[str] | None = None
-    category: str | None = None
-    scene_key: str | None = None
-    read_only: bool | None = None
-
-    @field_validator("category")
-    @classmethod
-    def validate_update_conversation_category(cls, value: str | None) -> str | None:
-        if value is None:
-            return value
-        return _normalize_conversation_category(value)
-
-    @field_validator("scene_key")
-    @classmethod
-    def validate_update_scene_key(cls, value: str | None) -> str | None:
-        if value is None:
-            return value
-        normalized = value.strip()
-        return normalized or None
-
-
-class ConversationResponse(ConversationBase):
-    model_config = ConfigDict(from_attributes=True)
-
-    id: int
-    created_at: datetime
-    updated_at: datetime
-
-
-class BuildSessionCreate(BaseModel):
-    scope_object_type: str
-    scope_object_id: str
-    ttl_seconds: int = 1800
-
-    @field_validator("scope_object_type")
-    @classmethod
-    def validate_scope_object_type(cls, value: str) -> str:
-        normalized = value.strip().lower()
-        if normalized not in {"page", "function", "scheduler"}:
-            raise ValueError("scope_object_type must be one of: page, function, scheduler")
-        return normalized
-
-    @field_validator("scope_object_id")
-    @classmethod
-    def validate_scope_object_id(cls, value: str) -> str:
-        normalized = value.strip()
-        if not normalized:
-            raise ValueError("scope_object_id cannot be empty")
-        return normalized
-
-    @field_validator("ttl_seconds")
-    @classmethod
-    def validate_ttl_seconds(cls, value: int) -> int:
-        if value < 60 or value > 24 * 3600:
-            raise ValueError("ttl_seconds must be between 60 and 86400")
-        return value
-
-
-class BuildSessionHeartbeat(BaseModel):
-    ttl_seconds: int | None = None
-
-    @field_validator("ttl_seconds")
-    @classmethod
-    def validate_ttl_seconds(cls, value: int | None) -> int | None:
-        if value is None:
-            return value
-        if value < 60 or value > 24 * 3600:
-            raise ValueError("ttl_seconds must be between 60 and 86400")
-        return value
-
-
-class BuildSessionResponse(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-
-    id: int
-    conversation_id: int | None = None
-    scope_type: str
-    scope_object_type: str
-    scope_object_id: str
-    ttl_seconds: int
-    heartbeat_at: datetime
-    expires_at: datetime
-    status: str
-    created_at: datetime
-    updated_at: datetime
-
-
-class MessageBase(BaseModel):
-    conversation_id: int
-    role: str
-    content: str
-
-
-class MessageCreate(MessageBase):
-    pass
-
-
-class MessageResponse(MessageBase):
-    model_config = ConfigDict(from_attributes=True)
-
-    id: int
-    agent_name: str | None = None
-    tool_calls: list | None = None
-    content_parts: list | None = None
-    created_at: datetime
-
-
-class ChatEventResponse(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-
-    id: int
-    conversation_id: int
-    event_type: str
-    phase: str | None = None
-    turn_id: str | None = None
-    turn_seq: int | None = None
-    part_seq: int | None = None
-    role: str | None = None
-    agent_name: str | None = None
-    payload: dict | None = None
-    created_at: datetime
-
-
-class ChatHandoffFact(BaseModel):
-    label: str
-    value: str
-
-
-class ChatHandoffSource(BaseModel):
-    page: str
-    entry: str
-    label: str | None = None
-
-
-class ChatHandoffPacket(BaseModel):
-    type: str
-    version: int = 1
-    source: ChatHandoffSource
-    title: str
-    summary: str | None = None
-    facts: list[ChatHandoffFact] = Field(default_factory=list)
-    suggested_prompts: list[str] = Field(default_factory=list)
-    context: dict[str, Any] = Field(default_factory=dict)
-
-    @field_validator("type")
-    @classmethod
-    def validate_type(cls, value: str) -> str:
-        normalized = value.strip()
-        if not normalized:
-            raise ValueError("type cannot be empty")
-        return normalized
-
-    @field_validator("title")
-    @classmethod
-    def validate_title(cls, value: str) -> str:
-        normalized = value.strip()
-        if not normalized:
-            raise ValueError("title cannot be empty")
-        return normalized
-
-
-class ChatHandoffCreate(BaseModel):
-    conversation_id: int | None = None
-    title: str | None = None
-    datasource_id: int | None = None
-    preferred_execution_datasource_id: int | None = None
-    packet: ChatHandoffPacket
-
-
-class ChatHandoffResponse(BaseModel):
-    id: int
-    conversation_id: int
-    status: str
-    consumed_at: datetime | None = None
-    packet: ChatHandoffPacket
-    created_at: datetime
-
-
-class ChatHandoffCreateResponse(BaseModel):
-    conversation: ConversationResponse
-    handoff: ChatHandoffResponse
-
-
 def _normalize_agent_type(value: str) -> str:
     normalized = value.strip().lower().replace("-", "_")
     if normalized in {"builtin", "built_in"}:
@@ -790,7 +564,14 @@ class SkillResponse(SkillBase):
 
 
 class AgentCreate(AgentBase):
-    pass
+    datasource_ids: list[int] = Field(default_factory=list)
+
+    @field_validator("datasource_ids")
+    @classmethod
+    def validate_datasource_ids(cls, value: list[int]) -> list[int]:
+        if any(item <= 0 for item in value):
+            raise ValueError("Datasource IDs must be positive")
+        return list(dict.fromkeys(value))
 
 
 class AgentUpdate(BaseModel):
@@ -801,6 +582,7 @@ class AgentUpdate(BaseModel):
     skills: list[str] | None = None
     agent_type: str | None = None
     status: str | None = None
+    datasource_ids: list[int] | None = None
 
     @field_validator("agent_type")
     @classmethod
@@ -817,114 +599,7 @@ class AgentResponse(AgentBase):
     status: str
     created_at: datetime
     updated_at: datetime
-
-
-class AgentRunRequest(BaseModel):
-    datasource_ids: list[int] = Field(default_factory=list)
-    title: str | None = None
-
-    @field_validator("datasource_ids")
-    @classmethod
-    def validate_datasource_ids(cls, value: list[int]) -> list[int]:
-        unique_ids: list[int] = []
-        seen: set[int] = set()
-        for item in value:
-            if not isinstance(item, int) or item <= 0:
-                raise ValueError("datasource_ids must contain positive integers")
-            if item in seen:
-                continue
-            seen.add(item)
-            unique_ids.append(item)
-        return unique_ids
-
-    @field_validator("title")
-    @classmethod
-    def validate_title(cls, value: str | None) -> str | None:
-        if value is None:
-            return value
-        normalized = value.strip()
-        if not normalized:
-            return None
-        return normalized[:500]
-
-
-class AgentRunResponse(BaseModel):
-    conversation: ConversationResponse
-    datasource_ids: list[int] = Field(default_factory=list)
-
-
-class ToolExecutionBase(BaseModel):
-    agent_id: int | None = None
-    conversation_id: int | None = None
-    tool_name: str
-    parameters: dict | None = None
-
-
-class ToolExecutionCreate(ToolExecutionBase):
-    pass
-
-
-class ToolExecutionUpdate(BaseModel):
-    result: str | None = None
-    error: str | None = None
-
-
-class ToolExecutionResponse(ToolExecutionBase):
-    model_config = ConfigDict(from_attributes=True)
-
-    id: int
-    result: str | None = None
-    error: str | None = None
-    created_at: datetime
-
-
-# Chat Stream
-# ---------------------------------------------------------------------------
-
-
-class SceneAgentRequest(BaseModel):
-    key: str
-    context: dict[str, Any] = Field(default_factory=dict)
-    focus_object: dict[str, Any] | None = None
-    tools: list[str] = Field(default_factory=list)
-    skills: list[str] = Field(default_factory=list)
-
-
-class ChatStreamRequest(BaseModel):
-    content: str = ""
-    run_datasource_ids: list[int] | None = None
-    handoff_id: int | None = None
-    scene_agent: SceneAgentRequest | None = None
-    conversation_context: str | None = None
-    locale: str | None = None
-    resume_action_token: str | None = None
-
-    @field_validator("resume_action_token")
-    @classmethod
-    def _normalize_resume_action_token(cls, value: str | None) -> str | None:
-        normalized = str(value or "").strip()
-        return normalized or None
-
-
-class ChatCompleteRequest(BaseModel):
-    content: str = ""
-
-
-class ChatContextStatusResponse(BaseModel):
-    conversation_id: int
-    context_window_tokens: int
-    estimated_tokens: int
-    used_percent: float
-    compression_progress_percent: float = 0
-    compression_threshold_percent: int
-    compression_threshold_tokens: int
-    remaining_tokens: int
-    summary_tokens: int = 0
-    recent_message_count: int = 0
-    compacted_through_message_id: int | None = None
-    last_compacted_at: datetime | None = None
-    token_source: str = "estimate"
-    state: Literal["ready", "compressing", "compression_failed"] = "ready"
+    datasource_ids: list[int]
 
 
 # ---------------------------------------------------------------------------
@@ -938,48 +613,16 @@ class PlatformSettingsUpdateRequest(BaseModel):
     ai_api_key: str | None = None
     ai_model: str | None = None
     ai_base_url: str | None = None
-    build_engine: str | None = None
-    external_cli_command: str | None = None
-    external_cli_pre_flags: str | None = None
-    external_cli_post_flags: str | None = None
     sql_allow_mutating: bool | None = None
-    ai_action_confirmation_bypass: bool | None = None
     context_window_tokens: int | None = Field(default=None, ge=8_192, le=2_000_000)
     context_compression_threshold_percent: int | None = Field(default=None, ge=50, le=95)
 
-    @field_validator("build_engine")
-    @classmethod
-    def validate_build_engine(cls, value: str | None) -> str | None:
-        if value is None:
-            return value
-        normalized = value.strip().lower()
-        if normalized not in {"reasoning", "external_cli"}:
-            raise ValueError("build_engine must be one of: reasoning, external_cli")
-        return normalized
-
 
 class PlatformSettingsResponse(BaseModel):
-    build_engine: str = "reasoning"
-    external_cli_command: str = ""
-    external_cli_pre_flags: str = ""
-    external_cli_post_flags: str = ""
     sql_allow_mutating: bool = False
-    ai_action_confirmation_bypass: bool = False
     ai_api_key_configured: bool = False
     ai_model: str | None = None
     ai_base_url: str | None = None
     context_window_tokens: int = 128_000
     context_compression_threshold_percent: int = 75
     praxis_edition: str | None = None
-
-
-class SettingsEngineTestRequest(BaseModel):
-    command: str = ""
-
-
-class SettingsEngineTestResponse(BaseModel):
-    ok: bool
-    message: str
-    suggested_command: str | None = None
-    flags_added: list[str] = Field(default_factory=list)
-    env_issues: list[str] = Field(default_factory=list)

@@ -83,6 +83,29 @@ class PgConnectionPool:
             )
         return self._pools[key]
 
+    async def execute_read_query(self, datasource, sql: str, *, limit: int = 200) -> dict:
+        """Bounded native read-only transaction; never retry a submitted operation."""
+        pool = await self._get_pool(
+            datasource.host,
+            datasource.port,
+            datasource.user or "",
+            datasource.password or "",
+            datasource.database or "",
+        )
+        async with pool.acquire() as conn:
+            async with conn.transaction(readonly=True):
+                statement = await conn.prepare(sql)
+                columns = [attribute.name for attribute in statement.get_attributes()]
+                cursor = await statement.cursor()
+                records = await cursor.fetch(limit + 1)
+                return {
+                    "columns": columns,
+                    "rows": [dict(record) for record in records[:limit]],
+                    "returned_rows": min(len(records), limit),
+                    "truncated": len(records) > limit,
+                    "total_rows": None if len(records) > limit else len(records),
+                }
+
     async def execute_query(
         self,
         datasource: Any,

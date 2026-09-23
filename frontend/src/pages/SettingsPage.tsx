@@ -1,18 +1,16 @@
 import { useCallback, useEffect, useState } from "react"
-import { AlertTriangle, BrainCircuit, Gauge, ShieldCheck, Wrench } from "lucide-react"
+import { BrainCircuit, Gauge, ShieldCheck } from "lucide-react"
 import { useShellI18n } from "@/i18n/shellI18n"
 import { settingsApi } from "@/lib/api"
 import { WorkbenchPage } from "@/components/shared/WorkbenchPage"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Switch } from "@/components/ui/switch"
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { cn } from "@/lib/utils"
 
-type EngineChoice = "reasoning" | "external_cli"
-type TabId = "llm" | "build" | "safety"
+type TabId = "llm" | "safety"
 
 // ── LLM tab ───────────────────────────────────────────────────────────────────
 
@@ -206,173 +204,20 @@ function LlmTab() {
   )
 }
 
-// ── Build engine tab ──────────────────────────────────────────────────────────
-
-function BuildTab() {
-  const { t } = useShellI18n()
-  const [engine, setEngine] = useState<EngineChoice>("reasoning")
-  const [command, setCommand] = useState("")
-  const [saving, setSaving] = useState(false)
-  const [saved, setSaved] = useState(false)
-  const [loaded, setLoaded] = useState(false)
-  const [testing, setTesting] = useState(false)
-  const [testResult, setTestResult] = useState<{
-    ok: boolean; message: string
-    suggested_command?: string; flags_added?: string[]; env_issues?: string[]
-  } | null>(null)
-
-  useEffect(() => {
-    settingsApi.get().then((data) => {
-      setEngine((data.build_engine as EngineChoice) || "reasoning")
-      setCommand(data.external_cli_command || "")
-      setLoaded(true)
-    })
-  }, [])
-
-  const handleTest = useCallback(async () => {
-    const cmd = command.trim()
-    if (!cmd) return
-    setTesting(true)
-    setTestResult(null)
-    try {
-      const result = await settingsApi.testEngine(cmd)
-      setTestResult(result)
-      if (result.ok && result.suggested_command) setCommand(result.suggested_command)
-    } catch {
-      setTestResult({ ok: false, message: t("settings.engine.testError") })
-    } finally {
-      setTesting(false)
-    }
-  }, [command, t])
-
-  const handleSave = useCallback(async () => {
-    setSaving(true)
-    setSaved(false)
-    try {
-      await settingsApi.patch({ build_engine: engine, external_cli_command: command })
-      setSaved(true)
-      setTimeout(() => setSaved(false), 2000)
-    } finally {
-      setSaving(false)
-    }
-  }, [engine, command])
-
-  const commandEmpty = engine === "external_cli" && !command.trim()
-  const testRequired = engine === "external_cli" && !testResult?.ok
-
-  if (!loaded) {
-    return (
-      <div className="space-y-5 p-5">
-        <Skeleton className="h-4 w-48" />
-        <Skeleton className="h-10 w-64" />
-        <Skeleton className="h-9 w-20" />
-      </div>
-    )
-  }
-
-  return (
-    <div className="space-y-5 p-5 max-w-lg">
-      <div className="space-y-1.5">
-        <label className="text-sm font-medium">{t("settings.llm.engineLabel")}</label>
-        <Select
-          value={engine}
-          onValueChange={(v) => { setEngine(v as EngineChoice); setTestResult(null) }}
-        >
-          <SelectTrigger className="w-64">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="reasoning">{t("settings.engine.builtin")}</SelectItem>
-            <SelectItem value="external_cli">{t("settings.engine.external")}</SelectItem>
-          </SelectContent>
-        </Select>
-        <p className="text-xs text-muted-foreground">
-          {engine === "reasoning" ? t("settings.engine.builtinDesc") : t("settings.engine.externalDesc")}
-        </p>
-      </div>
-
-      {engine === "external_cli" && (
-        <div className="space-y-4 rounded-lg border bg-muted/30 p-4">
-          <div className="space-y-1.5">
-            <label htmlFor="external-cli-command" className="text-sm font-medium">{t("settings.engine.command")}</label>
-            <Input
-              id="external-cli-command"
-              value={command}
-              onChange={(e) => { setCommand(e.target.value); setTestResult(null) }}
-              placeholder={t("settings.engine.commandPlaceholder")}
-              className={cn("font-mono text-sm", commandEmpty && "border-destructive")}
-            />
-            <p className="text-xs text-muted-foreground">{t("settings.engine.commandHint")}</p>
-            {commandEmpty && (
-              <p className="text-xs text-destructive">{t("settings.engine.commandRequired")}</p>
-            )}
-          </div>
-
-          <div className="flex items-center gap-3">
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={handleTest}
-              disabled={testing || !command.trim()}
-            >
-              {testing ? t("settings.engine.testing") : t("settings.engine.testBtn")}
-            </Button>
-            {testResult && (
-              <span className={cn("text-sm", testResult.ok ? "text-positive" : "text-destructive")}>
-                {testResult.ok ? t("settings.engine.testOk") : testResult.message}
-              </span>
-            )}
-          </div>
-
-          {testResult?.ok && testResult.flags_added && testResult.flags_added.length > 0 && (
-            <p className="text-xs text-muted-foreground">
-              {t("settings.engine.flagsDiscovered")}{" "}
-              <code className="rounded bg-muted px-1 py-0.5">{testResult.flags_added.join(" ")}</code>
-            </p>
-          )}
-          {testResult?.env_issues && testResult.env_issues.length > 0 && (
-            <div className="space-y-1">
-              {testResult.env_issues.map((issue, i) => (
-                <p key={i} className="text-xs text-destructive">{issue}</p>
-              ))}
-            </div>
-          )}
-        </div>
-      )}
-
-      <div className="flex items-center gap-3 pt-1">
-        <Button
-          size="sm"
-          onClick={handleSave}
-          disabled={saving || commandEmpty || testRequired}
-        >
-          {saving ? t("settings.saving") : t("settings.save")}
-        </Button>
-        {saved && <span className="text-sm text-positive">{t("settings.saved")}</span>}
-        {testRequired && !commandEmpty && (
-          <span className="text-xs text-muted-foreground">{t("settings.engine.testRequired")}</span>
-        )}
-      </div>
-    </div>
-  )
-}
-
 // ── Safety tab ───────────────────────────────────────────────────────────────
 
 function SafetyTab() {
   const { t } = useShellI18n()
   const [allowMutating, setAllowMutating] = useState(false)
-  const [confirmationBypass, setConfirmationBypass] = useState(false)
-  const [savingKey, setSavingKey] = useState<"mutating" | "bypass" | null>(null)
-  const [savedKey, setSavedKey] = useState<"mutating" | "bypass" | null>(null)
-  const [errorKey, setErrorKey] = useState<"load" | "mutating" | "bypass" | null>(null)
+  const [savingKey, setSavingKey] = useState<"mutating" | null>(null)
+  const [savedKey, setSavedKey] = useState<"mutating" | null>(null)
+  const [errorKey, setErrorKey] = useState<"load" | "mutating" | null>(null)
   const [loaded, setLoaded] = useState(false)
 
   useEffect(() => {
     settingsApi.get()
       .then((data) => {
         setAllowMutating(data.sql_allow_mutating === true)
-        setConfirmationBypass(data.ai_action_confirmation_bypass === true)
         setLoaded(true)
       })
       .catch(() => setErrorKey("load"))
@@ -390,23 +235,6 @@ function SafetyTab() {
     } catch {
       setAllowMutating(!checked)
       setErrorKey("mutating")
-    } finally {
-      setSavingKey(null)
-    }
-  }, [])
-
-  const handleBypassToggle = useCallback(async (checked: boolean) => {
-    setConfirmationBypass(checked)
-    setSavingKey("bypass")
-    setSavedKey(null)
-    setErrorKey(null)
-    try {
-      await settingsApi.patch({ ai_action_confirmation_bypass: checked })
-      setSavedKey("bypass")
-      setTimeout(() => setSavedKey(null), 2000)
-    } catch {
-      setConfirmationBypass(!checked)
-      setErrorKey("bypass")
     } finally {
       setSavingKey(null)
     }
@@ -463,41 +291,7 @@ function SafetyTab() {
         </div>
       </div>
 
-      <div className="space-y-3 border-t border-border pt-5">
-        <div className="flex items-start gap-3 rounded-lg border border-border bg-muted/30 p-4">
-          <Switch
-            id="ai-action-confirmation-bypass"
-            checked={confirmationBypass}
-            onCheckedChange={handleBypassToggle}
-            disabled={savingKey !== null}
-          />
-          <div className="space-y-1">
-            <div className="flex items-center gap-2">
-              <label htmlFor="ai-action-confirmation-bypass" className="cursor-pointer text-sm font-medium">
-                {t("settings.safety.bypassLabel")}
-              </label>
-              {confirmationBypass && <AlertTriangle className="size-4 text-negative" aria-hidden="true" />}
-            </div>
-            <p className="text-xs text-muted-foreground">
-              {t("settings.safety.bypassDesc")}
-            </p>
-          </div>
-        </div>
-        <div className="flex items-center gap-2 pt-1">
-          <span className={cn(
-            "rounded px-2 py-0.5 text-xs font-medium",
-            confirmationBypass
-              ? "bg-negative/15 text-negative"
-              : "bg-muted text-muted-foreground"
-          )}>
-            {confirmationBypass
-              ? t("settings.safety.bypassBadge")
-              : t("settings.safety.confirmRequiredBadge")}
-          </span>
-          {savedKey === "bypass" && <span className="text-sm text-positive">{t("settings.saved")}</span>}
-          {errorKey === "bypass" && <span className="text-sm text-negative" role="alert">{t("settings.safety.saveError")}</span>}
-        </div>
-      </div>
+
     </div>
   )
 }
@@ -510,7 +304,6 @@ export function SettingsPage() {
 
   const TABS: { id: TabId; label: string; icon: React.ReactNode }[] = [
     { id: "llm", label: t("settings.tab.llm"), icon: <BrainCircuit className="size-4" /> },
-    { id: "build", label: t("settings.tab.build"), icon: <Wrench className="size-4" /> },
     { id: "safety", label: t("settings.tab.safety"), icon: <ShieldCheck className="size-4" /> },
   ]
 
@@ -530,7 +323,6 @@ export function SettingsPage() {
           </Tabs>
         </div>
         {activeTab === "llm" && <LlmTab />}
-        {activeTab === "build" && <BuildTab />}
         {activeTab === "safety" && <SafetyTab />}
       </div>
     </div>

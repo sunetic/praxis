@@ -4,6 +4,7 @@ from typing import Any
 
 import pytest
 from fastapi import HTTPException, Response
+from pydantic import ValidationError
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
@@ -11,75 +12,6 @@ from app.api import functions as functions_api
 from app.api import schedules as schedules_api
 from app.db.database import Base
 from app.models import models
-from app.services.function.builder import FunctionBuilderService
-from app.services.scheduler.builder import SchedulerBuilderService
-
-
-class _FakeLLM:
-    async def chat(self, messages: Any, tools: Any = None, stream: bool = True, **kwargs: Any):
-        content = """
-        {
-          "intent_summary": "居中、交互按钮页面",
-          "plan": {"goal": "构建按钮页面", "todos": ["设置居中", "添加按钮"]},
-          "config": {"title": "交互按钮页", "description": "用于测试构建链路"},
-          "source": {"language": "tsx", "code": "export default function Page(){return <main><button>立即操作</button></main>}"},
-          "runtime": {"framework": "html", "preview_html": "<!doctype html><html><body><main><button>立即操作</button></main></body></html>"}
-        }
-        """
-        yield {"choices": [{"message": {"content": content}}]}
-
-
-class _FakeFunctionLLM:
-    async def chat(self, messages: Any, tools: Any = None, stream: bool = True, **kwargs: Any):
-        user_content = str((messages[-1] or {}).get("content") or "")
-        if "第一个租户" in user_content:
-            content = """
-            {
-              "intent_summary": "按默认策略选择租户并查询数据库列表",
-              "plan": {"goal": "查询业务租户数据库列表", "todos": ["选择租户", "查询数据库", "返回结果"]},
-              "uses_db": true,
-              "sql": "SHOW DATABASES",
-              "output_fields": [
-                {"name": "tenant_name", "kind": "constant", "value": "default-business"},
-                {"name": "rows", "kind": "payload_len", "key": "rows"}
-              ],
-              "clarification_questions": ["请确认“第一个”是否按名称升序选择？"],
-              "default_strategy": ["若未指定排序，默认按名称升序选择第一个对象。"]
-            }
-            """
-        else:
-            content = """
-            {
-              "intent_summary": "带运行标识的函数",
-              "plan": {"goal": "增加运行标识字段", "todos": ["保留原输出", "增加 run_id"]},
-              "uses_db": false,
-              "sql": "",
-              "output_fields": [
-                {"name": "ok", "kind": "constant", "value": true},
-                {"name": "run_id", "kind": "context", "path": "trace_id"},
-                {"name": "rows", "kind": "payload_len", "key": "rows"}
-              ],
-              "clarification_questions": [],
-              "default_strategy": []
-            }
-            """
-        yield {"choices": [{"message": {"content": content}}]}
-
-
-class _FakeSchedulerLLM:
-    async def chat(self, messages: Any, tools: Any = None, stream: bool = True, **kwargs: Any):
-        content = """
-        {
-          "patch": {
-            "schedule_type": "interval",
-            "interval_seconds": 300,
-            "max_retries": 3,
-            "timezone": "Asia/Shanghai"
-          },
-          "summary": "调度更新完成"
-        }
-        """
-        yield {"choices": [{"message": {"content": content}}]}
 
 
 @pytest.fixture
@@ -99,33 +31,30 @@ def session_factory(tmp_path: Path):
         engine.dispose()
 
 
-@pytest.fixture(autouse=True)
-def patch_function_builder_service(monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setattr(
-        functions_api,
-        "FunctionBuilderService",
-        lambda: FunctionBuilderService(llm_client=_FakeFunctionLLM()),
+def seed_released_function(db, name):
+    """Independent Scheduler fixture, not evidence of publication or validation."""
+    function = models.Function(name=name, slug=name, status="released")
+    db.add(function)
+    db.flush()
+    release = models.FunctionRelease(
+        function_id=function.id,
+        version=1,
+        code_snapshot="def main(payload, context):\n    return {'ok': True}\n",
+        dependency_manifest={},
     )
-
-
-@pytest.fixture(autouse=True)
-def patch_workspace_root(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
-    monkeypatch.setenv("PRAXIS_WORKSPACE_ROOT", str(tmp_path / "workspace"))
-
-
-@pytest.fixture(autouse=True)
-def patch_scheduler_builder_service(monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setattr(
-        schedules_api,
-        "SchedulerBuilderService",
-        lambda: SchedulerBuilderService(llm_client=_FakeSchedulerLLM()),
-    )
+    db.add(release)
+    db.flush()
+    function.current_release_id = release.id
+    db.commit()
+    return {"id": function.id}
 
 
 def test_function_name_supports_unicode_and_slug_is_system_managed(session_factory: Any):
     db = session_factory()
     try:
-        created = functions_api.create_function({"name": "  慢 SQL 分析  "}, db=db)
+        created = functions_api.create_function(
+            functions_api.FunctionCreate(name="  慢 SQL 分析  "), db=db
+        )
         assert created["name"] == "慢 SQL 分析"
         assert isinstance(created["slug"], str)
         assert created["slug"]
@@ -133,373 +62,26 @@ def test_function_name_supports_unicode_and_slug_is_system_managed(session_facto
         queried = functions_api.get_function_by_slug(created["slug"], db=db)
         assert queried["id"] == created["id"]
 
-        legacy_alias = functions_api.get_function_by_name(created["slug"], db=db)
-        assert legacy_alias["id"] == created["id"]
-
-        duplicated = functions_api.create_function({"name": "慢 SQL 分析"}, db=db)
+        duplicated = functions_api.create_function(
+            functions_api.FunctionCreate(name="慢 SQL 分析"), db=db
+        )
         assert duplicated["name"] == "慢 SQL 分析"
         assert duplicated["slug"] != created["slug"]
 
-        renamed = functions_api.update_function(created["id"], {"name": "新的函数名称"}, db=db)
+        renamed = functions_api.update_function(
+            created["id"], functions_api.FunctionUpdate(name="新的函数名称"), db=db
+        )
         assert renamed["name"] == "新的函数名称"
         assert renamed["slug"] == created["slug"]
 
-        with pytest.raises(HTTPException) as invalid:
-            functions_api.update_function(created["id"], {"slug": "manual-slug"}, db=db)
-        assert invalid.value.status_code == 400
-    finally:
-        db.close()
-
-
-def test_editing_released_function_creates_new_draft_iteration(session_factory: Any):
-    db = session_factory()
-    try:
-        created = functions_api.create_function(
-            {
-                "name": "调度清理",
-                "description": "v1",
-                "draft_code": "result = {'ok': True}",
-            },
-            db=db,
-        )
-        function_id = created["id"]
-
-        released = functions_api.release_function(function_id, {}, db=db)
-        current_release_id = released["function"]["current_release_id"]
-        assert released["function"]["status"] == "released"
-        assert isinstance(current_release_id, int)
-
-        updated = functions_api.update_function(
-            function_id,
-            {"name": "调度清理 v2", "description": "v2"},
-            db=db,
-        )
-        assert updated["status"] == "draft"
-        assert updated["current_release_id"] == current_release_id
-
-        refreshed = functions_api.get_function(function_id, db=db)
-        assert refreshed["status"] == "draft"
-        assert refreshed["current_release_id"] == current_release_id
+        with pytest.raises(ValidationError, match="Extra inputs"):
+            functions_api.FunctionUpdate(slug="manual-slug")
     finally:
         db.close()
 
 
 @pytest.mark.anyio
-async def test_function_api_release_invoke_and_history(session_factory: Any):
-    db = session_factory()
-    try:
-        fn = functions_api.create_function(
-            {
-                "name": "slow-sql-runtime",
-                "description": "slow sql analysis",
-                "draft_code": "result = {'rows': len(payload.get('rows', []))}",
-            },
-            db=db,
-        )
-        fn_id = fn["id"]
-
-        built = functions_api.build_function(fn_id, {"prompt": "增加结果字段 run_id"}, db=db)
-        assert "run_id" in built["function"]["draft_code"]
-        assert built["build_run"]["status"] == "done"
-        assert built["function"]["description"] == "slow sql analysis"
-        assert built["function"]["description"] != built["build_summary"]
-        phases = [event["phase"] for event in built["build_run"]["events"]]
-        assert phases == ["apply"]
-
-        strategy = functions_api.decide_function_strategy(
-            fn_id,
-            {"requirement": "slow sql analysis", "reuse_threshold": 0.95, "extend_threshold": 0.5},
-            db=db,
-        )
-        assert strategy["strategy"] in {"reuse", "extend", "create"}
-
-        verification = functions_api.verify_function(fn_id, {}, db=db)
-        assert verification["verification"]["passed"] is True
-
-        draft_invoke = await functions_api.invoke_function(
-            fn_id,
-            {
-                "payload": {"rows": [1, 2]},
-                "runtime_path": "draft",
-                "execution_mode": "plan",
-                "write_mode": "readonly",
-            },
-            db=db,
-        )
-        assert draft_invoke["status"] == "success"
-        assert draft_invoke["output"]["rows"] == 2
-        assert draft_invoke["runtime_path"] == "draft"
-
-        released = functions_api.release_function(fn_id, {}, db=db)
-        assert released["function"]["status"] == "released"
-        assert released["release"]["release_metadata"]["verification"]["passed"] is True
-        assert released["function"]["source_path"]
-        assert released["function"]["current_commit_sha"]
-        assert released["function"]["release_commit_sha"]
-        assert Path(str(released["function"]["source_path"])).exists()
-
-        invoke = await functions_api.invoke_function(fn_id, {"payload": {"rows": [1, 2, 3]}}, db=db)
-        assert invoke["status"] == "success"
-        assert invoke["output"]["rows"] == 3
-
-        releases = functions_api.list_function_releases(fn_id, db=db)
-        runs = functions_api.list_function_runs(fn_id, db=db)
-        assert len(releases) == 1
-        assert len(runs) >= 1
-    finally:
-        db.close()
-
-
-@pytest.mark.anyio
-async def test_function_api_write_apply_requires_confirm(session_factory: Any):
-    db = session_factory()
-    try:
-        fn = functions_api.create_function(
-            {"name": "write-guard", "draft_code": "result = {'ok': True}"},
-            db=db,
-        )
-        fn_id = fn["id"]
-        functions_api.release_function(fn_id, {}, db=db)
-        with pytest.raises(Exception) as err:
-            await functions_api.invoke_function(
-                fn_id,
-                {
-                    "payload": {},
-                    "write_mode": "write",
-                    "execution_mode": "apply",
-                    "confirm_apply": False,
-                },
-                db=db,
-            )
-        assert "confirm_apply" in str(err.value)
-    finally:
-        db.close()
-
-
-@pytest.mark.anyio
-async def test_function_api_scheduler_history_delete_uses_plan_and_apply_semantics(
-    session_factory: Any,
-):
-    db = session_factory()
-    try:
-        schedule = models.Schedule(
-            name="history-retention-target",
-            status="active",
-            target_type="function",
-            target_id=1,
-            schedule_type="interval",
-            interval_seconds=60,
-            timezone="UTC",
-        )
-        db.add(schedule)
-        db.flush()
-        old_run = models.ScheduleRun(
-            schedule_id=schedule.id,
-            run_id="history-old",
-            status="success",
-            trigger_type="scheduled",
-            attempt=1,
-            retry_count=0,
-            max_retries=0,
-            created_at=datetime.utcnow() - timedelta(days=40),
-        )
-        fresh_run = models.ScheduleRun(
-            schedule_id=schedule.id,
-            run_id="history-fresh",
-            status="success",
-            trigger_type="scheduled",
-            attempt=1,
-            retry_count=0,
-            max_retries=0,
-            created_at=datetime.utcnow() - timedelta(days=2),
-        )
-        db.add_all([old_run, fresh_run])
-        db.commit()
-
-        fn = functions_api.create_function(
-            {
-                "name": "清理历史",
-                "draft_code": (
-                    "def main(payload, context):\n"
-                    "    return scheduler_history.delete(\n"
-                    "        where={'schedule_id': payload['schedule_id']},\n"
-                    "        policy={'retention_seconds': payload['retention_seconds']},\n"
-                    "        dry_run=payload.get('dry_run', False),\n"
-                    "    )\n"
-                ),
-            },
-            db=db,
-        )
-        fn_id = fn["id"]
-
-        draft_run = await functions_api.invoke_function(
-            fn_id,
-            {
-                "payload": {
-                    "schedule_id": schedule.id,
-                    "retention_seconds": 30 * 24 * 3600,
-                    "dry_run": True,
-                },
-                "runtime_path": "draft",
-                "execution_mode": "plan",
-                "write_mode": "readonly",
-            },
-            db=db,
-        )
-        assert draft_run["status"] == "success"
-        assert draft_run["output"]["dry_run"] is True
-        assert draft_run["output"]["candidate_count"] == 1
-
-        unchanged_count = (
-            db.query(models.ScheduleRun)
-            .filter(models.ScheduleRun.schedule_id == schedule.id)
-            .count()
-        )
-        assert unchanged_count == 2
-
-        released = functions_api.release_function(fn_id, {}, db=db)
-        assert released["function"]["status"] == "released"
-
-        apply_run = await functions_api.invoke_function(
-            fn_id,
-            {
-                "payload": {
-                    "schedule_id": schedule.id,
-                    "retention_seconds": 30 * 24 * 3600,
-                    "dry_run": False,
-                },
-                "runtime_path": "production",
-                "execution_mode": "apply",
-                "write_mode": "write",
-                "confirm_apply": True,
-            },
-            db=db,
-        )
-        assert apply_run["status"] == "success"
-        assert apply_run["output"]["deleted_count"] == 1
-
-        remaining_ids = {
-            row.id
-            for row in db.query(models.ScheduleRun)
-            .filter(models.ScheduleRun.schedule_id == schedule.id)
-            .all()
-        }
-        assert old_run.id not in remaining_ids
-        assert fresh_run.id in remaining_ids
-    finally:
-        db.close()
-
-
-@pytest.mark.anyio
-async def test_function_chat_invoke_returns_structured_lifecycle_error(session_factory: Any):
-    db = session_factory()
-    try:
-        fn = functions_api.create_function(
-            {"name": "draft-only-function", "draft_code": "result = {'ok': True}"},
-            db=db,
-        )
-        with pytest.raises(HTTPException) as err:
-            await functions_api.run_function_chat_action(
-                fn["id"],
-                {
-                    "action": "invoke",
-                    "invoke": {
-                        "payload": {},
-                        "runtime_path": "production",
-                    },
-                },
-                db=db,
-            )
-        assert err.value.status_code == 400
-        assert isinstance(err.value.detail, dict)
-        assert err.value.detail.get("error_code") == "release_required"
-        assert "no released version" in str(err.value.detail.get("message") or "").lower()
-    finally:
-        db.close()
-
-
-@pytest.mark.anyio
-async def test_function_chat_invoke_failed_result_contains_structured_error_code(
-    session_factory: Any,
-):
-    db = session_factory()
-    try:
-        fn = functions_api.create_function(
-            {
-                "name": "draft-query-function",
-                "draft_code": "def main(payload, context):\n    return db.query('SHOW DATABASES')\n",
-            },
-            db=db,
-        )
-        response = await functions_api.run_function_chat_action(
-            fn["id"],
-            {
-                "action": "invoke",
-                "invoke": {
-                    "payload": {},
-                    "runtime_path": "draft",
-                    "execution_mode": "plan",
-                    "write_mode": "readonly",
-                },
-            },
-            db=db,
-        )
-        assert response["status"] == "failed"
-        assert response["data"]["error_code"] == "datasource_required"
-    finally:
-        db.close()
-
-
-def test_function_build_with_ambiguous_prompt_continues_generation(session_factory: Any):
-    db = session_factory()
-    try:
-        fn = functions_api.create_function(
-            {
-                "name": "tenant-query",
-                "draft_code": "result = {'rows': len(payload.get('rows', []))}",
-            },
-            db=db,
-        )
-        fn_id = fn["id"]
-
-        built = functions_api.build_function(
-            fn_id,
-            {"prompt": "检索数据源，从中找到第一个租户，查询里面所有库"},
-            db=db,
-        )
-        assert built["build_run"]["status"] == "done"
-        assert [event["phase"] for event in built["build_run"]["events"]] == ["apply"]
-        assert built["function"]["source_path"]
-    finally:
-        db.close()
-
-
-def test_function_build_with_ambiguity_mode_default_continues(session_factory: Any):
-    db = session_factory()
-    try:
-        fn = functions_api.create_function(
-            {
-                "name": "tenant-query-default",
-                "draft_code": "result = {'rows': len(payload.get('rows', []))}",
-            },
-            db=db,
-        )
-        built = functions_api.build_function(
-            fn["id"],
-            {
-                "prompt": "检索数据源，从中找到第一个租户，查询里面所有库",
-                "ambiguity_mode": "default",
-            },
-            db=db,
-        )
-        assert built["build_run"]["status"] == "done"
-        assert [event["phase"] for event in built["build_run"]["events"]] == ["apply"]
-    finally:
-        db.close()
-
-
-@pytest.mark.anyio
-async def test_schedule_api_pause_resume_run_now_and_history(session_factory: Any):
+async def test_schedule_api_update_pause_resume_and_empty_history(session_factory: Any):
     db = session_factory()
     try:
         datasource = models.DataSource(
@@ -511,12 +93,8 @@ async def test_schedule_api_pause_resume_run_now_and_history(session_factory: An
         )
         db.add(datasource)
         db.flush()
-        fn = functions_api.create_function(
-            {"name": "scheduled-report", "draft_code": "result = {'ok': True}"},
-            db=db,
-        )
+        fn = seed_released_function(db, "scheduled-report")
         fn_id = fn["id"]
-        functions_api.release_function(fn_id, {}, db=db)
 
         schedule = schedules_api.create_schedule(
             {
@@ -534,13 +112,10 @@ async def test_schedule_api_pause_resume_run_now_and_history(session_factory: An
         assert schedule["timezone"] == "Asia/Shanghai"
         assert schedule["datasource_id"] == datasource.id
 
-        built = schedules_api.build_schedule(
-            schedule_id,
-            {"prompt": "改成每 5 分钟执行一次，失败重试 3 次"},
-            db=db,
+        updated = schedules_api.update_schedule(
+            schedule_id, {"interval_seconds": 300, "max_retries": 3}, db=db
         )
-        assert built["schedule"]["interval_seconds"] == 300
-        assert built["schedule"]["max_retries"] == 3
+        assert updated["interval_seconds"] == 300 and updated["max_retries"] == 3
 
         paused = schedules_api.pause_schedule(schedule_id, db=db)
         assert paused["status"] == "paused"
@@ -554,11 +129,9 @@ async def test_schedule_api_pause_resume_run_now_and_history(session_factory: An
         enabled = schedules_api.enable_schedule(schedule_id, db=db)
         assert enabled["status"] == "active"
 
-        run_now = await schedules_api.run_schedule_now(schedule_id, db=db)
-        assert isinstance(run_now["run_id"], str)
-
+        # Actual manual submission is covered by the native Scheduler worker suite.
         runs = schedules_api.list_schedule_runs(schedule_id, db=db)
-        assert len(runs) >= 1
+        assert runs == []
     finally:
         db.close()
 
@@ -566,11 +139,7 @@ async def test_schedule_api_pause_resume_run_now_and_history(session_factory: An
 def test_schedule_api_rejects_invalid_timezone(session_factory: Any):
     db = session_factory()
     try:
-        fn = functions_api.create_function(
-            {"name": "invalid-timezone-fn", "draft_code": "result = {'ok': True}"},
-            db=db,
-        )
-        functions_api.release_function(fn["id"], {}, db=db)
+        fn = seed_released_function(db, "invalid-timezone-fn")
         with pytest.raises(HTTPException) as exc:
             schedules_api.create_schedule(
                 {
@@ -610,11 +179,7 @@ def test_schedule_api_create_triggers_runtime_refresh(
 
     db = session_factory()
     try:
-        fn = functions_api.create_function(
-            {"name": "refresh-on-create", "draft_code": "result = {'ok': True}"},
-            db=db,
-        )
-        functions_api.release_function(fn["id"], {}, db=db)
+        fn = seed_released_function(db, "refresh-on-create")
         created = schedules_api.create_schedule(
             {
                 "name": "refresh-create-schedule",
@@ -634,11 +199,7 @@ def test_schedule_api_create_triggers_runtime_refresh(
 def test_schedule_api_repair_run_finalizes_stale_running_record(session_factory: Any):
     db = session_factory()
     try:
-        fn = functions_api.create_function(
-            {"name": "repair-run-fn", "draft_code": "result = {'ok': True}"},
-            db=db,
-        )
-        functions_api.release_function(fn["id"], {}, db=db)
+        fn = seed_released_function(db, "repair-run-fn")
         schedule = schedules_api.create_schedule(
             {
                 "name": "repair-run-schedule",
@@ -677,11 +238,7 @@ def test_schedule_api_repair_run_finalizes_stale_running_record(session_factory:
 def test_schedule_api_runs_support_offset_and_total_header(session_factory: Any):
     db = session_factory()
     try:
-        fn = functions_api.create_function(
-            {"name": "runs-pagination-fn", "draft_code": "result = {'ok': True}"},
-            db=db,
-        )
-        functions_api.release_function(fn["id"], {}, db=db)
+        fn = seed_released_function(db, "runs-pagination-fn")
         schedule = schedules_api.create_schedule(
             {
                 "name": "runs-pagination",
@@ -745,11 +302,7 @@ def test_schedule_api_runs_support_offset_and_total_header(session_factory: Any)
 def test_schedule_api_list_all_runs_supports_global_and_schedule_filter(session_factory: Any):
     db = session_factory()
     try:
-        fn = functions_api.create_function(
-            {"name": "runs-global-fn", "draft_code": "result = {'ok': True}"},
-            db=db,
-        )
-        functions_api.release_function(fn["id"], {}, db=db)
+        fn = seed_released_function(db, "runs-global-fn")
         schedule_a = schedules_api.create_schedule(
             {
                 "name": "runs-global-a",

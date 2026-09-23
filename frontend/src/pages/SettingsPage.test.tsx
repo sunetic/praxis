@@ -9,82 +9,29 @@ const { settingsApi } = vi.hoisted(() => ({
   settingsApi: {
     get: vi.fn(),
     patch: vi.fn(),
-    testEngine: vi.fn(),
   },
 }))
 
 vi.mock("@/lib/api", () => ({ settingsApi }))
 
-describe("SettingsPage build engine", () => {
+describe("SettingsPage native model configuration", () => {
   beforeEach(() => {
     vi.clearAllMocks()
     settingsApi.get.mockResolvedValue({
-      build_engine: "external_cli",
-      external_cli_command: "claude",
       ai_api_key_configured: true,
       ai_model: "gpt-test",
       sql_allow_mutating: true,
-      ai_action_confirmation_bypass: false,
       context_window_tokens: 128000,
       context_compression_threshold_percent: 75,
     })
     settingsApi.patch.mockResolvedValue({ ai_api_key_configured: true })
   })
 
-  it("shows the shared Reasoning Engine as the built-in option", async () => {
-    settingsApi.get.mockResolvedValue({
-      build_engine: "reasoning",
-      external_cli_command: "",
-      ai_api_key_configured: true,
-      context_window_tokens: 128000,
-      context_compression_threshold_percent: 75,
-    })
-    const user = userEvent.setup()
-
+  it("does not expose a retired execution engine", async () => {
     render(<SettingsPage />)
-    await user.click(screen.getByRole("tab", { name: "构建引擎" }))
-
-    expect(await screen.findByText("内建 Reasoning Engine")).toBeInTheDocument()
-    expect(screen.getByText(/Chat、Function、Page 共用同一套推理与工具循环核心/)).toBeInTheDocument()
-  })
-
-  it("applies a validated command suggested by the backend", async () => {
-    settingsApi.testEngine.mockResolvedValue({
-      ok: true,
-      message: "连接成功",
-      suggested_command: "claude -p --output-format json",
-      flags_added: ["-p", "--output-format json"],
-      env_issues: [],
-    })
-    const user = userEvent.setup()
-
-    render(<SettingsPage />)
-    await user.click(screen.getByRole("tab", { name: "构建引擎" }))
-    const command = await screen.findByLabelText("CLI 命令")
-    await user.click(screen.getByRole("button", { name: "测试连接" }))
-
-    await waitFor(() => expect(settingsApi.testEngine).toHaveBeenCalledWith("claude"))
-    expect(command).toHaveValue("claude -p --output-format json")
-    expect(screen.getByText("连接成功")).toBeInTheDocument()
-  })
-
-  it("keeps the configured command when validation has no suggestion", async () => {
-    settingsApi.testEngine.mockResolvedValue({
-      ok: true,
-      message: "连接成功",
-      env_issues: [],
-    })
-    const user = userEvent.setup()
-
-    render(<SettingsPage />)
-    await user.click(screen.getByRole("tab", { name: "构建引擎" }))
-    const command = await screen.findByLabelText("CLI 命令")
-    await user.clear(command)
-    await user.type(command, "cursor --cli")
-    await user.click(screen.getByRole("button", { name: "测试连接" }))
-
-    await waitFor(() => expect(settingsApi.testEngine).toHaveBeenCalledWith("cursor --cli"))
-    expect(command).toHaveValue("cursor --cli")
+    await screen.findByLabelText("模型上下文窗口")
+    expect(screen.queryByRole("tab", { name: "构建引擎" })).not.toBeInTheDocument()
+    expect(screen.queryByLabelText("CLI 命令")).not.toBeInTheDocument()
   })
 
   it("shows the mainstream context defaults and saves a custom trigger", async () => {
@@ -157,33 +104,32 @@ describe("SettingsPage build engine", () => {
     })))
   })
 
-  it("enables AI action confirmation bypass from the safety tab", async () => {
+  it("offers write permission but no approval bypass", async () => {
     const user = userEvent.setup()
     render(<SettingsPage />)
 
     await user.click(screen.getByRole("tab", { name: "安全" }))
-    const bypass = await screen.findByRole("switch", { name: "Bypass 模式（跳过确认）" })
-    expect(bypass).not.toBeChecked()
-    expect(screen.getByText("变更需确认")).toBeInTheDocument()
+    const writes = await screen.findByRole("switch", { name: "允许写操作" })
+    expect(writes).toBeChecked()
+    expect(screen.getAllByRole("switch")).toHaveLength(1)
+    expect(screen.queryByText("Bypass 模式（跳过确认）")).not.toBeInTheDocument()
 
-    await user.click(bypass)
-
+    await user.click(writes)
     await waitFor(() => expect(settingsApi.patch).toHaveBeenCalledWith({
-      ai_action_confirmation_bypass: true,
+      sql_allow_mutating: false,
     }))
-    expect(screen.getByText("自动执行变更")).toBeInTheDocument()
   })
 
-  it("restores the bypass switch when saving fails", async () => {
+  it("restores write permission when saving fails", async () => {
     settingsApi.patch.mockRejectedValueOnce(new Error("save failed"))
     const user = userEvent.setup()
     render(<SettingsPage />)
 
     await user.click(screen.getByRole("tab", { name: "安全" }))
-    const bypass = await screen.findByRole("switch", { name: "Bypass 模式（跳过确认）" })
-    await user.click(bypass)
+    const writes = await screen.findByRole("switch", { name: "允许写操作" })
+    await user.click(writes)
 
     expect(await screen.findByRole("alert")).toHaveTextContent("保存失败，设置已恢复。请重试。")
-    expect(bypass).not.toBeChecked()
+    expect(writes).toBeChecked()
   })
 })

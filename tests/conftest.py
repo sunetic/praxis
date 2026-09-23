@@ -2,6 +2,8 @@ import os
 import sys
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
@@ -15,7 +17,10 @@ _settings.ai_base_url = os.getenv("TEST_AI_BASE_URL", "https://example.invalid/v
 _settings.ai_api_key = os.getenv("TEST_AI_API_KEY", "test-api-key")
 _settings.ai_model = os.getenv("TEST_AI_MODEL", "test-model")
 
-# Reset the cached LLM client so it picks up the patched settings above.
-import app.services.llm as _llm_module  # noqa: E402
 
-_llm_module._llm_client = None
+@pytest.fixture(autouse=True)
+def no_live_model_requests(monkeypatch):
+    """Unit/API tests must opt out of live models; real trials use tools/*_smoke.py."""
+    from pydantic_ai import models
+
+    monkeypatch.setattr(models, "ALLOW_MODEL_REQUESTS", False)

@@ -108,6 +108,8 @@ function toFriendlyInvokeError(t: ShellTranslatorFn, message: string, errorCode?
     sql_param_placeholder: t("fn.error.sqlParamPlaceholder"),
     sql_syntax_error: t("fn.error.sqlSyntaxError"),
     sql_object_not_found: t("fn.error.sqlObjectNotFound"),
+    cancelled: t("fn.error.cancelled"),
+    execution_owner_lost: t("fn.error.interrupted"),
   }
   const code = String(errorCode || "").trim()
   if (code && byCode[code]) return byCode[code]
@@ -174,6 +176,13 @@ const RUN_STATUS_ICON: Record<string, React.ReactNode> = {
   running: <Loader2 className="size-3.5 animate-spin text-blue-500" />,
   success: <CheckCircle2 className="size-3.5 text-emerald-500" />,
   failed: <XCircle className="size-3.5 text-destructive" />,
+  cancelled: <XCircle className="size-3.5 text-muted-foreground" />,
+  interrupted: <AlertTriangle className="size-3.5 text-amber-500" />,
+}
+
+function createRunId(): string {
+  if (typeof globalThis.crypto?.randomUUID === "function") return globalThis.crypto.randomUUID()
+  return `run-${Date.now()}-${Math.random().toString(16).slice(2)}`
 }
 
 function payloadFromRows(rows: InputRow[]): JsonObject {
@@ -219,9 +228,10 @@ export function FunctionListPage() {
   const [inputRows, setInputRows] = useState<InputRow[]>([{ id: "row-initial", key: "", value: "" }])
   const [suggestingInput, setSuggestingInput] = useState(false)
   const [invoking, setInvoking] = useState(false)
+  const [cancelling, setCancelling] = useState(false)
   const [invokeOutput, setInvokeOutput] = useState<JsonValue | null>(null)
   const [invokeError, setInvokeError] = useState("")
-  const [invokeMeta, setInvokeMeta] = useState<{ status?: string; durationMs?: number; runId?: string } | null>(null)
+  const [invokeMeta, setInvokeMeta] = useState<{ status?: string; durationMs?: number; runId?: string; functionId?: number } | null>(null)
   const [drawerPayload, setDrawerPayload] = useState<JsonObject | null>(null)
   const [runDrawerOpen, setRunDrawerOpen] = useState(false)
   const [datasources, setDatasources] = useState<DataSource[]>([])
@@ -376,17 +386,20 @@ export function FunctionListPage() {
     if (!invokeTarget || invoking) return
     const payload = payloadFromRows(inputRows)
     const invokeConfig = resolveInvokeConfig(invokeTarget)
+    const functionId = invokeTarget.id
+    const runId = createRunId()
     setDrawerPayload(payload)
     setInvoking(true)
     setInvokeOutput(null)
     setInvokeError("")
-    setInvokeMeta(null)
+    setInvokeMeta({ status: "running", runId, functionId })
     setInvokeTarget(null)
     setActiveTab("history")
     setRunDrawerOpen(true)
 
     try {
-      const res: InvokeResponse = await functionsApi.invoke(invokeTarget.id, {
+      const res: InvokeResponse = await functionsApi.invoke(functionId, {
+        run_id: runId,
         payload,
         write_mode: invokeConfig.writeMode,
         execution_mode: invokeConfig.executionMode,
@@ -398,7 +411,8 @@ export function FunctionListPage() {
       setInvokeMeta({
         status: res.status,
         durationMs: res.duration_ms,
-        runId: res.run_id,
+        runId: res.run_id || runId,
+        functionId,
       })
       if (res.error_message) {
         setInvokeError(toFriendlyInvokeError(t, res.error_message, res.error_code))
@@ -423,9 +437,31 @@ export function FunctionListPage() {
         ? formatInvokeErrorPayload(detailPayload, friendly)
         : friendly
       setInvokeError(formatted)
-      setInvokeMeta({ status: "failed" })
+      setInvokeMeta({ status: "failed", runId, functionId })
     } finally {
       setInvoking(false)
+    }
+  }
+
+  const handleCancelInvocation = async () => {
+    if (!invoking || cancelling || !invokeMeta?.runId || !invokeMeta.functionId) return
+    setCancelling(true)
+    try {
+      const res: InvokeResponse = await functionsApi.cancelRun(invokeMeta.functionId, invokeMeta.runId)
+      setInvokeOutput(res.output ?? null)
+      setInvokeMeta((current) => ({
+        ...current,
+        status: res.status || "cancelled",
+        durationMs: res.duration_ms,
+      }))
+      if (res.error_message) {
+        setInvokeError(toFriendlyInvokeError(t, res.error_message, res.error_code))
+      }
+      fetchRuns()
+    } catch {
+      toast.error(t("fn.cancelRunFailed"))
+    } finally {
+      setCancelling(false)
     }
   }
 
@@ -883,9 +919,15 @@ export function FunctionListPage() {
 
             <section>
               {invoking ? (
-                <div className="flex items-center gap-2 rounded-lg border border-border bg-muted/60 px-3 py-3 text-xs text-muted-foreground">
-                  <Loader2 className="size-4 animate-spin" />
-                  {t("fn.executing")}
+                <div className="flex items-center justify-between gap-3 rounded-lg border border-border bg-muted/60 px-3 py-2 text-xs text-muted-foreground">
+                  <span className="flex items-center gap-2">
+                    <Loader2 className="size-4 animate-spin" />
+                    {cancelling ? t("fn.cancelling") : t("fn.executing")}
+                  </span>
+                  <Button size="sm" variant="outline" onClick={handleCancelInvocation} disabled={cancelling}>
+                    <XCircle className="size-3.5" />
+                    {t("fn.stopExecution")}
+                  </Button>
                 </div>
               ) : invokeError ? (
                 <CodeBlock label={t("fn.outputLabel")} content={invokeError} className="text-destructive" />

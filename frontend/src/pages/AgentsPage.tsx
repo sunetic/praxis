@@ -15,8 +15,9 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Input } from "@/components/ui/input"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Textarea } from "@/components/ui/textarea"
-import { agentsApi, chatApi, datasourcesApi, filterConnectableDatasources, messagesApi, skillsApi } from "@/lib/api"
-import type { Agent, DataSource, Skill } from "@/lib/api"
+import { agentsApi, capabilitiesApi, datasourcesApi, filterConnectableDatasources, skillsApi } from "@/lib/api"
+import type { Agent, DataSource, Skill, ToolInfo } from "@/lib/api"
+import { agentRunsApi } from "@/lib/agentRuns"
 
 const PAGE_SIZE = 10
 
@@ -140,6 +141,7 @@ export function AgentsPage() {
   const [agents, setAgents] = useState<Agent[]>([])
   const [datasources, setDatasources] = useState<DataSource[]>([])
   const [skills, setSkills] = useState<Skill[]>([])
+  const [tools, setTools] = useState<ToolInfo[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [query, setQuery] = useState("")
@@ -168,6 +170,7 @@ export function AgentsPage() {
   })
   const handoffHandledRef = useRef(false)
   const editParamHandledRef = useRef(false)
+  const openingConversation = useRef(false)
 
   const skillNameLookup = useMemo(() => {
     const lookup = new Map<string, string>()
@@ -188,8 +191,9 @@ export function AgentsPage() {
 
   const filteredRunnableDatasources = useMemo(() => {
     const keyword = runDatasourceFilter.trim().toLowerCase()
-    if (!keyword) return runnableDatasources
-    return runnableDatasources.filter((item) => {
+    const authorized = runnableDatasources.filter(item => runDatasourcePickerAgent?.datasource_ids.includes(item.id))
+    if (!keyword) return authorized
+    return authorized.filter((item) => {
       return (
         item.name.toLowerCase().includes(keyword) ||
         (item.cluster_key || "").toLowerCase().includes(keyword) ||
@@ -197,7 +201,7 @@ export function AgentsPage() {
         String(item.id).includes(keyword)
       )
     })
-  }, [runnableDatasources, runDatasourceFilter])
+  }, [runnableDatasources, runDatasourceFilter, runDatasourcePickerAgent])
 
   /* ---------- filtered + paginated agents ---------- */
 
@@ -223,7 +227,8 @@ export function AgentsPage() {
   const getSelectedRunDatasourceIds = (agentId: number): number[] => {
     const selected = runDatasourceIdsByAgent[agentId] || []
     if (selected.length === 0) return []
-    const availableIds = new Set(runnableDatasources.map((item) => item.id))
+    const authorized = agents.find(item => item.id === agentId)?.datasource_ids ?? []
+    const availableIds = new Set(runnableDatasources.filter(item => authorized.includes(item.id)).map((item) => item.id))
     const normalized: number[] = []
     for (const item of selected) {
       if (!availableIds.has(item)) continue
@@ -256,7 +261,7 @@ export function AgentsPage() {
   const handleSelectAllRunDatasources = (agentId: number) => {
     setRunDatasourceIdsByAgent((prev) => ({
       ...prev,
-      [agentId]: runnableDatasources.map((item) => item.id),
+      [agentId]: runnableDatasources.filter(item => agents.find(agent => agent.id === agentId)?.datasource_ids.includes(item.id)).map((item) => item.id),
     }))
   }
 
@@ -307,29 +312,23 @@ export function AgentsPage() {
   }
 
   const handleConfirmRunAgent = async (agent: Agent) => {
+    if (openingConversation.current) return
+    openingConversation.current = true
     const selectedDatasourceIds = getSelectedRunDatasourceIds(agent.id)
-    closeRunDatasourcePicker()
     setRunningAgentId(agent.id)
     try {
-      const result = await agentsApi.run(agent.id, {
-        datasource_ids: selectedDatasourceIds,
-        title: t("agents.runSessionTitle").replace("{name}", agent.name),
-      })
-      const params = new URLSearchParams({
-        from: "agent",
-        autoRun: "1",
-        conversationId: String(result.conversation.id),
-        agentId: String(agent.id),
-        agentName: agent.name,
-      })
-      if (result.datasource_ids.length > 0) {
-        params.set("runDatasourceIds", result.datasource_ids.join(","))
-      }
+      const conversation = await agentRunsApi.createConversation(
+        t("agents.runSessionTitle").replace("{name}", agent.name),
+        { agent_id: agent.id, datasource_ids: selectedDatasourceIds },
+      )
+      const params = new URLSearchParams({ conversationId: conversation.id })
+      closeRunDatasourcePicker()
       navigate(`/chat?${params.toString()}`)
     } catch (error) {
       console.error("Failed to run agent:", error)
       toast.error(t("agents.toast.runFailed"))
     } finally {
+      openingConversation.current = false
       setRunningAgentId(null)
     }
   }
@@ -340,13 +339,16 @@ export function AgentsPage() {
     setLoading(true)
     setError(null)
     try {
-      const [agentsData, dsData] = await Promise.all([
+      const [agentsData, dsData, skillData, capabilities] = await Promise.all([
         agentsApi.list(),
         datasourcesApi.list(),
+        skillsApi.list(),
+        capabilitiesApi.list(),
       ])
       setAgents(agentsData)
       setDatasources(filterConnectableDatasources(dsData))
-      setSkills(await skillsApi.list())
+      setSkills(skillData)
+      setTools(capabilities.tools)
     } catch (err) {
       console.error("Failed to fetch:", err)
       setError(t("agents.toast.loadFailed"))
@@ -424,8 +426,8 @@ export function AgentsPage() {
 
     const run = async () => {
       const conversationIdRaw = searchParams.get("conversationId")
-      const conversationId = Number(conversationIdRaw)
-      if (!Number.isInteger(conversationId) || conversationId <= 0) {
+      const conversationId = conversationIdRaw
+      if (!conversationId) {
         toast.message(t("agents.toast.handoffEnter"))
         startGuidedBuilder()
         clearHandoffParams()
@@ -434,29 +436,12 @@ export function AgentsPage() {
 
       setLoadingHandoff(true)
       try {
-        const messages = await messagesApi.list(conversationId)
+        const runs = await agentRunsApi.runs(conversationId)
+        const messages = runs.flatMap(run => [
+          { role: "user", content: run.prompt },
+          ...(run.output ? [{ role: "assistant", content: run.output }] : []),
+        ])
         const draft = buildDraftFromConversation(messages, t)
-
-        let suggestedSkills: string[] = []
-        try {
-          const events = await chatApi.listEvents(conversationId)
-          for (let index = events.length - 1; index >= 0; index -= 1) {
-            const event = events[index]
-            if (event.event_type !== "skill_delta" || !event.payload) continue
-            const payload = event.payload as Record<string, unknown>
-            if (!Array.isArray(payload.active_skills)) continue
-            suggestedSkills = payload.active_skills
-              .filter((item): item is string => typeof item === "string")
-              .map((item) => item.trim())
-              .filter(Boolean)
-            break
-          }
-        } catch {
-          suggestedSkills = []
-        }
-        if (suggestedSkills.length > 0) {
-          draft.skills = suggestedSkills
-        }
 
         setEditingId(null)
         setFormData(draft)
@@ -559,6 +544,7 @@ export function AgentsPage() {
         prompt: agent.prompt,
         tools: agent.tools || [],
         skills: agent.skills || [],
+        datasource_ids: agent.datasource_ids,
       })
     } else {
       setEditingId(null)
@@ -601,6 +587,7 @@ export function AgentsPage() {
   }
 
   const handleSave = async () => {
+    if (saving || loading || error) return
     if (!formData.name || !formData.prompt) {
       toast.error(t("agents.toast.namePromptRequired"))
       return
@@ -614,6 +601,7 @@ export function AgentsPage() {
         prompt: formData.prompt,
         tools: formData.tools,
         skills: formData.skills,
+        datasource_ids: formData.datasource_ids ?? [],
       }
       if (editingId) {
         await agentsApi.update(editingId, payload)
@@ -667,8 +655,11 @@ export function AgentsPage() {
         </Button>
       </FilterToolbarGroup>
       <FilterToolbarGroup>
-        <Button size="sm" onClick={startGuidedBuilder} disabled={loadingHandoff}>
-          <Sparkles className="size-4" />
+        <Button variant="outline" size="sm" onClick={startGuidedBuilder} disabled={loadingHandoff || loading || Boolean(error)}>
+          {t("agents.guidedDialogTitle")}
+        </Button>
+        <Button size="sm" onClick={() => handleOpenForm()} disabled={loadingHandoff || loading || Boolean(error)}>
+          <Bot className="size-4" />
           {t("agents.newAgent")}
         </Button>
       </FilterToolbarGroup>
@@ -727,7 +718,7 @@ export function AgentsPage() {
                         {t("agents.clearSearch")}
                       </Button>
                     ) : (
-                      <Button variant="ghost" size="sm" onClick={startGuidedBuilder}>
+                      <Button variant="ghost" size="sm" onClick={() => handleOpenForm()}>
                         <Sparkles className="size-4" />
                         {t("agents.newAgent")}
                       </Button>
@@ -776,7 +767,8 @@ export function AgentsPage() {
                       <Button
                         variant="outline"
                         size="icon-xs"
-                        disabled={runningAgentId !== null}
+                        aria-label={`${agent.name} · ${t("agents.runDsRun")}`}
+                        disabled={runningAgentId !== null || agent.status !== "active"}
                         onClick={() => handleRunAgent(agent)}
                       >
                         {runningAgentId === agent.id ? (
@@ -788,6 +780,7 @@ export function AgentsPage() {
                       <Button
                         variant="ghost"
                         size="icon-xs"
+                        aria-label={`${agent.name} · ${t("agents.dialogTitleEdit")}`}
                         onClick={() => handleOpenForm(agent)}
                       >
                         <Pencil className="size-3.5" />
@@ -796,6 +789,7 @@ export function AgentsPage() {
                         variant="ghost"
                         size="icon-xs"
                         className="text-destructive hover:text-destructive"
+                        aria-label={`${agent.name} · ${t("agents.deleteTitle")}`}
                         onClick={() => setDeleteConfirm({ id: agent.id, name: agent.name })}
                       >
                         <Trash2 className="size-3.5" />
@@ -853,8 +847,9 @@ export function AgentsPage() {
           </DialogHeader>
           <div className="space-y-4">
             <div>
-              <label className="block text-sm font-medium mb-1">{t("agents.label.name")}</label>
+              <label htmlFor="agent-name" className="block text-sm font-medium mb-1">{t("agents.label.name")}</label>
               <Input
+                id="agent-name"
                 value={formData.name || ""}
                 onChange={(e) => setFormData({ ...formData, name: e.target.value })}
                 placeholder={t("agents.placeholder.name")}
@@ -862,8 +857,9 @@ export function AgentsPage() {
             </div>
 
             <div>
-              <label className="block text-sm font-medium mb-1">{t("agents.label.description")}</label>
+              <label htmlFor="agent-description" className="block text-sm font-medium mb-1">{t("agents.label.description")}</label>
               <Input
+                id="agent-description"
                 value={formData.description || ""}
                 onChange={(e) => setFormData({ ...formData, description: e.target.value })}
                 placeholder={t("agents.placeholder.description")}
@@ -871,8 +867,9 @@ export function AgentsPage() {
             </div>
 
             <div>
-              <label className="block text-sm font-medium mb-1">{t("agents.label.prompt")}</label>
+              <label htmlFor="agent-prompt" className="block text-sm font-medium mb-1">{t("agents.label.prompt")}</label>
               <Textarea
+                id="agent-prompt"
                 value={formData.prompt || ""}
                 onChange={(e) => setFormData({ ...formData, prompt: e.target.value })}
                 placeholder={t("agents.placeholder.prompt")}
@@ -908,11 +905,46 @@ export function AgentsPage() {
               </div>
             </div>
 
+            <fieldset className="space-y-2" disabled={saving || loading || Boolean(error)}>
+              <legend className="text-sm font-medium">{t("agents.label.tools")}</legend>
+              <p className="text-xs text-muted-foreground">{t("agents.toolsHint")}</p>
+              <div className="max-h-48 overflow-y-auto divide-y divide-border">
+                {[...new Set([...tools.map(tool => tool.name), ...(formData.tools ?? [])])].map(name => {
+                  const tool = tools.find(item => item.name === name)
+                  return <label key={name} className="flex min-h-11 items-start gap-2 py-2">
+                    <input type="checkbox" className="mt-1" checked={(formData.tools ?? []).includes(name)}
+                      onChange={event => setFormData(current => ({ ...current, tools: event.target.checked
+                        ? [...(current.tools ?? []), name] : (current.tools ?? []).filter(item => item !== name) }))} />
+                    <span className="min-w-0 text-sm"><span className="break-all">{name}</span>
+                      <span className="block text-xs text-muted-foreground">{tool?.description ?? t("agents.unavailableSelection")}</span>
+                    </span>
+                  </label>
+                })}
+              </div>
+            </fieldset>
+
+            <fieldset className="space-y-2" disabled={saving || loading || Boolean(error)}>
+              <legend className="text-sm font-medium">{t("agents.label.authorizedDatasources")}</legend>
+              <p className="text-xs text-muted-foreground">{t("agents.datasourceAccessHint")}</p>
+              <div className="max-h-40 overflow-y-auto">
+                {[...new Set([...datasources.map(item => item.id), ...(formData.datasource_ids ?? [])])].map(id => {
+                  const source = datasources.find(item => item.id === id)
+                  const checked = (formData.datasource_ids ?? []).includes(id)
+                  return <label key={id} className="flex min-h-11 items-center gap-2 text-sm">
+                    <input type="checkbox" checked={checked} disabled={!checked && source?.status !== "active"}
+                      onChange={event => setFormData(current => ({ ...current, datasource_ids: event.target.checked
+                        ? [...(current.datasource_ids ?? []), id] : (current.datasource_ids ?? []).filter(item => item !== id) }))} />
+                    <span>{source?.name ?? `#${id}`}{source?.status !== "active" && <span className="ml-2 text-xs text-muted-foreground">{t("agents.unavailableSelection")}</span>}</span>
+                  </label>
+                })}
+              </div>
+            </fieldset>
+
             <DialogFooter className="gap-2 pt-4">
               <Button variant="outline" onClick={handleCloseForm}>
                 {t("agents.cancel")}
               </Button>
-              <Button onClick={handleSave} disabled={saving}>
+              <Button onClick={handleSave} disabled={saving || loading || Boolean(error)}>
                 {saving ? <Loader2 className="size-4 mr-2 animate-spin" /> : <Check className="size-4 mr-2" />} {t("agents.save")}
               </Button>
             </DialogFooter>
@@ -1028,6 +1060,7 @@ export function AgentsPage() {
                         }
                       >
                         <Checkbox
+                          aria-label={item.name}
                           checked={selected}
                           onCheckedChange={(checked) =>
                             handleToggleRunDatasource(

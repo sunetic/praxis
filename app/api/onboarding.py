@@ -39,7 +39,7 @@ async def complete_onboarding(
     """
     llm_config = payload.get("llm_config", {})
 
-    # Save using the keys that LLMClient reads: ai_base_url, ai_api_key, ai_model
+    # New logical runs snapshot these settings; existing runs keep their config.
     if "llm_api_key" in llm_config:
         upsert_setting(db, "ai_api_key", llm_config["llm_api_key"])
     if "llm_model" in llm_config:
@@ -59,30 +59,18 @@ async def complete_onboarding(
     except ImportError:
         pass
 
-    # Reset LLM singleton so next request picks up the new config
-    try:
-        import app.services.llm as _llm_mod
-
-        _llm_mod._llm_client = None
-    except Exception:
-        pass
-
     # Trigger scheduler startup if not already running
     try:
         from app.core.config import get_settings
-        from app.services.scheduler.runtime_state import get_scheduler_worker, set_scheduler_worker
-        from app.services.scheduler.worker import SchedulerWorker
+        from app.services.scheduler.runtime_state import get_scheduler_worker
 
-        if get_scheduler_worker() is None:
-            s = get_settings()
-            worker = SchedulerWorker(
-                refresh_interval_seconds=s.scheduler_refresh_interval_seconds,
-                job_coalesce=s.scheduler_job_coalesce,
-                job_misfire_grace_seconds=s.scheduler_job_misfire_grace_seconds,
-                job_max_instances=s.scheduler_job_max_instances,
-            )
+        worker = get_scheduler_worker()
+        if (
+            get_settings().scheduler_autostart
+            and worker is not None
+            and not worker.health()["running"]
+        ):
             await worker.start()
-            set_scheduler_worker(worker)
             logger.info("scheduler_started_after_onboarding")
     except Exception as exc:
         logger.warning("scheduler_start_failed_after_onboarding error=%s", exc)

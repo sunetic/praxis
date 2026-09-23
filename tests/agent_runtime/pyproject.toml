@@ -1,0 +1,5 @@
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+pythonpath = ["../.."]
+testpaths = ["."]
+markers = ["llm: opt-in, read-only live endpoint contract"]

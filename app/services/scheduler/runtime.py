@@ -1,15 +1,13 @@
 from __future__ import annotations
 
-import inspect
 import json
-import os
-import signal
 from collections.abc import Awaitable, Callable
 from typing import Any
 
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.models import models
+from app.services.agent.persistence import run_db
 from app.services.agent.scheduled_runner import ScheduledAgentRunner
 from app.services.function.runtime import FunctionRuntimeResult, FunctionRuntimeService
 from app.services.scheduler.result import ScheduleRuntimeResult
@@ -31,12 +29,11 @@ class ScheduleTargetRuntimeService:
         agent_runtime_service: ScheduledAgentRunner | None = None,
     ) -> None:
         self._session_factory = session_factory
+        self._owns_function_runtime = function_runtime_service is None
         self._function_runtime = function_runtime_service or FunctionRuntimeService(
             session_factory=session_factory
         )
-        self._agent_runtime = agent_runtime_service or ScheduledAgentRunner(
-            session_factory=session_factory
-        )
+        self._agent_runtime = agent_runtime_service
 
     async def invoke_schedule(
         self,
@@ -44,6 +41,7 @@ class ScheduleTargetRuntimeService:
         *,
         trigger_type: str,
         trace_id: str | None = None,
+        schedule_run_id: str | None = None,
     ) -> ScheduleRuntimeResult:
         target_type = str(schedule.target_type or "function").strip().lower()
         payload = dict(schedule.input_payload or {})
@@ -60,7 +58,7 @@ class ScheduleTargetRuntimeService:
             )
 
         if target_type == "agent":
-            agent = self._load_agent(schedule)
+            agent = await run_db(self._load_agent, schedule)
             if agent is None:
                 return ScheduleRuntimeResult(
                     run_id="",
@@ -71,10 +69,12 @@ class ScheduleTargetRuntimeService:
                     error_message=f"Agent {schedule.target_id} not found",
                     duration_ms=0,
                 )
+            if self._agent_runtime is None or schedule_run_id is None:
+                raise RuntimeError("Application-owned Agent runtime and occurrence are required")
             return await self._agent_runtime.invoke(
-                agent=agent,
+                agent_id=agent.id,
                 prompt=str(schedule.input_prompt or ""),
-                trace_id=trace_id,
+                schedule_run_id=schedule_run_id,
                 datasource_id=effective_datasource_id,
             )
 
@@ -89,7 +89,7 @@ class ScheduleTargetRuntimeService:
                 duration_ms=0,
             )
 
-        function = self._load_function(schedule)
+        function = await run_db(self._load_function, schedule)
         if function is None:
             return ScheduleRuntimeResult(
                 run_id="",
@@ -117,21 +117,9 @@ class ScheduleTargetRuntimeService:
         )
         return self._normalize_function_result(function_result)
 
-    def shutdown(self) -> None:
-        executor = getattr(self._function_runtime, "_executor", None)
-        if executor is None:
-            return
-        # Kill worker processes immediately so Ctrl-C / SIGINT is not blocked
-        # by in-flight subprocess work. ProcessPoolExecutor.shutdown(wait=True)
-        # blocks until workers finish; cancel_futures=True only prevents new
-        # submissions but does not terminate running processes.
-        pids = [p.pid for p in getattr(executor, "_processes", {}).values() if p.is_alive()]
-        executor.shutdown(wait=False, cancel_futures=True)
-        for pid in pids:
-            try:
-                os.kill(pid, signal.SIGTERM)
-            except ProcessLookupError:
-                pass
+    async def shutdown(self) -> None:
+        if self._owns_function_runtime:
+            await self._function_runtime.close()
 
     def _load_function(self, schedule: models.Schedule) -> models.Function | None:
         preloaded_function = getattr(schedule, "__dict__", {}).get("function")
@@ -188,13 +176,7 @@ class ScheduleTargetRuntimeService:
             "timeout_seconds": 30.0,
             "trace_id": trace_id,
         }
-        try:
-            signature = inspect.signature(self._function_runtime.invoke)
-            allowed = set(signature.parameters.keys())
-        except (TypeError, ValueError):
-            allowed = set(invoke_kwargs.keys()) | {"function"}
-        filtered_kwargs = {key: value for key, value in invoke_kwargs.items() if key in allowed}
-        return await self._function_runtime.invoke(function, **filtered_kwargs)
+        return await self._function_runtime.invoke(function, **invoke_kwargs)
 
     def _summarize_output(self, output: Any | None) -> str | None:
         if output is None:

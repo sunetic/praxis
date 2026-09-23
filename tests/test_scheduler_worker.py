@@ -74,6 +74,9 @@ def _create_function_and_schedule(
 
 
 class StubRuntime:
+    async def close(self):
+        pass
+
     def __init__(self, results: list[FunctionRuntimeResult]):
         self.results = results
         self.calls: list[tuple[int, dict, int | None]] = []
@@ -83,9 +86,11 @@ class StubRuntime:
         function: models.Function,
         payload: dict,
         datasource_id: int | None = None,
+        scope_metadata: dict | None = None,
         timeout_seconds: float = 30.0,
         trace_id: str | None = None,
     ):
+        assert scope_metadata is not None and scope_metadata["scope_type"] == "scheduler"
         del timeout_seconds, trace_id
         self.calls.append((function.id, payload, datasource_id))
         if self.results:
@@ -111,9 +116,11 @@ class RaisingRuntime:
         function: models.Function,
         payload: dict,
         datasource_id: int | None = None,
+        scope_metadata: dict | None = None,
         timeout_seconds: float = 30.0,
         trace_id: str | None = None,
     ):
+        assert scope_metadata is not None and scope_metadata["scope_type"] == "scheduler"
         del timeout_seconds, trace_id
         self.calls.append((function.id, payload, datasource_id))
         raise self.error

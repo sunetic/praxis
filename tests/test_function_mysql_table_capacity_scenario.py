@@ -1,13 +1,8 @@
 from __future__ import annotations
 
-import json
-from pathlib import Path
 from typing import Any
 
 import pytest
-
-from app.services.chat import ChatService
-from app.services.function.chat_agent import FunctionChatAgent
 
 MYSQL_TABLE_CAPACITY_PROMPT = """
 构建一个单一目标的 MySQL Function：查询指定数据源中占用空间最大的表。
@@ -97,45 +92,6 @@ def main(payload, context):
 '''
 
 
-def _tool_response(call_id: str, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
-    return {
-        "choices": [
-            {
-                "delta": {
-                    "tool_calls": [
-                        {
-                            "index": 0,
-                            "id": call_id,
-                            "type": "function",
-                            "function": {
-                                "name": name,
-                                "arguments": json.dumps(arguments),
-                            },
-                        }
-                    ]
-                },
-                "finish_reason": "tool_calls",
-            }
-        ]
-    }
-
-
-def _text_response(content: str) -> dict[str, Any]:
-    return {"choices": [{"delta": {"content": content}, "finish_reason": "stop"}]}
-
-
-class _ScriptedLLM:
-    def __init__(self, responses: list[dict[str, Any]]) -> None:
-        self.responses = list(responses)
-        self.calls: list[dict[str, Any]] = []
-
-    async def chat(self, messages, tools=None, stream=False, **kwargs):
-        self.calls.append({"messages": messages, "tools": tools, "stream": stream})
-        if not self.responses:
-            raise AssertionError("unexpected extra LLM call")
-        yield self.responses.pop(0)
-
-
 class _RecordingDB:
     def __init__(
         self,
@@ -168,59 +124,10 @@ def _load_main(code: str, database: _RecordingDB):
     return namespace["main"]
 
 
-@pytest.mark.asyncio
-async def test_mysql_table_capacity_function_build_and_business_acceptance(
-    tmp_path: Path,
-) -> None:
-    (tmp_path / "main.py").write_text("", encoding="utf-8")
-    llm = _ScriptedLLM(
-        [
-            _tool_response("read", "function_source_read", {}),
-            _tool_response("contract", "get_function_runtime_contract", {}),
-            _tool_response(
-                "write",
-                "function_source_replace",
-                {"code": MYSQL_TABLE_CAPACITY_CODE},
-            ),
-            _tool_response(
-                "probe",
-                "function_runtime_probe",
-                {"payload": {"datasource_id": 7, "schema": "sales", "limit": 10}},
-            ),
-            _tool_response(
-                "finish",
-                "function_build_finish",
-                {
-                    "outcome": "completed",
-                    "assistant_message": "MySQL 表容量排行 Function 已完成并通过运行验证。",
-                    "diff_summary": "Added parameterized information_schema table capacity query",
-                    "tests_suggested": [
-                        "指定 schema 查询容量排行",
-                        "不指定 schema 时确认系统库被排除",
-                        "验证数据库异常不会被吞掉",
-                    ],
-                    "risk_notes": ["table_rows is an estimated row count for InnoDB"],
-                },
-            ),
-            _text_response("MySQL 表容量排行 Function 已完成并通过运行验证。"),
-        ]
-    )
-    agent = FunctionChatAgent(chat_service=ChatService(llm=llm))
-
-    build_result = await agent.run_coding_task(
-        goal=MYSQL_TABLE_CAPACITY_PROMPT,
-        workspace_dir=tmp_path,
-        purpose="implement",
-        build_context={"datasource_id": 7, "database_type": "mysql"},
-        max_iterations=10,
-    )
-
-    assert build_result.result_status == "completed"
-    assert build_result.changed_files == ["main.py"]
-    assert "information_schema" in build_result.diff_summary
-    assert all(call["stream"] is True for call in llm.calls)
-
-    generated_code = (tmp_path / "main.py").read_text(encoding="utf-8")
+def test_frozen_mysql_capacity_reference_business_contract() -> None:
+    # Preserve the task and its objective business assertions. Native authoring
+    # is covered by tests/agent_runtime; this frozen code is not LLM output.
+    generated_code = MYSQL_TABLE_CAPACITY_CODE
     rows = [
         {
             "table_schema": "sales",

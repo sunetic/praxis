@@ -17,7 +17,6 @@ EXPECTED_SKILLS = {
     "pg-replication-check": ("postgresql", False, "built_in"),
     "pg-slow-query-triage": ("postgresql", False, "built_in"),
     "pg-vacuum-health": ("postgresql", False, "built_in"),
-    "skill-layered-diagnosis-policy": ("general", True, "built_in"),
 }
 
 
@@ -39,10 +38,10 @@ def test_builtin_skill_metadata_snapshot():
     assert actual == EXPECTED_SKILLS
 
 
-def test_only_policy_is_always_apply():
+def test_domain_knowledge_is_not_an_always_on_execution_policy():
     _, skills = _load_builtin()
     always_on = [s.name for s in skills if s.always_apply]
-    assert always_on == ["skill-layered-diagnosis-policy"]
+    assert always_on == []
 
 
 def test_mysql_skills_have_mysql_database():
@@ -77,14 +76,14 @@ def test_description_min_length():
         assert len(s.description) >= 20, f"{s.name} description too short: {s.description!r}"
 
 
-def test_database_claim_provenance_exposes_a_verifier_policy_extension():
+def test_database_claim_provenance_is_domain_knowledge_without_completion_protocol():
     store, _ = _load_builtin()
     skill = store.get("database-claim-provenance")
 
     assert skill is not None
     assert skill.always_apply is False
-    assert "<completion_verification_policy>" in skill.rules_prompt
-    assert "actual query request and returned evidence" in skill.rules_prompt
+    assert "<completion_verification_policy>" not in skill.prompt
+    assert "Reconcile headline totals" in skill.rules_prompt
 
 
 def test_all_versions_are_semver():

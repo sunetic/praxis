@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from "react"
 import { useNavigate, useParams } from "react-router-dom"
 import { toast } from "sonner"
+import ReactMarkdown from "react-markdown"
+import remarkGfm from "remark-gfm"
 import { useShellI18n } from "@/i18n/shellI18n"
 import {
   AlertTriangle,
@@ -154,7 +156,16 @@ function formatJsonLike(value: unknown, fallback = "-"): string {
   }
 }
 
-function describeRunStatus(run: ScheduleRun): string {
+function describeRunStatus(run: ScheduleRun, t: ReturnType<typeof useShellI18n>["t"]): string {
+  if (run.target_type === "agent") {
+    const labels: Record<string, Parameters<typeof t>[0]> = {
+      queued: "runtime.queued", running: "runtime.executing",
+      waiting_approval: "runtime.awaitingApproval", finished: "runtime.finished",
+      cancelled: "runtime.stopped", limited: "runtime.runLimitReached",
+      failed: "runtime.runFailed", interrupted: "runtime.interruptedReconcileBeforeResuming",
+    }
+    if (labels[run.status]) return t(labels[run.status])
+  }
   const schedulerStatus = String(run.status || "").trim() || "-"
   const runtimeStatus = String(run.runtime_status || "").trim()
   if (!runtimeStatus || runtimeStatus === schedulerStatus) return schedulerStatus
@@ -162,7 +173,7 @@ function describeRunStatus(run: ScheduleRun): string {
 }
 
 function isRepairableRun(run: ScheduleRun | null): boolean {
-  return String(run?.status || "").trim().toLowerCase() === "running"
+  return run?.target_type !== "agent" && String(run?.status || "").trim().toLowerCase() === "running"
 }
 
 function extractFunctionInputContract(fn: FunctionSummary | null): FunctionContractField[] {
@@ -294,7 +305,7 @@ export function SchedulerConsolePage() {
     () => formatJsonLike(selectedRun?.output_payload ?? selectedRun?.output_summary ?? selectedRun?.error_summary ?? "-", "-"),
     [selectedRun]
   )
-  const selectedRunStatusText = useMemo(() => describeRunStatus(selectedRun || ({} as ScheduleRun)), [selectedRun])
+  const selectedRunStatusText = useMemo(() => describeRunStatus(selectedRun || ({} as ScheduleRun), t), [selectedRun, t])
   const selectedInputPayloadText = useMemo(
     () => formatJsonLike(selectedRunSchedule?.input_payload, "{}"),
     [selectedRunSchedule?.input_payload]
@@ -418,7 +429,7 @@ export function SchedulerConsolePage() {
   }, [refreshRuns, runPage])
 
   useEffect(() => {
-    const hasRunningRun = runs.some((r) => r.status === "running")
+    const hasRunningRun = runs.some((r) => ["queued", "running", "waiting_approval"].includes(r.status))
     const interval = hasRunningRun ? 2000 : 10000
     const timer = window.setInterval(() => {
       refreshSchedules().catch(() => {})
@@ -504,7 +515,7 @@ export function SchedulerConsolePage() {
       timezone,
       datasource_id: form.datasource_id ? Number(form.datasource_id) : null,
       status: form.status,
-      max_retries: Number(form.max_retries || "0"),
+      max_retries: form.target_type === "agent" ? 0 : Number(form.max_retries || "0"),
       retry_backoff_seconds: Number(form.retry_backoff_seconds || "60"),
       input_prompt: form.input_prompt.trim() || undefined,
       input_payload: parsePayloadOrThrow(form.input_payload_text),
@@ -542,7 +553,7 @@ export function SchedulerConsolePage() {
         target_id: targetId,
         timezone: form.timezone.trim() || "Asia/Shanghai",
         datasource_id: form.datasource_id ? Number(form.datasource_id) : null,
-        max_retries: Number(form.max_retries || "0"),
+        max_retries: form.target_type === "agent" ? 0 : Number(form.max_retries || "0"),
         retry_backoff_seconds: Number(form.retry_backoff_seconds || "60"),
         input_prompt: form.input_prompt.trim() || undefined,
         input_payload: parsePayloadOrThrow(form.input_payload_text),
@@ -967,7 +978,7 @@ export function SchedulerConsolePage() {
                       <TableCell><Badge variant="outline" className="text-[11px]">{meta.type}</Badge></TableCell>
                       <TableCell className="max-w-[180px] truncate font-mono text-[11px] text-muted-foreground">{run.run_id}</TableCell>
                       <TableCell>
-                        <Badge variant={run.status === "success" ? "secondary" : run.status === "failed" ? "outline" : "default"} className="text-[11px]" title={selectedRun?.id === run.id ? selectedRunStatusText : describeRunStatus(run)}>{describeRunStatus(run)}</Badge>
+                        <Badge variant={run.status === "success" ? "secondary" : run.status === "failed" ? "outline" : "default"} className="text-[11px]" title={selectedRun?.id === run.id ? selectedRunStatusText : describeRunStatus(run, t)}>{describeRunStatus(run, t)}</Badge>
                       </TableCell>
                       <TableCell className="text-xs text-muted-foreground">{run.trigger_type}</TableCell>
                       <TableCell className="text-xs tabular-nums text-muted-foreground">{run.attempt}/{Math.max((run.max_retries ?? 0) + 1, 1)}</TableCell>
@@ -1009,11 +1020,16 @@ export function SchedulerConsolePage() {
             </div>
           </DrawerHeader>
           <DrawerBody className="space-y-4">
+            {selectedRun?.target_type === "agent" && selectedRun.conversation_id ? (
+              <Button variant="outline" className="min-h-11" onClick={() => navigate(`/chat?conversationId=${encodeURIComponent(selectedRun.conversation_id!)}`)}>
+                {t("runtime.openRunConversation")}
+              </Button>
+            ) : null}
             {!selectedRun ? (
               <div className="rounded-lg border border-dashed border-border px-4 py-10 text-center text-sm text-muted-foreground">
                 {t("scheduler.drawer.empty")}
               </div>
-            ) : selectedRun.status === "running" ? (
+            ) : selectedRun.status === "running" && selectedRun.target_type !== "agent" ? (
               <div className="flex flex-col items-center gap-3 px-4 py-10 text-sm text-muted-foreground">
                 <Loader2 className="size-6 animate-spin text-primary" />
                 <span>{t("scheduler.drawer.running")}</span>
@@ -1058,11 +1074,15 @@ export function SchedulerConsolePage() {
                     </Button>
                   ) : null}
                 </div>
-                <CodeBlock label={t("scheduler.drawer.inputPayload")} content={selectedInputPayloadText} maxHeight="220px" />
+                {!isSelectedAgentTarget ? <CodeBlock label={t("scheduler.drawer.inputPayload")} content={selectedInputPayloadText} maxHeight="220px" /> : null}
                 {isSelectedAgentTarget ? (
                   <CodeBlock label={t("scheduler.drawer.agentPrompt")} content={selectedAgentPromptText || "-"} maxHeight="180px" />
                 ) : null}
-                <CodeBlock label={t("scheduler.drawer.output")} content={selectedRunOutputText} maxHeight="360px" />
+                {isSelectedAgentTarget ? (
+                  <section aria-label={t("scheduler.drawer.output")} className="prose prose-sm max-w-none break-words text-foreground">
+                    <ReactMarkdown remarkPlugins={[remarkGfm]}>{selectedRun.output_summary || selectedRunStatusText}</ReactMarkdown>
+                  </section>
+                ) : <CodeBlock label={t("scheduler.drawer.output")} content={selectedRunOutputText} maxHeight="360px" />}
                 <div className="overflow-hidden rounded-lg border border-border bg-card">
                   <div className="border-b border-border bg-muted px-3 py-2">
                     <p className="text-xs font-medium uppercase tracking-[0.16em] text-muted-foreground">{t("scheduler.drawer.metaTitle")}</p>
@@ -1280,7 +1300,8 @@ export function SchedulerConsolePage() {
                     </div>
                     <div className="space-y-1">
                       <p className="text-xs font-medium text-muted-foreground">{t("scheduler.create.maxRetries")}</p>
-                      <Input inputMode="numeric" placeholder="0" value={form.max_retries} onChange={(event) => setForm((prev) => ({ ...prev, max_retries: event.target.value }))} className="h-9" />
+                      <Input inputMode="numeric" placeholder="0" disabled={form.target_type === "agent"} value={form.target_type === "agent" ? "0" : form.max_retries} onChange={(event) => setForm((prev) => ({ ...prev, max_retries: event.target.value }))} className="h-9" />
+                      {form.target_type === "agent" ? <p className="text-xs text-muted-foreground">{t("runtime.schedulerNoRetry")}</p> : null}
                     </div>
                     <div className="space-y-1">
                       <p className="text-xs font-medium text-muted-foreground">{t("scheduler.create.retryBackoff")}</p>
@@ -1407,7 +1428,8 @@ export function SchedulerConsolePage() {
                       <Input
                         inputMode="numeric"
                         placeholder={t("scheduler.edit.retryPlaceholder")}
-                        value={form.max_retries}
+                        disabled={form.target_type === "agent"}
+                        value={form.target_type === "agent" ? "0" : form.max_retries}
                         onChange={(event) => setForm((prev) => ({ ...prev, max_retries: event.target.value }))}
                       />
                     </div>
@@ -1421,7 +1443,7 @@ export function SchedulerConsolePage() {
                       />
                     </div>
                   </div>
-                  <p className="text-[11px] text-muted-foreground">{t("scheduler.edit.retryNote")}</p>
+                  <p className="text-[11px] text-muted-foreground">{t(form.target_type === "agent" ? "runtime.schedulerNoRetry" : "scheduler.edit.retryNote")}</p>
                   <Textarea
                     placeholder="input prompt (agent target)"
                     value={form.input_prompt}

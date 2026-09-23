@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import json
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -21,6 +22,7 @@ class ServiceHTTPError(Exception):
     message: str
     http_status: int | None = None
     response: Any | None = None
+    outcome_unknown: bool = False
 
     def __str__(self) -> str:
         return self.message
@@ -56,6 +58,14 @@ def validate_request_path(path: str) -> str:
     return normalized
 
 
+def validate_request_body(method: str, body: Any | None) -> None:
+    if body is not None and method not in {"POST", "PUT", "PATCH"}:
+        raise ServiceHTTPError(
+            code="invalid_body",
+            message="This transport accepts a JSON body only for POST, PUT or PATCH; no fields are silently discarded.",
+        )
+
+
 def _build_headers(config: dict[str, Any], secrets: dict[str, Any]) -> dict[str, str]:
     headers = {str(key): str(value) for key, value in (config.get("default_headers") or {}).items()}
     headers.update({str(key): str(value) for key, value in (secrets.get("headers") or {}).items()})
@@ -70,15 +80,16 @@ def _build_headers(config: dict[str, Any], secrets: dict[str, Any]) -> dict[str,
 def _parse_response(
     response: httpx.Response,
     *,
+    raw: bytes,
     response_format: str,
     max_response_bytes: int,
 ) -> Any:
-    raw = response.content
     if len(raw) > max_response_bytes:
         preview = raw[:max_response_bytes].decode(response.encoding or "utf-8", errors="replace")
         return {
             "truncated": True,
-            "original_bytes": len(raw),
+            "total_bytes": None,
+            "observed_bytes_at_least": len(raw),
             "response_preview": preview,
         }
 
@@ -88,20 +99,55 @@ def _parse_response(
     )
     if should_parse_json:
         try:
-            return response.json() if raw else None
+            return json.loads(raw) if raw else None
         except Exception as exc:
             raise ServiceHTTPError(
                 code="unexpected_response_format",
                 message="Service returned non-JSON content while JSON was required.",
                 http_status=response.status_code,
-                response={"content_type": content_type or None, "preview": response.text[:500]},
+                response={
+                    "content_type": content_type or None,
+                    "preview": raw.decode(response.encoding or "utf-8", errors="replace")[:500],
+                },
+                outcome_unknown=True,
             ) from exc
     if response_format == "auto":
         try:
-            return response.json()
+            return json.loads(raw)
         except Exception:
             pass
-    return response.text
+    return raw.decode(response.encoding or "utf-8", errors="replace")
+
+
+def _redact_response(value: Any, secrets: dict[str, Any]) -> Any:
+    """Do not expose stored credentials when an upstream echoes headers or errors."""
+    values = []
+
+    def collect(item):
+        if isinstance(item, dict):
+            for child in item.values():
+                collect(child)
+        elif isinstance(item, str) and item:
+            values.append(item)
+
+    collect(secrets)
+    if secrets.get("username") is not None and secrets.get("password") is not None:
+        values.append(
+            base64.b64encode(f"{secrets['username']}:{secrets['password']}".encode()).decode()
+        )
+
+    def redact(item):
+        if isinstance(item, str):
+            for secret in sorted(set(values), key=len, reverse=True):
+                item = item.replace(secret, "[redacted]")
+            return item
+        if isinstance(item, dict):
+            return {redact(key): redact(child) for key, child in item.items()}
+        if isinstance(item, list):
+            return [redact(child) for child in item]
+        return item
+
+    return redact(value)
 
 
 async def call_http_service(
@@ -126,6 +172,7 @@ async def call_http_service(
     method_upper = str(method or "").strip().upper()
     if method_upper not in {"GET", "POST", "PUT", "PATCH", "DELETE"}:
         raise ServiceHTTPError(code="invalid_method", message=f"Unsupported method: {method}")
+    validate_request_body(method_upper, body)
 
     auth: httpx.BasicAuth | None = None
     if config.get("auth_type") == "basic":
@@ -137,6 +184,7 @@ async def call_http_service(
     url = f"{base_url}{request_path}"
     timeout = float(config.get("timeout_seconds") or 30.0)
     verify_tls = bool(config.get("verify_tls", True))
+    max_response_bytes = int(config.get("max_response_bytes") or 262_144)
     use_environment_proxy = bool(config.get("use_environment_proxy", False))
     create_client = client_factory or httpx.AsyncClient
     logger.info(
@@ -150,43 +198,74 @@ async def call_http_service(
             timeout=timeout,
             verify=verify_tls,
             trust_env=use_environment_proxy,
+            follow_redirects=False,
         ) as client:
-            response = await client.request(
+            async with client.stream(
                 method_upper,
                 url,
                 params=query_params,
                 json=body if method_upper in {"POST", "PUT", "PATCH"} else None,
                 auth=auth,
                 headers=headers,
-            )
+            ) as response:
+                # Bound the decoded stream while reading, not after buffering an
+                # arbitrary response. Stop once truncation can be established.
+                raw = bytearray()
+                async for chunk in response.aiter_bytes(chunk_size=16_384):
+                    raw.extend(chunk[: max_response_bytes + 1 - len(raw)])
+                    if len(raw) > max_response_bytes:
+                        break
     except httpx.TimeoutException as exc:
         logger.warning(
             "service_http_call_timeout %s",
             fmt_kv(service_id=service_id, method=method_upper, path=request_path),
         )
         raise ServiceHTTPError(
-            code="timeout", message=f"Request timed out after {timeout:g} seconds"
+            code="timeout",
+            message=f"Request timed out after {timeout:g} seconds",
+            outcome_unknown=not isinstance(exc, (httpx.ConnectTimeout, httpx.PoolTimeout)),
         ) from exc
     except httpx.HTTPError as exc:
-        logger.exception(
+        logger.warning(
             "service_http_call_connection_error %s",
             fmt_kv(service_id=service_id, method=method_upper, path=request_path),
         )
-        raise ServiceHTTPError(code="connection_error", message=str(exc)) from exc
+        raise ServiceHTTPError(
+            code="connection_error",
+            message="HTTP transport failed",
+            outcome_unknown=not isinstance(exc, httpx.ConnectError),
+        ) from exc
     except (ImportError, OSError, ValueError) as exc:
-        logger.exception(
+        logger.warning(
             "service_http_call_client_error %s",
             fmt_kv(service_id=service_id, method=method_upper, path=request_path),
         )
-        raise ServiceHTTPError(code="client_configuration_error", message=str(exc)) from exc
+        raise ServiceHTTPError(
+            code="client_configuration_error",
+            message="HTTP client configuration failed",
+            outcome_unknown=True,
+        ) from exc
 
     response_format = str(config.get("response_format") or "auto")
-    parsed = _parse_response(
-        response,
-        response_format=response_format,
-        max_response_bytes=int(config.get("max_response_bytes") or 262_144),
-    )
-    if response.status_code >= 400:
+    try:
+        parsed = _redact_response(
+            _parse_response(
+                response,
+                raw=bytes(raw),
+                response_format=response_format,
+                max_response_bytes=max_response_bytes,
+            ),
+            secrets,
+        )
+    except ServiceHTTPError as exc:
+        raise ServiceHTTPError(
+            exc.code,
+            exc.message,
+            exc.http_status,
+            _redact_response(exc.response, secrets),
+            exc.outcome_unknown,
+        ) from exc
+    if response.status_code >= 300:
         logger.warning(
             "service_http_call_api_error %s",
             fmt_kv(service_id=service_id, http_status=response.status_code, path=request_path),
@@ -196,6 +275,7 @@ async def call_http_service(
             message=f"Service returned HTTP {response.status_code}",
             http_status=response.status_code,
             response=parsed,
+            outcome_unknown=response.status_code >= 500 or response.status_code == 408,
         )
 
     logger.info(

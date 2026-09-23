@@ -37,6 +37,11 @@ def configure_logging(debug: bool = False) -> None:
     ):
         logging.getLogger(logger_name).setLevel(logging.WARNING)
 
+    # Transport DEBUG includes request bodies and response cookies/headers. App
+    # debug mode must not turn model credentials or private prompts into logs.
+    for logger_name in ("openai", "httpx", "httpx2", "httpcore", "httpcore2"):
+        logging.getLogger(logger_name).setLevel(logging.WARNING)
+
 
 def get_logger(name: str) -> logging.Logger:
     return logging.getLogger(name)

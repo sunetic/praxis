@@ -7,6 +7,32 @@ import math
 import re
 from typing import Any
 
+from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+
+class ContextPolicy(BaseModel):
+    """Pinned capacity policy, not a claim about the provider's actual window."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    context_window_tokens: int = Field(default=128_000, ge=1024, le=2_000_000)
+    max_output_tokens: int = Field(default=8192, ge=1)
+    summary_output_tokens: int = Field(default=2048, ge=1, le=32768)
+    context_compression_threshold_percent: int = Field(default=75, ge=25, le=95)
+
+    @model_validator(mode="after")
+    def valid_reserve(self):
+        if (
+            self.max_output_tokens
+            >= self.context_window_tokens * self.context_compression_threshold_percent / 100
+        ):
+            raise ValueError("Output reserve must fit below the context compression threshold")
+        return self
+
+    @property
+    def trigger_tokens(self) -> int:
+        return int(self.context_window_tokens * self.context_compression_threshold_percent / 100)
+
+
 _CJK_RE = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]")
 
 

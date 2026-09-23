@@ -1,596 +1,204 @@
-import { useEffect, useMemo, useRef, useState } from "react"
-import { useNavigate, useSearchParams } from "react-router-dom"
-import { Database, Loader2, MessageSquarePlus, Trash2 } from "lucide-react"
-import { toast } from "sonner"
-
-import { Badge } from "@/components/ui/badge"
+import { useEffect, useRef, useState } from "react"
+import { useSearchParams } from "react-router-dom"
+import { Database, Loader2, MessageSquarePlus, ShieldCheck } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
-import { ConfirmActionDialog } from "@/components/ui/confirm-action-dialog"
-import { Select, SelectContent, SelectItem, SelectTrigger } from "@/components/ui/select"
-import { ChatThreadView } from "@/components/chat/ChatThreadView"
+import { RunConversationView } from "@/components/chat/RunConversationView"
 import { WorkbenchPage } from "@/components/shared/WorkbenchPage"
-import { useChatController } from "@/components/chat/useChatController"
-import { chatApi, conversationsApi, datasourcesApi, filterConnectableDatasources, skillsApi } from "@/lib/api"
-import type { ChatHandoff, Conversation, DataSource, Skill } from "@/lib/api"
+import { agentRunsApi, type RunConversation, type RunScene } from "@/lib/agentRuns"
+import { agentsApi, datasourcesApi, type Agent, type DataSource } from "@/lib/api"
 import { useShellI18n } from "@/i18n/shellI18n"
 
-type AgentRunContext = {
-  conversationId: number
-  agentId?: number
-  agentName?: string
-  datasourceIds: number[]
-  autoRun: boolean
-}
-
-type HandoffRouteContext = {
-  conversationId: number
-  handoffId: number
-}
-
-function parseNumericId(value: unknown): number | null {
-  if (typeof value === "number" && Number.isFinite(value)) return value
-  if (typeof value === "string" && value.trim()) {
-    const parsed = Number(value)
-    if (Number.isFinite(parsed)) return parsed
-  }
-  return null
-}
-
-function parseNumericIdList(value: unknown): number[] {
-  if (typeof value !== "string" || !value.trim()) return []
-  const normalized: number[] = []
-  const seen = new Set<number>()
-  for (const item of value.split(",")) {
-    const parsed = parseNumericId(item.trim())
-    if (parsed === null || parsed <= 0 || seen.has(parsed)) continue
-    seen.add(parsed)
-    normalized.push(parsed)
-  }
-  return normalized
-}
-
-function parseHandoffRoute(searchParams: URLSearchParams): HandoffRouteContext | null {
-  const conversationId = parseNumericId(searchParams.get("conversationId"))
-  const handoffId = parseNumericId(searchParams.get("handoffId"))
-  if (conversationId === null || conversationId <= 0 || handoffId === null || handoffId <= 0) return null
-  return { conversationId, handoffId }
-}
-
 export function ChatPage() {
-  const { t } = useShellI18n()
-  const [searchParams, setSearchParams] = useSearchParams()
-  const navigate = useNavigate()
-
-  const suggestions = useMemo(() => [
-    { label: t("chat.suggestion.slowSql.label"), prompt: t("chat.suggestion.slowSql.prompt") },
-    { label: t("chat.suggestion.conn.label"), prompt: t("chat.suggestion.conn.prompt") },
-    { label: t("chat.suggestion.schema.label"), prompt: t("chat.suggestion.schema.prompt") },
-    { label: t("chat.suggestion.health.label"), prompt: t("chat.suggestion.health.prompt") },
-  ], [t])
-
-  // ── Page-level state (conversation list, datasource, routing) ──
-  const [conversations, setConversations] = useState<Conversation[]>([])
-  const [sceneConversations, setSceneConversations] = useState<Conversation[]>([])
-  const [datasources, setDatasources] = useState<DataSource[]>([])
-  const [skills, setSkills] = useState<Skill[]>([])
-  const [currentConversation, setCurrentConversation] = useState<Conversation | null>(null)
-  const [loading, setLoading] = useState(false)
-  const [updatingDatasource, setUpdatingDatasource] = useState(false)
-  const [clearingAll, setClearingAll] = useState(false)
-  const [clearConfirmOpen, setClearConfirmOpen] = useState(false)
-  const [agentRunContext, setAgentRunContext] = useState<AgentRunContext | null>(null)
-  const [handoff, setHandoff] = useState<ChatHandoff | null>(null)
-  const [, setLoadingHandoff] = useState(false)
-
-  const runContextAppliedRef = useRef<number | null>(null)
-  const autoRunTriggeredRef = useRef<number | null>(null)
-
-  // ── Unified chat controller ──
-  const controller = useChatController({
-    title: "Chat",
-    datasourceId: currentConversation?.datasource_id ?? null,
-    activeSkills: currentConversation?.active_skills,
-    datasources,
-    managedConversation: currentConversation,
-    fetchOnConversationChange: true,
-    onConversationCreated: (created) => {
-      setConversations((prev) => [created, ...prev.filter((item) => item.id !== created.id)])
-      setCurrentConversation(created)
-    },
-    onSkillsChanged: (nextSkills) => {
-      if (!currentConversation) return
-      updateConversationState(currentConversation.id, { active_skills: nextSkills })
-    },
-    onDatasourceContextChanged: (nextDatasourceId) => {
-      if (!currentConversation) return
-      updateConversationState(currentConversation.id, { datasource_id: nextDatasourceId })
-    },
-  })
-
-  // ── Page helpers ──
-
-  const updateConversationState = (conversationId: number, patch: Partial<Conversation>) => {
-    setConversations((prev) =>
-      prev.map((item) => (item.id !== conversationId ? item : { ...item, ...patch }))
-    )
-    setCurrentConversation((prev) => {
-      if (!prev || prev.id !== conversationId) return prev
-      return { ...prev, ...patch }
-    })
-  }
-
-  const parseAgentRunContextFromParams = (): AgentRunContext | null => {
-    const from = String(searchParams.get("from") || "").trim().toLowerCase()
-    const conversationId = parseNumericId(searchParams.get("conversationId"))
-    if (from !== "agent" || conversationId === null || conversationId <= 0) return null
-    return {
-      conversationId,
-      agentId: parseNumericId(searchParams.get("agentId")) ?? undefined,
-      agentName: String(searchParams.get("agentName") || "").trim() || undefined,
-      datasourceIds: parseNumericIdList(searchParams.get("runDatasourceIds")),
-      autoRun: String(searchParams.get("autoRun") || "").trim() === "1",
-    }
-  }
-
-  const clearAutoRunFlagFromParams = () => {
-    if (!searchParams.has("autoRun")) return
-    const next = new URLSearchParams(searchParams)
-    next.delete("autoRun")
-    setSearchParams(next, { replace: true })
-  }
-
-  const clearHandoffRouteFromParams = () => {
-    if (!searchParams.has("handoffId") && !searchParams.has("conversationId")) return
-    const next = new URLSearchParams(searchParams)
-    next.delete("handoffId")
-    if (next.get("from") !== "agent") next.delete("conversationId")
-    setSearchParams(next, { replace: true })
-  }
-
-  // ── Data fetching ──
-
-  const refreshConversations = async () => {
-    const [primaryData, agentRunData, sceneData] = await Promise.all([
-      conversationsApi.list({ category: "primary" }),
-      conversationsApi.list({ category: "agent_run" }),
-      conversationsApi.list({ category: "scene" }),
+  const { locale, t } = useShellI18n()
+  const [params, setParams] = useSearchParams()
+  const [conversations, setConversations] = useState<RunConversation[]>([])
+  const [sources, setSources] = useState<DataSource[]>([])
+  const [selected, setSelected] = useState<string | null>(null)
+  const [scene, setScene] = useState<RunScene>({})
+  const [error, setError] = useState(false)
+  const [creating, setCreating] = useState(false)
+  const [savingScope, setSavingScope] = useState(false)
+  const [scopeError, setScopeError] = useState(false)
+  const [sourcesError, setSourcesError] = useState(false)
+  const [scopeAgent, setScopeAgent] = useState<Agent | null>(null)
+  const [agentError, setAgentError] = useState(false)
+  const [now, setNow] = useState(() => Date.now() / 1000)
+  const initializing = useRef<Promise<[RunConversation[], { sources: DataSource[]; error: boolean }]> | null>(null)
+  const createBusy = useRef(false)
+  useEffect(() => {
+    let alive = true
+    initializing.current ??= Promise.all([
+      agentRunsApi.conversations().then(async records => records.length || params.get("conversationId") ? records : [await agentRunsApi.createConversation(t("runtime.newConversation"), { datasource_ids: [] })]),
+      datasourcesApi.list().then(sources => ({ sources, error: false })).catch(() => ({ sources: [], error: true })),
     ])
-    const userInitiatedData = [...primaryData, ...agentRunData].sort(
-      (a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime()
-    )
-    setConversations(userInitiatedData)
-    setSceneConversations(sceneData)
-    const combined = [...userInitiatedData, ...sceneData]
-    setCurrentConversation((prev) => {
-      if (!prev) return userInitiatedData[0] ?? sceneData[0] ?? null
-      return combined.find((item) => item.id === prev.id) ?? userInitiatedData[0] ?? sceneData[0] ?? null
-    })
-    return { combined, primaryData: userInitiatedData }
-  }
-
-  const fetchInitial = async () => {
-    setLoading(true)
-    try {
-      const [{ combined: conversationData, primaryData }, dsData, skillData] = await Promise.all([
-        refreshConversations(),
-        datasourcesApi.list(),
-        skillsApi.list(),
-      ])
-      const runContext = parseAgentRunContextFromParams()
-      const handoffRoute = parseHandoffRoute(searchParams)
-      if (runContext) {
-        const matched = conversationData.find((item) => item.id === runContext.conversationId)
-        if (matched) setCurrentConversation(matched)
-      } else if (handoffRoute) {
-        const matched = conversationData.find((item) => item.id === handoffRoute.conversationId)
-        if (matched) setCurrentConversation(matched)
-      } else if (primaryData.length === 0) {
-        const created = await conversationsApi.create({ title: t("chat.defaultTitle") })
-        setConversations([created])
-        setCurrentConversation(created)
-      }
-      setAgentRunContext(runContext)
-      setDatasources(filterConnectableDatasources(dsData))
-      setSkills(skillData)
-    } catch {
-      toast.error(t("chat.toast.loadFailed"))
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  // ── Effects ──
-
-  useEffect(() => { void fetchInitial() }, [])
-
-  useEffect(() => {
-    const runContext = parseAgentRunContextFromParams()
-    setAgentRunContext(runContext)
-    if (!runContext || conversations.length === 0) return
-    if (runContextAppliedRef.current === runContext.conversationId) return
-    const matched = conversations.find((item) => item.id === runContext.conversationId)
-    if (matched) {
-      setCurrentConversation(matched)
-      runContextAppliedRef.current = runContext.conversationId
-    }
-  }, [searchParams, conversations])
-
-  useEffect(() => {
-    const handoffRoute = parseHandoffRoute(searchParams)
-    if (!handoffRoute || conversations.length === 0) return
-    const matched = conversations.find((item) => item.id === handoffRoute.conversationId)
-    if (matched && currentConversation?.id !== matched.id) setCurrentConversation(matched)
-  }, [searchParams, conversations, currentConversation?.id])
-
-  // Handoff loading
-  useEffect(() => {
-    const handoffRoute = parseHandoffRoute(searchParams)
-    if (!handoffRoute || !currentConversation || currentConversation.id !== handoffRoute.conversationId) {
-      setHandoff(null)
-      return
-    }
-    let cancelled = false
-    setLoadingHandoff(true)
-    chatApi
-      .getHandoff(handoffRoute.conversationId, handoffRoute.handoffId)
-      .then((data) => {
-        if (cancelled) return
-        if (data.status !== "pending") {
-          setHandoff(null)
-          clearHandoffRouteFromParams()
-          return
-        }
-        setHandoff(data)
-      })
-      .catch(() => { if (!cancelled) setHandoff(null) })
-      .finally(() => { if (!cancelled) setLoadingHandoff(false) })
-    return () => { cancelled = true }
-  }, [searchParams, currentConversation?.id])
-
-  useEffect(() => {
-    controller.setHandoff(handoff)
-  }, [controller, handoff])
-
-  // Auto-run agent
-  useEffect(() => {
-    if (!agentRunContext?.autoRun || !agentRunContext.agentId) return
-    if (!currentConversation || currentConversation.id !== agentRunContext.conversationId) return
-    if (controller.streaming || controller.savingAgent) return
-    if (autoRunTriggeredRef.current === currentConversation.id) return
-    if (controller.messages.length > 0) return
-    const displayName = agentRunContext.agentName || ""
-    const runCommand = `/run agent #${agentRunContext.agentId}${displayName ? ` ${displayName}` : ""}`
-    autoRunTriggeredRef.current = currentConversation.id
-    setAgentRunContext((prev) => {
-      if (!prev || prev.conversationId !== currentConversation.id) return prev
-      return { ...prev, autoRun: false }
-    })
-    clearAutoRunFlagFromParams()
-    void controller.sendMessage(runCommand, { runDatasourceIds: agentRunContext.datasourceIds })
-  }, [agentRunContext, currentConversation, controller.streaming, controller.savingAgent, controller.messages.length])
-
-  // Post-stream refresh conversations
-  useEffect(() => {
-    if (controller.streaming) return
-    if (!currentConversation) return
-    void refreshConversations()
+    void initializing.current.then(([records, datasources]) => {
+      if (!alive) return
+      setConversations(records); setSources(datasources.sources.filter(source => source.status === "active")); setSourcesError(datasources.error)
+      const requested = params.get("conversationId")
+      const current = requested ? records.find(record => record.id === requested) : records[0]
+      if (!current) throw new Error("Requested conversation is unavailable")
+      setSelected(current.id); setScene(current.scene)
+    }).catch(() => { if (alive) setError(true) })
+    return () => { alive = false }
+    // Initialization is shared across StrictMode mounts to avoid duplicate creation.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [controller.streaming])
-
-  // ── Derived state ──
-
-  const isSceneConversation = currentConversation?.category === "scene"
-
-  const currentDatasourceLabel = useMemo(() => {
-    if (!currentConversation?.datasource_id) return t("chat.datasource.select")
-    const matched = datasources.find((item) => item.id === currentConversation.datasource_id)
-    if (!matched) return `Datasource ${currentConversation.datasource_id}`
-    const accessLevel = matched.access_level || (matched.tenant_role === "sys" ? "admin" : "user")
-    return `${matched.name} (${accessLevel})`
-  }, [currentConversation?.datasource_id, datasources])
-
-  const skillDescriptionByName = useMemo(() => {
-    return new Map(skills.map((item) => [item.name, item.description || t("chat.skills.noDesc")]))
-  }, [skills])
-
-  const isAgentRunConversation = Boolean(agentRunContext) && currentConversation?.id === agentRunContext?.conversationId
-
-  const agentRunDatasourceOptions = useMemo(() => {
-    if (!isAgentRunConversation) return datasources
-    const ids = agentRunContext?.datasourceIds || []
-    if (ids.length === 0) return datasources
-    const idSet = new Set(ids)
-    return datasources.filter((item) => idSet.has(item.id))
-  }, [datasources, isAgentRunConversation, agentRunContext?.datasourceIds])
-
-  // ── Conversation management ──
-
-  const handleCreateConversation = async () => {
-    if (controller.streaming || controller.savingAgent) return
+  }, [])
+  useEffect(() => {
+    let alive = true
+    setScopeAgent(null); setAgentError(false)
+    if (scene.agent_id) {
+      void agentsApi.get(scene.agent_id).then(agent => { if (alive) setScopeAgent(agent) })
+        .catch(() => { if (alive) setAgentError(true) })
+    }
+    return () => { alive = false }
+  }, [scene.agent_id])
+  useEffect(() => {
+    if (!scene.auto_approval) return
+    const timer = window.setInterval(() => setNow(Date.now() / 1000), 30_000)
+    return () => window.clearInterval(timer)
+  }, [scene.auto_approval])
+  const scopeLoading = Boolean(scene.agent_id && scopeAgent?.id !== scene.agent_id)
+  const scopedSources = scene.agent_id ? sources.filter(source => scopeAgent?.id === scene.agent_id && scopeAgent?.datasource_ids.includes(source.id)) : sources
+  const effectiveDatasourceIds = scene.datasource_ids ?? (scene.agent_id && scopeAgent?.id === scene.agent_id ? scopeAgent.datasource_ids : [])
+  const invalidScope = Boolean(scene.agent_id && scopeAgent?.id === scene.agent_id && effectiveDatasourceIds.some(id => !scopeAgent.datasource_ids.includes(id)))
+  const multipleSources = effectiveDatasourceIds.length > 1
+  const autoApprovalActive = Boolean(
+    scene.auto_approval
+    && scene.auto_approval.expires_at > now
+    && scene.auto_approval.agent_id === (scene.agent_id ?? null)
+    && effectiveDatasourceIds.length === 1
+    && scene.auto_approval.datasource_id === effectiveDatasourceIds[0],
+  )
+  const select = (conversation: RunConversation) => {
+    setSelected(conversation.id); setScene(conversation.scene); setScopeError(false)
+    setParams({ conversationId: conversation.id }, { replace: true })
+  }
+  const changeScope = async (value: string) => {
+    if (!selected || savingScope) return
+    setSavingScope(true); setScopeError(false)
+    const next = { ...scene, datasource_ids: value === "none" ? [] : [Number(value)], auto_approval: null }
     try {
-      const created = await conversationsApi.create({ title: t("chat.defaultTitle") })
-      clearHandoffRouteFromParams()
-      setConversations((prev) => [created, ...prev.filter((item) => item.id !== created.id)])
-      setCurrentConversation(created)
-      setAgentRunContext(null)
-      setHandoff(null)
-    } catch {
-      toast.error(t("chat.toast.createFailed"))
-    }
+      const saved = await agentRunsApi.updateConversation(selected, next)
+      setConversations(current => current.map(item => item.id === saved.id ? saved : item))
+      setScene(saved.scene)
+    } catch { setScopeError(true) }
+    finally { setSavingScope(false) }
   }
-
-  const handleClearAll = async () => {
-    if (controller.streaming || controller.savingAgent || clearingAll || conversations.length === 0) return
-    setClearingAll(true)
+  const toggleAutoApproval = async () => {
+    if (!selected || savingScope || effectiveDatasourceIds.length !== 1) return
+    if (!autoApprovalActive && !window.confirm(t("runtime.autoApprovalConfirm"))) return
+    setSavingScope(true); setScopeError(false)
+    const next: RunScene = {
+      ...scene,
+      auto_approval: autoApprovalActive ? null : {
+        tool_name: "request_database_change",
+        agent_id: scene.agent_id ?? null,
+        datasource_id: effectiveDatasourceIds[0],
+        expires_at: Date.now() / 1000 + 30 * 60,
+      },
+    }
     try {
-      await Promise.all([...conversations, ...sceneConversations].map((item) => conversationsApi.delete(item.id)))
-      setConversations([])
-      setSceneConversations([])
-      setCurrentConversation(null)
-      setAgentRunContext(null)
-      setHandoff(null)
-      setClearConfirmOpen(false)
-      clearHandoffRouteFromParams()
-    } catch {
-      toast.error(t("chat.toast.clearFailed"))
-    } finally {
-      setClearingAll(false)
-    }
+      const saved = await agentRunsApi.updateConversation(selected, next)
+      setConversations(current => current.map(item => item.id === saved.id ? saved : item))
+      setScene(saved.scene); setNow(Date.now() / 1000)
+    } catch { setScopeError(true) }
+    finally { setSavingScope(false) }
   }
-
-  const handleSelectDatasource = async (datasourceId: number) => {
-    if (!currentConversation || updatingDatasource || controller.savingAgent || isSceneConversation) return
-    if (
-      isAgentRunConversation &&
-      (agentRunContext?.datasourceIds?.length || 0) > 0 &&
-      !(agentRunContext?.datasourceIds || []).includes(datasourceId)
-    ) {
-      toast.error(t("chat.datasource.notInScope"))
-      return
-    }
-    if (currentConversation.datasource_id === datasourceId) {
-      return
-    }
-    setUpdatingDatasource(true)
+  const create = async () => {
+    if (createBusy.current) return
+    createBusy.current = true; setCreating(true)
     try {
-      const updated = await conversationsApi.update(currentConversation.id, { datasource_id: datasourceId })
-      updateConversationState(currentConversation.id, updated)
-    } catch {
-      toast.error(t("chat.toast.switchDsFailed"))
-    } finally {
-      setUpdatingDatasource(false)
-    }
+      const conversation = await agentRunsApi.createConversation(t("runtime.newConversation"), { ...scene, auto_approval: null })
+      setConversations(current => [conversation, ...current]); select(conversation); setError(false)
+    } catch { setError(true) }
+    finally { createBusy.current = false; setCreating(false) }
   }
-
-  const handleUseHandoffPrompt = (prompt: string) => {
-    if (!prompt.trim() || controller.streaming || controller.savingAgent) return
-    void controller.sendMessage(prompt)
-  }
-
-  // ── Render ──
-
-  const primary = (
-    <div className="grid h-[calc(100vh-4.5rem)] min-w-0 animate-in grid-cols-1 gap-3 fade-in slide-in-from-bottom-1 duration-500 min-[901px]:grid-cols-[260px_minmax(0,1fr)] min-[901px]:gap-4">
-      {/* Conversation sidebar */}
-      <Card className="hidden min-h-0 overflow-hidden min-[901px]:block">
-        <CardHeader className="pb-3">
-          <div className="flex items-center justify-between">
-            <CardTitle className="text-base">{t("chat.sidebar.title")}</CardTitle>
-            <div className="flex items-center gap-2">
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={handleCreateConversation}
-                disabled={controller.streaming || controller.savingAgent}
-                className="h-8"
-              >
-                <MessageSquarePlus className="mr-1 size-4" />
-                {t("chat.sidebar.new")}
-              </Button>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => setClearConfirmOpen(true)}
-                disabled={controller.streaming || controller.savingAgent || clearingAll || (conversations.length === 0 && sceneConversations.length === 0)}
-                className="h-8 text-muted-foreground hover:text-negative"
-              >
-                <Trash2 className="mr-1 size-4" />
-                {t("chat.sidebar.clearAll")}
-              </Button>
-            </div>
+  const conversationSelect = <select
+    aria-label={t("runtime.conversation")}
+    className="h-9 w-full rounded-lg border border-border bg-background px-3 text-sm text-foreground outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20"
+    disabled={savingScope}
+    value={selected ?? ""}
+    onChange={event => { const value = conversations.find(conversation => conversation.id === event.target.value); if (value) select(value) }}
+  >
+    {!selected && <option value="">{t("runtime.loading")}</option>}
+    {conversations.map(conversation => <option key={conversation.id} value={conversation.id}>{conversation.title} · {new Date(conversation.created_at * 1000).toLocaleTimeString(locale, { hour: "2-digit", minute: "2-digit" })}</option>)}
+  </select>
+  const primary = <div className="grid h-[calc(100dvh-4.5rem)] min-h-[34rem] min-w-0 animate-in grid-cols-1 gap-3 fade-in slide-in-from-bottom-1 duration-300 min-[901px]:grid-cols-[260px_minmax(0,1fr)] min-[901px]:gap-4">
+    <Card className="hidden min-h-0 gap-0 overflow-hidden py-0 min-[901px]:flex min-[901px]:flex-col">
+      <CardHeader className="shrink-0 px-5 py-5">
+        <div className="flex items-center justify-between gap-2">
+          <CardTitle className="text-base">{t("chat.sidebar.title")}</CardTitle>
+          <Button variant="outline" size="sm" className="h-8" onClick={() => void create()} disabled={creating || savingScope}>
+            {creating ? <Loader2 className="size-4 animate-spin" /> : <MessageSquarePlus className="size-4" />}
+            {t("chat.sidebar.new")}
+          </Button>
+        </div>
+      </CardHeader>
+      <CardContent className="min-h-0 flex-1 space-y-1 overflow-y-auto px-4 pb-5">
+        {conversations.length === 0 ? <div className="rounded-lg border border-dashed border-border px-3 py-6 text-center text-sm text-muted-foreground">{t("chat.sidebar.empty")}</div> : conversations.map(conversation => <Button
+          key={conversation.id}
+          type="button"
+          variant="ghost"
+          className={`h-auto w-full justify-start rounded-lg px-3 py-2.5 text-left transition-colors ${selected === conversation.id ? "bg-accent text-foreground" : "text-muted-foreground hover:bg-muted hover:text-foreground"}`}
+          onClick={() => select(conversation)}
+          disabled={savingScope}
+        >
+          <div className="min-w-0">
+            <p className="truncate text-sm font-medium">{conversation.title}</p>
+            <p className="mt-0.5 text-[11px] text-muted-foreground">{new Date(conversation.created_at * 1000).toLocaleString(locale, { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" })}</p>
           </div>
-        </CardHeader>
-        <CardContent className="min-h-0 overflow-y-auto space-y-1">
-          {loading ? (
-            <div className="text-sm text-muted-foreground flex items-center gap-2">
-              <Loader2 className="size-4 animate-spin" />
-              {t("chat.sidebar.loading")}
-            </div>
-          ) : conversations.length === 0 && sceneConversations.length === 0 ? (
-            <div className="rounded-lg border border-dashed border-border px-3 py-6 text-center text-sm text-muted-foreground">
-              {t("chat.sidebar.empty")}
-            </div>
-          ) : (
-            <>
-              {conversations.map((item) => (
-                <Button
-                  key={item.id}
-                  type="button"
-                  variant="ghost"
-                  className={`h-auto w-full justify-start rounded-lg px-3 py-2 text-left text-sm transition-colors ${
-                    currentConversation?.id === item.id
-                      ? "bg-accent text-foreground"
-                      : "hover:bg-muted text-muted-foreground hover:text-foreground"
-                  }`}
-                  onClick={() => {
-                    clearHandoffRouteFromParams()
-                    setCurrentConversation(item)
-                  }}
-                  disabled={controller.streaming || controller.savingAgent}
-                >
-                  <div className="flex items-center gap-1.5 min-w-0">
-                    <span className="shrink-0 text-[11px] text-muted-foreground">#{item.id}</span>
-                    <p className="truncate text-sm">{item.title || `${t("chat.sidebar.fallbackTitle")} ${item.id}`}</p>
-                  </div>
-                </Button>
-              ))}
-              {sceneConversations.length > 0 ? (
-                <div className="pt-3">
-                  <p className="px-3 pb-2 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-                    {t("chat.sidebar.sceneHistory")}
-                  </p>
-                  <div className="space-y-1">
-                    {sceneConversations.map((item) => (
-                      <Button
-                        key={item.id}
-                        type="button"
-                        variant="ghost"
-                        className={`h-auto w-full justify-start rounded-lg px-3 py-2 text-left text-sm transition-colors ${
-                          currentConversation?.id === item.id
-                            ? "bg-accent text-foreground"
-                            : "hover:bg-muted text-muted-foreground hover:text-foreground"
-                        }`}
-                        onClick={() => {
-                          clearHandoffRouteFromParams()
-                          setCurrentConversation(item)
-                        }}
-                        disabled={controller.streaming || controller.savingAgent}
-                      >
-                        <div className="min-w-0">
-                          <div className="flex items-center gap-1.5 min-w-0">
-                            <span className="shrink-0 text-[11px] text-muted-foreground">#{item.id}</span>
-                            <p className="truncate text-sm">{item.title || `${t("chat.sidebar.fallbackTitle")} ${item.id}`}</p>
-                          </div>
-                          <p className="truncate pt-0.5 text-[11px] text-muted-foreground">{item.scene_key || "scene"}</p>
-                        </div>
-                      </Button>
-                    ))}
-                  </div>
-                </div>
-              ) : null}
-            </>
-          )}
+        </Button>)}
+      </CardContent>
+    </Card>
+
+    <div className="grid min-h-0 min-w-0 grid-rows-[auto_minmax(0,1fr)] gap-4">
+      <Card className="min-w-0 gap-0 overflow-visible py-0">
+        <CardContent className="space-y-3 px-4 py-3 sm:px-5">
+          <div className="min-[901px]:hidden">{conversationSelect}</div>
+          <div className="flex flex-wrap items-center gap-3">
+            <label className="flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
+              <Database className="size-3.5 shrink-0" />
+              <span className="sr-only">{t("runtime.datasourceScope")}</span>
+              <select
+                aria-label={t("runtime.datasourceScope")}
+                className="h-8 max-w-[19rem] rounded-lg border border-border bg-background px-3 text-xs text-foreground outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20"
+                disabled={savingScope || !selected || scopeLoading}
+                value={invalidScope ? "unavailable" : multipleSources ? "selection" : effectiveDatasourceIds.length === 1 ? String(effectiveDatasourceIds[0]) : "none"}
+                onChange={event => void changeScope(event.target.value)}
+              >
+                <option value="none">{t("runtime.noDatasource")}</option>
+                {invalidScope && <option value="unavailable" disabled>{t("agents.unavailableSelection")}</option>}
+                {multipleSources && <option value="selection" disabled>{effectiveDatasourceIds.map(id => sources.find(source => source.id === id)?.name ?? `#${id}`).join(", ")}</option>}
+                {scopedSources.map(source => <option key={source.id} value={source.id}>{source.name}</option>)}
+              </select>
+            </label>
+            {scopeAgent && <><div className="h-4 w-px bg-border" /><p className="min-w-0 flex-1 truncate text-xs text-muted-foreground">{scopeAgent.name}</p></>}
+            <Button
+              type="button"
+              variant={autoApprovalActive ? "secondary" : "ghost"}
+              size="sm"
+              className="h-8"
+              disabled={savingScope || !selected || effectiveDatasourceIds.length !== 1 || invalidScope}
+              title={effectiveDatasourceIds.length !== 1 ? t("runtime.autoApprovalNeedsOneDatasource") : t("runtime.autoApprovalScope")}
+              onClick={() => void toggleAutoApproval()}
+            >
+              <ShieldCheck className="size-4" />
+              {t(autoApprovalActive ? "runtime.autoApprovalOn" : "runtime.autoApprovalOff")}
+            </Button>
+            <Button variant="ghost" size="sm" className="h-8 min-[901px]:hidden" onClick={() => void create()} disabled={creating || savingScope}>
+              <MessageSquarePlus className="size-4" />{t("runtime.newConversation")}
+            </Button>
+          </div>
+          {savingScope && <p role="status" className="text-xs text-muted-foreground">{t("runtime.savingScopeBeforeSendingExistingRunsKeep")}</p>}
+          {scopeError && <p role="alert" className="text-sm text-destructive">{t("runtime.scopeWasNotSavedThePreviousScope")}</p>}
+          {invalidScope && <p role="alert" className="text-sm text-destructive">{t("agents.scopeRevoked")}</p>}
+          {(sourcesError || agentError) && <p role="alert" className="text-sm text-destructive">{t("runtime.datasourceListIsUnavailableYouCanStill")}</p>}
+          {error && <div role="alert" className="flex items-center gap-3 text-sm text-destructive"><p>{t("runtime.couldNotLoadOrCreateTheConversation")}</p><Button variant="outline" size="sm" onClick={() => window.location.reload()}>{t("runtime.reload")}</Button></div>}
         </CardContent>
       </Card>
-
-      {/* Main chat area */}
-      <div className="min-h-0 min-w-0 grid grid-rows-[auto_minmax(0,1fr)] gap-4">
-        {/* Datasource + skills bar */}
-        <Card className="min-w-0 overflow-visible">
-          <CardContent className="space-y-3 py-3">
-            <select
-              aria-label={t("chat.sidebar.title")}
-              className="h-9 w-full rounded-lg border border-border bg-background px-3 text-sm text-foreground outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20 min-[901px]:hidden"
-              value={currentConversation?.id ?? ""}
-              disabled={controller.streaming || controller.savingAgent || conversations.length + sceneConversations.length === 0}
-              onChange={(event) => {
-                const conversationId = Number(event.target.value)
-                const selected = [...conversations, ...sceneConversations].find((item) => item.id === conversationId)
-                if (!selected) return
-                clearHandoffRouteFromParams()
-                setCurrentConversation(selected)
-              }}
-            >
-              {[...conversations, ...sceneConversations].map((item) => (
-                <option key={item.id} value={item.id}>
-                  #{item.id} {item.title || `${t("chat.sidebar.fallbackTitle")} ${item.id}`}
-                </option>
-              ))}
-            </select>
-            <div className="flex flex-wrap items-center gap-3">
-              <Select
-                value={currentConversation?.datasource_id ? String(currentConversation.datasource_id) : ""}
-                onValueChange={(value) => void handleSelectDatasource(Number(value))}
-                disabled={!currentConversation || controller.streaming || controller.savingAgent || updatingDatasource || isSceneConversation}
-              >
-                <SelectTrigger
-                  aria-label={t("chat.datasource.select")}
-                  className="h-8 w-auto max-w-[280px] min-w-0 gap-2"
-                  disabled={!currentConversation || controller.streaming || controller.savingAgent || updatingDatasource || isSceneConversation}
-                >
-                  <Database className="size-3.5 shrink-0 text-muted-foreground" />
-                  <span className="min-w-0 truncate text-xs">{currentDatasourceLabel}</span>
-                  {updatingDatasource ? (
-                    <Loader2 className="size-3.5 shrink-0 animate-spin text-muted-foreground" />
-                  ) : null}
-                </SelectTrigger>
-                <SelectContent className="w-72 max-w-[calc(100vw-2rem)]">
-                  {agentRunDatasourceOptions.length === 0 ? (
-                    <div className="px-2 py-2 text-xs text-muted-foreground">{t("chat.datasource.empty")}</div>
-                  ) : (
-                    agentRunDatasourceOptions.map((item) => {
-                      const accessLevel = item.access_level || (item.tenant_role === "sys" ? "admin" : "user")
-                      return (
-                        <SelectItem key={item.id} value={String(item.id)} className="py-2">
-                          <span className="flex min-w-0 max-w-60 flex-col items-start">
-                            <span className="block max-w-full truncate text-xs font-medium text-foreground">
-                              {item.name}
-                            </span>
-                            <span className="block max-w-full truncate text-[11px] text-muted-foreground">
-                              {item.cluster_key} · {accessLevel}
-                            </span>
-                          </span>
-                        </SelectItem>
-                      )
-                    })
-                  )}
-                </SelectContent>
-              </Select>
-
-              <div className="h-4 w-px bg-border" />
-              <div className="flex min-w-0 flex-1 items-center gap-2 rounded-lg border border-border bg-muted/60 px-3 py-1.5">
-                <span className="shrink-0 text-xs text-muted-foreground">{t("chat.skills.label")}</span>
-                {controller.activeSkills.length > 0 ? (
-                  <div className="flex min-w-0 items-center gap-1">
-                    {controller.activeSkills.slice(0, 3).map((name) => (
-                      <Badge key={name} variant="secondary" className="max-w-[220px] truncate text-[10px]" title={skillDescriptionByName.get(name) || t("chat.skills.noDesc")}>
-                        {name}
-                      </Badge>
-                    ))}
-                    {controller.activeSkills.length > 3 ? (
-                      <Badge variant="outline" className="text-[10px]">
-                        +{controller.activeSkills.length - 3}
-                      </Badge>
-                    ) : null}
-                  </div>
-                ) : (
-                  <span className="text-xs text-muted-foreground">{t("chat.skills.none")}</span>
-                )}
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-
-        <ChatThreadView
-          controller={controller}
-          suggestions={suggestions}
-          datasources={datasources}
-          readOnly={isSceneConversation}
-          readOnlyHint={t("chat.readOnlyHint")}
-          enableSaveAsAgent={true}
-          enableHandoff={true}
-          enableBatchActions={true}
-          handoff={handoff}
-          onHandoffUsed={handleUseHandoffPrompt}
-          onNavigate={navigate}
-          showHeader={false}
-        />
-      </div>
-
-      <ConfirmActionDialog
-        open={clearConfirmOpen}
-        onOpenChange={setClearConfirmOpen}
-        title={t("chat.clearDialog.title")}
-        description={t("chat.clearDialog.desc")}
-        confirmText={t("chat.clearDialog.confirm")}
-        confirmingText={t("chat.clearDialog.confirming")}
-        confirming={clearingAll}
-        confirmDisabled={controller.streaming || controller.savingAgent || (conversations.length === 0 && sceneConversations.length === 0)}
-        onConfirm={handleClearAll}
-      />
+      <RunConversationView conversationId={selected} scene={scene} disabled={savingScope || invalidScope} />
     </div>
-  )
-
+  </div>
   return <WorkbenchPage className="min-w-0" primary={primary} />
 }
