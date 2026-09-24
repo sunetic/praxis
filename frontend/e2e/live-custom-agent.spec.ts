@@ -8,6 +8,7 @@ test("custom Agent configuration opens native Chat and honors datasource revocat
   const reports: Record<string, unknown>[] = []
   const errors: string[] = []
   const legacyRequests: string[] = []
+  let acceptanceComplete = false
   page.on("pageerror", error => errors.push(error.message))
   page.on("request", request => {
     if (/\/agents\/\d+\/run|\/messages|\/chat\/stream/.test(request.url())) legacyRequests.push(request.url())
@@ -66,7 +67,7 @@ test("custom Agent configuration opens native Chat and honors datasource revocat
     const prompts = [
       "列出你当前有权访问的数据源名称，只读取平台登记信息，不连接或查询数据库。用一句简短中文回答。",
       "只复述刚才那个数据源的名称，不调用工具。",
-      "重新确认你现在能访问哪些数据源，只读取平台登记信息，用一句简短中文回答。",
+      "重新确认你现在能访问哪些数据源。如果当前没有已授权数据源，明确回答“当前没有已授权数据源”；不要根据前文猜测。",
     ]
     for (let index = 0; index < prompts.length; index++) {
       if (index === 2) {
@@ -75,7 +76,8 @@ test("custom Agent configuration opens native Chat and honors datasource revocat
         await page.reload()
         await expect(page.getByText("部分数据源已不在 Agent 授权范围，请重新选择范围后再发送。")).toBeVisible()
         await expect(page.getByRole("textbox", { name: "消息", exact: true })).toBeDisabled()
-        await page.getByRole("combobox", { name: "数据源范围" }).selectOption("authorized")
+        await page.getByRole("combobox", { name: "数据源范围" }).selectOption("none")
+        await expect(page.getByRole("textbox", { name: "消息", exact: true })).toBeEnabled()
       }
       const started = performance.now()
       await page.getByRole("textbox", { name: "消息", exact: true }).fill(prompts[index])
@@ -91,11 +93,17 @@ test("custom Agent configuration opens native Chat and honors datasource revocat
         report.state = state
         return state.status
       }, { timeout: 120_000, intervals: [250, 500, 1000] }).toBe("finished")
-      const result = report.state as { tool_calls: { name: string; result: { content: { id: number }[] } }[] }
+      const result = report.state as { output: string; tool_calls: { name: string; result: { content: { id: number }[] } }[] }
       if (index === 1) expect(result.tool_calls).toEqual([])
-      else {
-        expect(result.tool_calls.some(call => call.name === "list_datasources")).toBe(true)
-        for (const call of result.tool_calls) expect(call.result.content.map(item => item.id)).toEqual(index === 0 ? [sources[0].id] : [])
+      else if (index === 0) {
+        expect(result.output).toContain(sources[0].name)
+        expect(result.output).not.toContain(sources[1].name)
+        expect(result.tool_calls.every(call => call.name === "list_datasources")).toBe(true)
+        for (const call of result.tool_calls) expect(call.result.content.map(item => item.id)).toEqual([sources[0].id])
+      } else {
+        expect(result.tool_calls).toEqual([])
+        expect(result.output).toContain("当前没有已授权数据源")
+        expect(result.output).not.toContain(sources[0].name)
       }
       const article = page.locator(`[data-run-id="${run.id}"]`)
       await expect(article.getByRole("button", { name: "停止", exact: true })).toHaveCount(0)
@@ -114,9 +122,10 @@ test("custom Agent configuration opens native Chat and honors datasource revocat
     expect(await page.evaluate("document.documentElement.scrollWidth <= innerWidth")).toBe(true)
     await page.screenshot({ path: info.outputPath("custom-agent-mobile.png"), fullPage: true })
     expect(errors).toEqual([]); expect(legacyRequests).toEqual([])
+    acceptanceComplete = true
   } finally {
     const path = info.outputPath("real-custom-agent-transcripts.json")
-    await writeFile(path, JSON.stringify({ agent, conversation, sources: sources.map(({ id, name }) => ({ id, name })), reports, errors, legacyRequests, acceptanceComplete: false }, null, 2))
+    await writeFile(path, JSON.stringify({ agent, conversation, sources: sources.map(({ id, name }) => ({ id, name })), reports, errors, legacyRequests, acceptanceComplete }, null, 2))
     await info.attach("real-custom-agent-transcripts", { path, contentType: "application/json" })
   }
 })

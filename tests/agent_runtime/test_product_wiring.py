@@ -183,6 +183,11 @@ def test_scene_tools_intersect_resources_and_custom_configuration(store):
         definition = runtime.resolve(None, "local", scene)
         assert definition.tool_names == expected
         assert runtime.capabilities({"definition": asdict(definition)}) == expected
+        if definition.scope["datasource_ids"] == []:
+            assert "No datasource is authorized in the current scene" in definition.instructions
+            assert "supersedes datasource access" in definition.instructions
+            assert "no datasource is currently authorized" in definition.instructions
+        assert "snapshot is current and authoritative" in definition.instructions
 
 
 def test_resource_filter_preserves_explicit_resource_independent_tools():

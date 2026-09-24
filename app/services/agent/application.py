@@ -245,6 +245,15 @@ class RuntimeApplication:
                 "to select it again. Pass its id to database tools. If several are selected and "
                 "the target materially changes the operation, ask or infer it from the request.\n"
             )
+        else:
+            instructions += (
+                "\nNo datasource is authorized in the current scene. This current authorization "
+                "supersedes datasource access or selections mentioned earlier in the conversation. "
+                "Do not claim access to a datasource, reuse an earlier datasource name as current "
+                "authorization, or imply that prior tool results prove current access. Database tools "
+                "are intentionally unavailable for this run. If asked about current datasource access, "
+                "state that no datasource is currently authorized.\n"
+            )
         if selected.skill_draft_ids:
             instructions += (
                 "\nSkill authoring: use the draft tools for requested edits; ordinary explanations "
@@ -267,7 +276,12 @@ class RuntimeApplication:
                 "editing them in this same run. Do not fabricate business data or claim that a DOM render "
                 "proves Function interaction. Ask only for missing information that changes the task.\n"
             )
-        instructions += "\nAuthorized scene resources:\n" + json.dumps(scope, ensure_ascii=False)
+        instructions += (
+            "\nThe following authorized scene resources snapshot is current and authoritative. "
+            "It supersedes resource access described in earlier messages or tool results; an empty "
+            "resource list means no current authorization for that resource type.\n"
+            "Authorized scene resources:\n" + json.dumps(scope, ensure_ascii=False)
+        )
         return AgentDefinition(
             name=name, tool_names=scoped_tools(names, scope), instructions=instructions, scope=scope
         )
