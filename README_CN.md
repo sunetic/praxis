@@ -4,12 +4,11 @@
 
 <p align="center">
   <b>AI 原生数据库 Agent 平台。</b><br>
-  把你的数据库变成自治的 AI 工作空间——对话、分析、自动化，全部用自然语言完成。
+  用自然语言操作数据库，把有效的处理流程沉淀为 Agent 并自动运行。
 </p>
 
 <p align="center">
   <a href="https://github.com/sunetic/praxis/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-blue" alt="License"></a>
-  <img src="https://img.shields.io/badge/python-3.11+-yellow?logo=python&logoColor=white" alt="Python 3.11+">
   <img src="https://img.shields.io/badge/MySQL-supported-4479A1?logo=mysql&logoColor=white" alt="MySQL">
   <img src="https://img.shields.io/badge/PostgreSQL-supported-4169E1?logo=postgresql&logoColor=white" alt="PostgreSQL">
   <img src="https://img.shields.io/badge/docker-ready-2496ED?logo=docker&logoColor=white" alt="Docker">
@@ -19,39 +18,47 @@
   <a href="README.md">English</a> | <a href="README_CN.md">中文</a>
 </p>
 
-<p align="center">
-  <a href="https://sunetic.github.io/praxis/zh/">完整文档</a>
-</p>
+## 功能
 
----
+Praxis 是面向数据库工作的 AI Agent 平台。它让 Agent 理解数据库结构和运行状态，通过对话完成数据查询与分析、问题诊断和变更操作，并将有效的处理过程沉淀为可复用、可定时执行的 Agent。
 
-## Praxis 是什么
+- **对话式数据库操作**：在 Chat 中查看表结构、查询数据、诊断问题或申请数据变更。Agent 会调用工具，并根据返回结果继续分析。
+- **可复用 Agent**：把验证有效的工作流程保存为 Agent，随时基于最新数据再次运行。
+- **定时自动化**：按计划运行 Agent，并保存每次执行结果。
+- **函数**：将带参数的 SQL 查询封装为可复用、可测试的函数。
+- **知识与技能**：为 Agent 提供工作时需要参考的文档和领域指令。
 
-Praxis 是一个可自部署的平台，把你的数据库变成 AI 对话工作空间。不用手写 SQL，用自然语言描述你的需求——Praxis Agent 理解你的表结构，自动编写和执行查询、分析结果，还能调度定时任务。支持任意 **OpenAI 兼容**的模型提供商，开箱支持 **MySQL** 和 **PostgreSQL**。
-
-## 看看效果
-
-### 诊断你的数据库
-
-让 Agent 执行一次健康检查。它会自主检查表大小、索引使用情况和存储指标——执行多步诊断查询，并给出可操作的建议，就像一个 DBA 一样。
+### 诊断数据库
 
 <p align="center"><img src="assets/demo-chat.gif" alt="数据库健康检查" width="720"></p>
 
-### 保存和运行 Agent
-
-当一段诊断流程效果不错，一句话保存为可复用的 **Agent**。Agent 会记住整个多步分析过程——随时运行，用最新数据对任意数据源重复同样的检查。
+### 保存并运行 Agent
 
 <p align="center"><img src="assets/demo-agent.gif" alt="保存和运行 Agent" width="720"></p>
 
-### 调度自动化
-
-配置任意 Agent 按计划定时执行——每日健康检查、每周索引审查、定期性能审计。Praxis 自动运行并保存结果。
+### 定时执行任务
 
 <p align="center"><img src="assets/demo-scheduler.gif" alt="调度 Agent" width="720"></p>
 
 ## 快速开始
 
-准备好 Docker Desktop，或安装了 Compose v2 的 Docker Engine，然后运行：
+### 使用 Docker 单独启动 Praxis
+
+已经有数据库可供连接时，可以直接运行 Praxis：
+
+```bash
+docker run -d \
+  --name praxis \
+  -p 8000:8000 \
+  -v praxis_data:/app/data \
+  sunzy2/praxis:latest
+```
+
+打开 [http://127.0.0.1:8000](http://127.0.0.1:8000)，根据引导配置模型提供商并添加数据源。
+
+### 使用 Docker Compose 启动完整演示环境
+
+演示环境包括 Praxis、MySQL、MySQL Exporter、Prometheus、模拟负载，以及预先配置好的数据源和服务连接。
 
 ```bash
 git clone https://github.com/sunetic/praxis.git
@@ -59,160 +66,27 @@ cd praxis
 docker compose run --build --rm demo-init
 ```
 
-这条 Docker Compose 命令会先构建当前检出的 Praxis 源码，再在后台启动
-完整环境，前台完成连接注册和验证，然后直接在终端显示实际地址和密码：
+初始化完成后，打开 [http://127.0.0.1:8000](http://127.0.0.1:8000)，只需配置模型提供商。演示服务地址如下：
 
-```text
-Praxis demo is ready.
+- Praxis：`http://127.0.0.1:8000`
+- MySQL：`127.0.0.1:3308`（用户名 `app`，密码 `praxis-demo-app`，数据库 `app`）
+- Prometheus：`http://127.0.0.1:9090`
+- MySQL Exporter：`http://127.0.0.1:9104/metrics`
 
-  Praxis UI:        http://127.0.0.1:8000
-  Demo MySQL:       127.0.0.1:3308
-    Database:       app
-    Username:       app
-    Password:       praxis-demo-app
-    Root password:  praxis-demo-root
-  Prometheus:       http://127.0.0.1:9090
-  MySQL Exporter:   http://127.0.0.1:9104/metrics
-```
+使用 `docker compose down` 停止环境。需要同时清除演示数据时，使用 `docker compose down --volumes`。
 
-打开 [http://127.0.0.1:8000](http://127.0.0.1:8000)，只需在引导向导中
-配置 AI 提供商。`Demo MySQL` 数据源和 `Demo Prometheus` 服务已经自动
-注册并验证。知识包不会自动下载；需要时可在 **知识库 → 知识包商店** 中自行安装。
+## 执行 Eval
 
-停止环境运行 `docker compose down`。需要连同演示数据一起重置时运行
-`docker compose down --volumes`，然后再次执行上面的启动命令；重置命令会
-删除 Demo 数据。
-
-只需要单独运行 Praxis、连接自己的数据库时，也可以使用：
+真实模型 Eval 会使用隔离的 PostgreSQL 或 MySQL 测试环境，执行完整的 Chat 流程。开始前请安装项目依赖、启动 Docker，并在 Praxis 设置中配置好模型和凭据。
 
 ```bash
-docker run -d -p 8000:8000 -v ~/.praxis/data:/app/data sunzy2/praxis:latest
+uv sync
+
+make eval                                  # PostgreSQL Eval
+make eval EVAL_SUITE=mysql                 # MySQL Eval
+make eval EVAL_SUITE=mysql EVAL_CASE=M03   # 只运行一个 case
+make eval EVAL_PROFILE=model               # 使用固定 harness 对比模型
+make eval-list                             # 查看当前 suite 的 case
 ```
 
-## 更多功能
-
-- **可插拔技能** — Markdown 格式的提示词模块，赋予 Agent 领域专业能力（如分层诊断策略、慢查询分析）。用 YAML Front Matter 编写，无需写代码。
-- **知识库** — 上传文档构建知识库。Agent 对话时可引用知识库内容，提供更精准、有依据的回答。
-- **函数** — 定义基于 SQL 模板的可复用数据查询函数，可视化构建和测试，然后提供给 Agent 使用或调度自动执行。
-- **渠道** — 对接外部消息平台（Slack、钉钉等），让用户在 Praxis 界面之外也能与 Agent 交互。
-
-## 架构
-
-```
-┌─────────────────────────────────────────────────────────┐
-│                      Praxis UI                          │
-│                  (React + TypeScript)                    │
-└──────────────────────┬──────────────────────────────────┘
-                       │ REST API
-┌──────────────────────▼──────────────────────────────────┐
-│                  Praxis Backend                         │
-│               (FastAPI + Python 3.11+)                  │
-│                                                         │
-│  ┌──────────┐ ┌──────────┐ ┌───────────┐ ┌───────────┐ │
-│  │  Agents  │ │  Skills  │ │ Functions │ │ Scheduler │ │
-│  └────┬─────┘ └────┬─────┘ └─────┬─────┘ └─────┬─────┘ │
-│       └─────┬──────┴─────────────┘              │       │
-│             ▼                                   │       │
-│  ┌───────────────────┐  ┌────────────────────┐  │       │
-│  │   LLM Provider    │  │    Datasources     │◄─┘       │
-│  │ (OpenAI-compat.)  │  │  MySQL/PostgreSQL  │          │
-│  └───────────────────┘  └────────────────────┘          │
-└─────────────────────────────────────────────────────────┘
-```
-
-## 本地开发
-
-### 前置要求
-
-- Python 3.11+
-- Node.js 18+
-- [uv](https://github.com/astral-sh/uv)（Python 包管理器）
-
-### 后端
-
-```bash
-make install       # 安装依赖 (uv sync)
-make migrate       # 执行数据库迁移
-make dev           # 启动 API 服务 :8000，热重载
-```
-
-### 前端
-
-```bash
-cd frontend
-npm install
-npm run dev        # Vite 开发服务 :5173
-```
-
-### Docker 构建
-
-```bash
-make docker-build  # 构建 praxis:latest
-```
-
-### 首次体验监控分析
-
-独立的演示 Compose 可通过一条命令启动 Praxis、MySQL、MySQL Exporter、
-Prometheus 及自动初始化程序：
-
-```bash
-docker compose -f deployments/demo/docker-compose.yml up -d --build
-```
-
-它使用仅限本机演示的固定测试密码，不可作为生产部署模板；初始化容器会随
-Compose 自动运行。预置数据源、Prometheus Service、可下载知识包及 Chat 体验
-场景参见[演示指南](deployments/demo/README.md)。
-
-### 文档
-
-```bash
-make handbook-serve  # 中文预览：http://127.0.0.1:8001/praxis/zh/
-make handbook-build  # 构建到 site_handbook/
-```
-
-### 运行测试
-
-```bash
-make test          # 运行 pytest
-make lint          # 运行 Ruff、格式和仓库卫生检查
-```
-
-### 本地真实模型 Eval
-
-PR 检查仍然只运行确定性的常规测试；模型质量 Eval 使用本地凭据手动运行。启动 Docker 并在 Praxis 设置中配置好模型后：
-
-```bash
-make eval                                # 隔离运行 10 个 PostgreSQL DBA case
-make eval EVAL_SUITE=mysql               # 隔离运行 10 个 MySQL DBA case
-make eval EVAL_SUITE=mysql EVAL_CASE=M03 # 开发时只运行一个 case
-make eval EVAL_PROFILE=model             # 使用固定 harness 对比模型
-```
-
-默认命令会启动真实 Praxis 后端和隔离数据库 fixture，分别呈现任务结果、答案质量、必需证据、安全性、可靠性和过程诊断；也可使用固定 harness 对比模型。Markdown/JSON 报告和原始证据输出到 `.artifacts/evals/`，API Key 始终留在本地。详细说明见 [Eval 文档](https://sunetic.github.io/praxis/zh/reliability/evaluation/)。
-
-## 路线图
-
-- [ ] 更多数据库支持（Oracle、SQL Server、ClickHouse……）
-- [ ] 内置仪表盘与可视化
-- [ ] 多用户与 RBAC
-- [ ] 社区技能市场
-- [ ] MCP（Model Context Protocol）集成
-
-## 参与贡献
-
-欢迎任何形式的贡献！无论是 Bug 报告、功能建议还是 Pull Request。
-
-1. Fork 本仓库
-2. 创建功能分支 (`git checkout -b feature/amazing-feature`)
-3. 提交更改 (`git commit -m 'Add amazing feature'`)
-4. 推送到分支 (`git push origin feature/amazing-feature`)
-5. 创建 Pull Request
-
-## 社区
-
-- [GitHub Issues](https://github.com/sunetic/praxis/issues) — Bug 报告与功能建议
-- [GitHub Discussions](https://github.com/sunetic/praxis/discussions) — 提问与交流
-
-## 许可证
-
-Praxis 社区版开源发布，详见 [LICENSE](LICENSE)。
+可通过 `EVAL_REPEAT=<次数>` 重复执行，通过 `EVAL_OUTPUT=<路径>` 指定报告位置。报告默认写入 `.artifacts/evals/`。关于 case、评分方式和报告解读，参见 [Eval 文档](https://sunetic.github.io/praxis/zh/reliability/evaluation/)。

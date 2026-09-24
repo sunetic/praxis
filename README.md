@@ -4,12 +4,11 @@
 
 <p align="center">
   <b>AI-native database agent platform.</b><br>
-  Turn your databases into autonomous AI workspaces — chat, analyze, automate, all in natural language.
+  Chat with databases, automate recurring work, and turn successful workflows into reusable agents.
 </p>
 
 <p align="center">
   <a href="https://github.com/sunetic/praxis/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-blue" alt="License"></a>
-  <img src="https://img.shields.io/badge/python-3.11+-yellow?logo=python&logoColor=white" alt="Python 3.11+">
   <img src="https://img.shields.io/badge/MySQL-supported-4479A1?logo=mysql&logoColor=white" alt="MySQL">
   <img src="https://img.shields.io/badge/PostgreSQL-supported-4169E1?logo=postgresql&logoColor=white" alt="PostgreSQL">
   <img src="https://img.shields.io/badge/docker-ready-2496ED?logo=docker&logoColor=white" alt="Docker">
@@ -19,39 +18,47 @@
   <a href="README.md">English</a> | <a href="README_CN.md">中文</a>
 </p>
 
-<p align="center">
-  <a href="https://sunetic.github.io/praxis/">Documentation</a>
-</p>
+## Features
 
----
+Praxis is an AI agent platform for database work. Its agents understand database schemas and runtime state, then use that context to query and analyze data, diagnose problems, carry out changes, and turn successful workflows into reusable scheduled agents.
 
-## What Is Praxis
+- **Conversational database operations** — inspect schemas, query data, diagnose problems, and request changes through Chat. The agent can use multiple tools and continue reasoning from their results.
+- **Reusable agents** — save a proven workflow as an Agent and run it again against current data.
+- **Scheduled automation** — run Agents on a schedule and keep their execution results.
+- **Functions** — package parameterized SQL retrieval as reusable, testable functions.
+- **Knowledge and skills** — provide documents and domain instructions that agents can use while working.
 
-Praxis is a self-hosted platform that turns your databases into conversational AI workspaces. Instead of writing SQL by hand, you describe what you need in plain language — Praxis agents understand your schema, write and execute queries, analyze results, and schedule recurring tasks. It works with any **OpenAI-compatible** model provider and supports **MySQL** and **PostgreSQL** out of the box.
-
-## See It in Action
-
-### Diagnose Your Database
-
-Ask the agent to run a health check. It autonomously examines table sizes, index usage, and storage metrics — running multiple diagnostic queries and presenting findings with actionable recommendations, just like a DBA would.
+### Diagnose a database
 
 <p align="center"><img src="assets/demo-chat.gif" alt="Database health check" width="720"></p>
 
-### Save & Run Agents
-
-When a diagnostic workflow works well, save it as a reusable **Agent** with one command. The agent captures the entire multi-step analysis — run it anytime against any datasource to repeat the same checks with fresh data.
+### Save and run an Agent
 
 <p align="center"><img src="assets/demo-agent.gif" alt="Save and run agents" width="720"></p>
 
-### Automate with Scheduler
-
-Schedule any agent for recurring execution — daily health checks, weekly index reviews, periodic performance audits. Praxis runs them automatically and stores the results.
+### Schedule recurring work
 
 <p align="center"><img src="assets/demo-scheduler.gif" alt="Schedule agents" width="720"></p>
 
-## Quick Start
+## Quickstart
 
-Install Docker Desktop, or Docker Engine with Compose v2, then run:
+### Run Praxis with Docker
+
+Use this when you already have a database to connect:
+
+```bash
+docker run -d \
+  --name praxis \
+  -p 8000:8000 \
+  -v praxis_data:/app/data \
+  sunzy2/praxis:latest
+```
+
+Open [http://127.0.0.1:8000](http://127.0.0.1:8000), then configure a model provider and add your datasource during onboarding.
+
+### Run the complete demo with Docker Compose
+
+The demo includes Praxis, MySQL, MySQL Exporter, Prometheus, generated workload, and preconfigured datasource and service connections.
 
 ```bash
 git clone https://github.com/sunetic/praxis.git
@@ -59,163 +66,27 @@ cd praxis
 docker compose run --build --rm demo-init
 ```
 
-This single Docker Compose command builds the checked-out Praxis source, starts
-the complete stack in the background, runs registration and connection checks
-in the foreground, and then prints the actual addresses and credentials:
+When initialization finishes, open [http://127.0.0.1:8000](http://127.0.0.1:8000) and configure only the model provider. The demo services are available at:
 
-```text
-Praxis demo is ready.
+- Praxis: `http://127.0.0.1:8000`
+- MySQL: `127.0.0.1:3308` (`app` / `praxis-demo-app`, database `app`)
+- Prometheus: `http://127.0.0.1:9090`
+- MySQL Exporter: `http://127.0.0.1:9104/metrics`
 
-  Praxis UI:        http://127.0.0.1:8000
-  Demo MySQL:       127.0.0.1:3308
-    Database:       app
-    Username:       app
-    Password:       praxis-demo-app
-    Root password:  praxis-demo-root
-  Prometheus:       http://127.0.0.1:9090
-  MySQL Exporter:   http://127.0.0.1:9104/metrics
-```
+Stop the demo with `docker compose down`. To remove its data as well, use `docker compose down --volumes`.
 
-Open [http://127.0.0.1:8000](http://127.0.0.1:8000) and configure only the AI
-provider in onboarding. The `Demo MySQL` datasource and `Demo Prometheus`
-Service are already registered and verified. Knowledge packs are not downloaded
-automatically; install one from **Knowledge Base → Knowledge Packs** when needed.
+## Eval
 
-Run `docker compose down` to stop the stack. To also reset all demo data, run
-`docker compose down --volumes`, then run the startup command above again.
-Resetting volumes deletes the demo data.
-
-To run Praxis alone and connect your own database instead:
+Live-model Evals exercise the real Chat path against isolated PostgreSQL or MySQL fixtures. Install the project dependencies, keep Docker running, and configure the model and credentials in Praxis Settings before starting.
 
 ```bash
-docker run -d -p 8000:8000 -v ~/.praxis/data:/app/data sunzy2/praxis:latest
+uv sync
+
+make eval                                  # PostgreSQL suite
+make eval EVAL_SUITE=mysql                 # MySQL suite
+make eval EVAL_SUITE=mysql EVAL_CASE=M03   # One case
+make eval EVAL_PROFILE=model               # Fixed-harness model comparison
+make eval-list                             # List cases in the selected suite
 ```
 
-## More Features
-
-- **Pluggable Skills** — Markdown-based prompt modules that give agents domain expertise (e.g. layered diagnosis, slow-query analysis). Write your own with YAML front matter.
-- **Knowledge Base** — Upload documents for agents to reference during conversations, providing context-aware, grounded answers.
-- **Functions** — Define reusable data-retrieval functions backed by SQL templates. Build and test them visually, then expose to agents or schedule for automation.
-- **Channels** — Connect external messaging platforms (Slack, DingTalk, etc.) so users can interact with agents outside the Praxis UI.
-
-## Architecture
-
-```
-┌─────────────────────────────────────────────────────────┐
-│                      Praxis UI                          │
-│                  (React + TypeScript)                    │
-└──────────────────────┬──────────────────────────────────┘
-                       │ REST API
-┌──────────────────────▼──────────────────────────────────┐
-│                  Praxis Backend                         │
-│               (FastAPI + Python 3.11+)                  │
-│                                                         │
-│  ┌──────────┐ ┌──────────┐ ┌───────────┐ ┌───────────┐ │
-│  │  Agents  │ │  Skills  │ │ Functions │ │ Scheduler │ │
-│  └────┬─────┘ └────┬─────┘ └─────┬─────┘ └─────┬─────┘ │
-│       └─────┬──────┴─────────────┘              │       │
-│             ▼                                   │       │
-│  ┌───────────────────┐  ┌────────────────────┐  │       │
-│  │   LLM Provider    │  │    Datasources     │◄─┘       │
-│  │ (OpenAI-compat.)  │  │  MySQL/PostgreSQL  │          │
-│  └───────────────────┘  └────────────────────┘          │
-└─────────────────────────────────────────────────────────┘
-```
-
-## Development
-
-### Prerequisites
-
-- Python 3.11+
-- Node.js 18+
-- [uv](https://github.com/astral-sh/uv) (Python package manager)
-
-### Backend
-
-```bash
-make install       # install dependencies (uv sync)
-make migrate       # run database migrations
-make dev           # start API server at :8000 with hot reload
-```
-
-### Frontend
-
-```bash
-cd frontend
-npm install
-npm run dev        # Vite dev server at :5173
-```
-
-### Docker Build
-
-```bash
-make docker-build  # builds praxis:latest
-```
-
-### First-run observability demo
-
-The standalone demo Compose project starts Praxis, MySQL, MySQL Exporter,
-Prometheus, and an automatic initializer with one command:
-
-```bash
-docker compose -f deployments/demo/docker-compose.yml up -d --build
-```
-
-It uses fixed local-only demo credentials and is not a production deployment
-template. The initializer runs automatically as part of Compose. See the
-[demo guide](deployments/demo/README.md) for the preconfigured datasource,
-Prometheus Service, downloadable knowledge pack, and Chat scenario.
-
-### Documentation
-
-```bash
-make handbook-serve  # preview at http://127.0.0.1:8001/praxis/
-make handbook-build  # build site_handbook/
-```
-
-### Running Tests
-
-```bash
-make test          # run pytest
-make lint          # run Ruff, format, and repository hygiene checks
-```
-
-### Local Live-Model Evals
-
-PR checks remain deterministic tests; live-model quality evals run manually with local credentials. With Docker running and a model configured in Praxis Settings:
-
-```bash
-make eval                                # isolated 10-case PostgreSQL DBA eval
-make eval EVAL_SUITE=mysql               # isolated 10-case MySQL DBA eval
-make eval EVAL_SUITE=mysql EVAL_CASE=M03 # run one case while developing
-make eval EVAL_PROFILE=model             # compare models with the fixed harness
-```
-
-The default profile starts the real backend and an isolated database fixture; the model profile fixes a small harness for model comparison. Reports separate task outcome, answer quality, required evidence, safety, reliability, and trajectory diagnostics under `.artifacts/evals/`. API keys stay local. See the [Eval documentation](https://sunetic.github.io/praxis/reliability/evaluation/) for details.
-
-## Roadmap
-
-- [ ] More database support (Oracle, SQL Server, ClickHouse, ...)
-- [ ] Built-in dashboard & visualization
-- [ ] Multi-user & RBAC
-- [ ] Plugin marketplace for community skills
-- [ ] MCP (Model Context Protocol) integration
-
-## Contributing
-
-Contributions are welcome! Whether it's bug reports, feature requests, or pull requests — all contributions are appreciated.
-
-1. Fork the repository
-2. Create your feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
-
-## Community
-
-- [GitHub Issues](https://github.com/sunetic/praxis/issues) — Bug reports & feature requests
-- [GitHub Discussions](https://github.com/sunetic/praxis/discussions) — Questions & ideas
-
-## License
-
-Praxis Community Edition is open source. See [LICENSE](LICENSE) for details.
+Use `EVAL_REPEAT=<n>` to repeat cases and `EVAL_OUTPUT=<path>` to choose the report path. By default, reports are written under `.artifacts/evals/`. See the [Eval documentation](https://sunetic.github.io/praxis/reliability/evaluation/) for case design, scoring, and report interpretation.
