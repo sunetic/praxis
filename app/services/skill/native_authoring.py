@@ -2,10 +2,11 @@
 
 import time
 import uuid
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import insert, select, update
+from sqlalchemy.orm import Session, sessionmaker
 
 from app.models.artifacts import skill_drafts
 from app.services.agent.store import RunConflictError, RunNotFoundError, fingerprint
@@ -37,7 +38,7 @@ class SkillDraftChanges(BaseModel):
 
 
 class SkillDraftStore:
-    def __init__(self, sessions):
+    def __init__(self, sessions: sessionmaker[Session]) -> None:
         self.sessions = sessions
 
     def create(self, actor_id):
@@ -53,7 +54,7 @@ class SkillDraftStore:
             db.execute(insert(skill_drafts).values(**row))
         return row
 
-    def read(self, draft_id, actor_id):
+    def read(self, draft_id: DraftID, actor_id: str) -> dict[str, Any]:
         with self.sessions() as db:
             row = (
                 db.execute(

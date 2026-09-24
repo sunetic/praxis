@@ -1,11 +1,14 @@
 """Persist native request boundaries and project text without exposing thinking."""
 
 import asyncio
+from collections.abc import AsyncIterable
 from dataclasses import replace
 from time import monotonic
 
-from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai import RunContext
+from pydantic_ai.capabilities import AbstractCapability, WrapModelRequestHandler
 from pydantic_ai.messages import (
+    AgentStreamEvent,
     FunctionToolResultEvent,
     ModelResponse,
     PartDeltaEvent,
@@ -14,6 +17,7 @@ from pydantic_ai.messages import (
     TextPartDelta,
     ToolReturnPart,
 )
+from pydantic_ai.models import ModelRequestContext
 
 from app.services.agent.definitions import RunDependencies
 from app.services.agent.persistence import run_db
@@ -47,7 +51,9 @@ class RunEvents(AbstractCapability[RunDependencies]):
             usage=usage,
         )
 
-    async def before_model_request(self, ctx, request_context):
+    async def before_model_request(
+        self, ctx: RunContext[RunDependencies], request_context: ModelRequestContext
+    ) -> ModelRequestContext:
         self.message_id = f"{self.run_id}:{len(ctx.messages) - self.offset}"
         await run_db(
             self.store.checkpoint,
@@ -58,7 +64,13 @@ class RunEvents(AbstractCapability[RunDependencies]):
         )
         return request_context
 
-    async def wrap_model_request(self, ctx, *, request_context, handler):
+    async def wrap_model_request(
+        self,
+        ctx: RunContext[RunDependencies],
+        *,
+        request_context: ModelRequestContext,
+        handler: WrapModelRequestHandler,
+    ) -> ModelResponse:
         # Context compaction wraps this capability, so model waiting starts only
         # after the actual capacity work has finished.
         await run_db(
@@ -84,7 +96,13 @@ class RunEvents(AbstractCapability[RunDependencies]):
             if request_context.streaming and self.budget.usage.requests == requests_before:
                 self.budget.usage.requests += 1
 
-    async def after_model_request(self, ctx, *, request_context, response: ModelResponse):
+    async def after_model_request(
+        self,
+        ctx: RunContext[RunDependencies],
+        *,
+        request_context: ModelRequestContext,
+        response: ModelResponse,
+    ) -> ModelResponse:
         history = list(ctx.messages)
         if not history or history[-1] is not response:
             history.append(response)
@@ -107,12 +125,18 @@ class RunEvents(AbstractCapability[RunDependencies]):
         )
         return response
 
-    async def handle(self, ctx, stream):
+    async def handle(
+        self,
+        ctx: RunContext[RunDependencies],
+        stream: AsyncIterable[AgentStreamEvent],
+    ) -> None:
         # One consumer preserves native event order. A pending read survives the
         # flush deadline, so a quiet provider cannot strand its last text chunk.
-        buffer, part_id, deadline = "", None, None
+        buffer = ""
+        part_id: str | None = None
+        deadline: float | None = None
 
-        async def flush():
+        async def flush() -> None:
             nonlocal buffer, deadline
             if buffer:
                 await run_db(
@@ -125,7 +149,7 @@ class RunEvents(AbstractCapability[RunDependencies]):
                 buffer, deadline = "", None
 
         iterator = aiter(stream)
-        pending = asyncio.create_task(anext(iterator))
+        pending: asyncio.Future[AgentStreamEvent] = asyncio.ensure_future(anext(iterator))
         try:
             while True:
                 timeout = max(0, deadline - monotonic()) if deadline is not None else None
@@ -137,15 +161,17 @@ class RunEvents(AbstractCapability[RunDependencies]):
                     event = pending.result()
                 except StopAsyncIteration:
                     break
-                text = None
+                text: str | None = None
+                text_index: int | None = None
                 if isinstance(event, PartStartEvent) and isinstance(event.part, TextPart):
-                    text = event.part.content
+                    text, text_index = event.part.content, event.index
                 elif isinstance(event, PartDeltaEvent) and isinstance(event.delta, TextPartDelta):
-                    text = event.delta.content_delta
+                    text, text_index = event.delta.content_delta, event.index
                 if text:
-                    if part_id != str(event.index):
+                    assert text_index is not None
+                    if part_id != str(text_index):
                         await flush()
-                        part_id = str(event.index)
+                        part_id = str(text_index)
                     if deadline is None:
                         deadline = monotonic() + 0.05
                     buffer += text
@@ -171,7 +197,7 @@ class RunEvents(AbstractCapability[RunDependencies]):
                             event.part.tool_call_id,
                             {"outcome": "denied", "content": event.part.content},
                         )
-                pending = asyncio.create_task(anext(iterator))
+                pending = asyncio.ensure_future(anext(iterator))
         finally:
             pending.cancel()
             await asyncio.gather(pending, return_exceptions=True)

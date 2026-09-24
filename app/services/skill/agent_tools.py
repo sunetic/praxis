@@ -5,6 +5,7 @@ from typing import Annotated
 from pydantic import Field
 from pydantic_ai import RunContext, Tool
 from pydantic_ai.exceptions import ToolFailed
+from sqlalchemy.orm import Session, sessionmaker
 
 from app.models.models import Agent
 from app.services.agent.definitions import RunDependencies
@@ -22,7 +23,7 @@ from app.services.skill.native_authoring import (
 SKILL_DRAFT_TOOLS = frozenset({"skill_draft_read", "skill_draft_write"})
 
 
-def skill_draft_tools(sessions):
+def skill_draft_tools(sessions: sessionmaker[Session]) -> dict[str, RegisteredTool]:
     store = SkillDraftStore(sessions)
 
     def allowed(ctx, draft_id):

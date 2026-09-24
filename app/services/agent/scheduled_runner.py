@@ -1,7 +1,7 @@
 """Submit a scheduled occurrence to the application-owned native runtime."""
 
 from dataclasses import replace
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 from uuid import NAMESPACE_URL, uuid5
 
 from sqlalchemy import insert, select, update
@@ -120,7 +120,7 @@ class ScheduledAgentRunner:
         return scheduled_result(run)
 
 
-def scheduled_result(run: dict) -> ScheduleRuntimeResult:
+def scheduled_result(run: dict[str, Any]) -> ScheduleRuntimeResult:
     return ScheduleRuntimeResult(
         run_id=run["id"],
         status=run["status"],

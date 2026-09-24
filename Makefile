@@ -79,7 +79,9 @@ typecheck-agent-runtime:
 		app/services/agent/store.py app/services/agent/store_base.py \
 		app/services/agent/store_conversations.py app/services/agent/store_calls.py \
 		app/services/agent/store_execution.py app/services/agent/service.py \
-		app/services/agent/context.py
+		app/services/agent/context.py app/services/agent/application.py \
+		app/services/agent/events.py app/services/agent/execution.py \
+		app/services/agent/scheduled_runner.py
 
 typecheck-agent-core: typecheck-agent-runtime
 
