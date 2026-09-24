@@ -30,9 +30,7 @@ def test_demo_compose_starts_without_generated_credentials() -> None:
         "${DEMO_MYSQL_ROOT_PASSWORD:-praxis-demo-root}"
     )
     assert mysql_environment["MYSQL_PASSWORD"] == ("${DEMO_MYSQL_APP_PASSWORD:-praxis-demo-app}")
-    assert mysql_environment["DEMO_EXPORTER_PASSWORD"] == (
-        "${DEMO_EXPORTER_PASSWORD:-praxis-demo-exporter}"
-    )
+    assert "DEMO_EXPORTER_PASSWORD" not in mysql_environment
     assert services["demo-init"]["restart"] == "on-failure:5"
     assert services["demo-init"]["environment"]["PRAXIS_DEMO_PORT"] == ("${PRAXIS_DEMO_PORT:-8000}")
     assert services["demo-init"]["environment"]["DEMO_MYSQL_PORT"] == ("${DEMO_MYSQL_PORT:-3308}")
@@ -42,8 +40,8 @@ def test_demo_compose_starts_without_generated_credentials() -> None:
     assert services["demo-init"]["environment"]["DEMO_PROMETHEUS_PORT"] == (
         "${DEMO_PROMETHEUS_PORT:-9090}"
     )
-    assert services["demo-init"]["environment"]["DEMO_EXPORTER_PORT"] == (
-        "${DEMO_EXPORTER_PORT:-9104}"
+    assert services["demo-init"]["environment"]["DEMO_CADVISOR_PORT"] == (
+        "${DEMO_CADVISOR_PORT:-8080}"
     )
     assert services["praxis-demo"]["environment"]["PRAXIS_DEMO_BOOTSTRAP"] == "true"
     assert services["praxis-demo"]["environment"]["DEMO_MYSQL_APP_PASSWORD"] == (
@@ -53,8 +51,14 @@ def test_demo_compose_starts_without_generated_credentials() -> None:
         "praxis-demo",
         "mysql-demo",
         "prometheus-demo",
-        "mysql-load-demo",
+        "cadvisor-demo",
     }
+    assert "mysql-exporter-demo" not in services
+    assert "mysql-load-demo" not in services
+    assert services["cadvisor-demo"]["image"] == "ghcr.io/google/cadvisor:v0.60.6"
+    assert services["cadvisor-demo"]["cgroup"] == "host"
+    assert services["cadvisor-demo"]["command"] == ["--containerd-namespace=default"]
+    assert services["prometheus-demo"]["depends_on"] == ["cadvisor-demo"]
 
 
 def test_initializer_creates_cluster_bound_datasource_and_service(
@@ -152,6 +156,7 @@ def test_initializer_main_reports_ready_environment_without_installing_a_pack(
 
     monkeypatch.setattr(initializer, "ensure_service", fake_service)
     monkeypatch.setattr(initializer, "wait_for_connections", lambda *_args: None)
+    monkeypatch.setattr(initializer, "wait_for_cadvisor_metrics", lambda: None)
     monkeypatch.setattr(initializer, "verify_registration", lambda *_args: None)
 
     initializer.main()
@@ -165,10 +170,29 @@ def test_initializer_main_reports_ready_environment_without_installing_a_pack(
     assert f"Password:       {'a' * 48}" in summary
     assert "Root password:  root-demo-password" in summary
     assert "Prometheus:       http://127.0.0.1:9090" in summary
-    assert "MySQL Exporter:   http://127.0.0.1:9104/metrics" in summary
+    assert "cAdvisor:         http://127.0.0.1:8080" in summary
     assert "Registered in Praxis: Demo MySQL (ID 1), Demo Prometheus (ID 3)" in summary
     assert "Knowledge pack: not installed" in summary
     assert service_calls == [True]
+
+
+def test_initializer_waits_for_mysql_cadvisor_series(monkeypatch: pytest.MonkeyPatch) -> None:
+    initializer = _load_initializer(monkeypatch)
+    results = [[], [{"metric": {"container_label_com_docker_compose_service": "mysql-demo"}}]]
+    queries: list[str] = []
+
+    def fake_query(query: str, **_kwargs):
+        queries.append(query)
+        return {"status": "success", "data": {"result": results.pop(0)}}
+
+    monkeypatch.setattr(initializer, "query_prometheus", fake_query)
+    monkeypatch.setattr(initializer.time, "sleep", lambda _seconds: None)
+
+    initializer.wait_for_cadvisor_metrics(timeout_seconds=1)
+
+    assert len(queries) == 2
+    assert 'job="cadvisor-demo"' in queries[0]
+    assert 'container_label_com_docker_compose_service="mysql-demo"' in queries[0]
 
 
 def test_initializer_requires_both_objects_to_be_visible(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -209,9 +233,8 @@ def test_default_compose_builds_one_source_matched_demo() -> None:
     assert {
         "praxis-demo",
         "mysql-demo",
-        "mysql-exporter-demo",
+        "cadvisor-demo",
         "prometheus-demo",
-        "mysql-load-demo",
         "demo-init",
     } <= set(services)
     assert services["demo-init"]["restart"] == "on-failure:5"

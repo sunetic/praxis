@@ -38,7 +38,6 @@ services:
       MYSQL_DATABASE: app
       MYSQL_USER: app
       MYSQL_PASSWORD: ${DEMO_MYSQL_APP_PASSWORD:-praxis-demo-app}
-      DEMO_EXPORTER_PASSWORD: ${DEMO_EXPORTER_PASSWORD:-praxis-demo-exporter}
     ports:
       - "127.0.0.1:${DEMO_MYSQL_PORT:-3308}:3306"
     volumes:
@@ -51,22 +50,19 @@ services:
       retries: 30
     restart: unless-stopped
 
-  mysql-exporter-demo:
-    image: prom/mysqld-exporter:v0.19.0
-    entrypoint: ["/bin/sh", "-ec"]
+  cadvisor-demo:
+    image: ghcr.io/google/cadvisor:v0.60.6
+    cgroup: host
     command:
-      - |
-        umask 077
-        printf '[client]\nuser=exporter\npassword=%s\nhost=mysql-demo\nport=3306\n' \
-          "$${DEMO_EXPORTER_PASSWORD}" > /tmp/.my.cnf
-        exec /bin/mysqld_exporter --config.my-cnf=/tmp/.my.cnf
-    environment:
-      DEMO_EXPORTER_PASSWORD: ${DEMO_EXPORTER_PASSWORD:-praxis-demo-exporter}
+      - --containerd-namespace=default
     ports:
-      - "127.0.0.1:${DEMO_EXPORTER_PORT:-9104}:9104"
-    depends_on:
-      mysql-demo:
-        condition: service_healthy
+      - "127.0.0.1:${DEMO_CADVISOR_PORT:-8080}:8080"
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker:/var/lib/docker:ro
+      - /dev/disk:/dev/disk:ro
     restart: unless-stopped
 
   prometheus-demo:
@@ -79,22 +75,9 @@ services:
       - "127.0.0.1:${DEMO_PROMETHEUS_PORT:-9090}:9090"
     volumes:
       - ./deployments/demo/prometheus.yml:/etc/prometheus/prometheus.yml:ro
-      - ./deployments/demo/alerts.yml:/etc/prometheus/alerts.yml:ro
       - prometheus_demo_data:/prometheus
     depends_on:
-      - mysql-exporter-demo
-    restart: unless-stopped
-
-  mysql-load-demo:
-    image: mysql:8.4.11
-    environment:
-      MYSQL_PWD: ${DEMO_MYSQL_APP_PASSWORD:-praxis-demo-app}
-    command: ["/bin/bash", "/demo/connection-pressure.sh"]
-    volumes:
-      - ./deployments/demo/connection-pressure.sh:/demo/connection-pressure.sh:ro
-    depends_on:
-      mysql-demo:
-        condition: service_healthy
+      - cadvisor-demo
     restart: unless-stopped
 
   demo-init:
@@ -113,7 +96,7 @@ services:
       DEMO_MYSQL_ROOT_PASSWORD: ${DEMO_MYSQL_ROOT_PASSWORD:-praxis-demo-root}
       DEMO_MYSQL_PORT: ${DEMO_MYSQL_PORT:-3308}
       DEMO_PROMETHEUS_PORT: ${DEMO_PROMETHEUS_PORT:-9090}
-      DEMO_EXPORTER_PORT: ${DEMO_EXPORTER_PORT:-9104}
+      DEMO_CADVISOR_PORT: ${DEMO_CADVISOR_PORT:-8080}
     volumes:
       - ./deployments/demo/init.py:/demo/init.py:ro
     depends_on:
@@ -123,7 +106,7 @@ services:
         condition: service_healthy
       prometheus-demo:
         condition: service_started
-      mysql-load-demo:
+      cadvisor-demo:
         condition: service_started
     restart: "on-failure:5"
 

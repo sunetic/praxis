@@ -1,15 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-if [[ ! "${DEMO_EXPORTER_PASSWORD}" =~ ^[A-Za-z0-9_-]{8,64}$ ]]; then
-  echo "DEMO_EXPORTER_PASSWORD must contain 8-64 letters, numbers, underscores, or hyphens" >&2
-  exit 1
-fi
-
 mysql --protocol=socket -uroot -p"${MYSQL_ROOT_PASSWORD}" <<SQL
-CREATE USER IF NOT EXISTS 'exporter'@'%' IDENTIFIED BY '${DEMO_EXPORTER_PASSWORD}' WITH MAX_USER_CONNECTIONS 3;
-GRANT PROCESS, REPLICATION CLIENT, SELECT ON *.* TO 'exporter'@'%';
-
 USE app;
 CREATE TABLE IF NOT EXISTS orders (
     id BIGINT PRIMARY KEY AUTO_INCREMENT,

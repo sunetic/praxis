@@ -38,17 +38,15 @@ On a fresh volume the environment already contains:
 
 - a `Demo MySQL` datasource with cluster key `mysql-prometheus-demo`;
 - a cluster-bound `Demo Prometheus` Service whose connection test passes;
-- MySQL exporter metrics, two hours of Prometheus retention, and a workload that
-  triggers `MySQLConnectionPressure` after approximately 20 seconds.
+- cAdvisor container metrics and two hours of Prometheus retention.
 
 Knowledge packs remain uninstalled. A user can install the Prometheus pack from
 **Knowledge Base → Knowledge Packs** when it is useful for their workflow.
 
 After onboarding, select `Demo MySQL` in **Chat** and try this request:
 
-> Analyze the current MySQL connection pressure. Combine the database snapshot,
-> the last two minutes of Prometheus history, and active alerts. State the time
-> range and evidence source.
+> Analyze the MySQL container's CPU and memory usage over the last two minutes.
+> Use Prometheus history and identify the exact container series you used.
 
 ## Operations
 
@@ -73,6 +71,6 @@ above and start the stack again. This deletes demo-only data.
 
 All published ports bind to `127.0.0.1`. To avoid local port conflicts, override
 `PRAXIS_DEMO_PORT`, `DEMO_MYSQL_PORT`, `DEMO_PROMETHEUS_PORT`, or
-`DEMO_EXPORTER_PORT` before running the Compose command. The demo database
-passwords can likewise be overridden with `DEMO_MYSQL_ROOT_PASSWORD`,
-`DEMO_MYSQL_APP_PASSWORD`, and `DEMO_EXPORTER_PASSWORD`.
+`DEMO_CADVISOR_PORT` before running the Compose command. The demo database
+passwords can likewise be overridden with `DEMO_MYSQL_ROOT_PASSWORD` and
+`DEMO_MYSQL_APP_PASSWORD`.

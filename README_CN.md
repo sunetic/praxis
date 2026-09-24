@@ -58,7 +58,7 @@ docker run -d \
 
 ### 使用 Docker Compose 启动完整演示环境
 
-演示环境包括 Praxis、MySQL、MySQL Exporter、Prometheus、模拟负载，以及预先配置好的数据源和服务连接。
+演示环境包括 Praxis、MySQL、cAdvisor、Prometheus，以及预先配置好的数据源和服务连接。
 
 ```bash
 git clone https://github.com/sunetic/praxis.git
@@ -71,7 +71,7 @@ docker compose run --build --rm demo-init
 - Praxis：`http://127.0.0.1:8000`
 - MySQL：`127.0.0.1:3308`（用户名 `app`，密码 `praxis-demo-app`，数据库 `app`）
 - Prometheus：`http://127.0.0.1:9090`
-- MySQL Exporter：`http://127.0.0.1:9104/metrics`
+- cAdvisor：`http://127.0.0.1:8080`
 
 使用 `docker compose down` 停止环境。需要同时清除演示数据时，使用 `docker compose down --volumes`。
 

@@ -1,6 +1,6 @@
-# MySQL connection-pressure correlation scenario
+# MySQL container-resource correlation scenario
 
-This runbook matches the repository's `observability-demo` Docker Compose profile.
+This runbook matches the repository's Docker Compose demo.
 
 ## Service and datasource mapping
 
@@ -8,28 +8,22 @@ This runbook matches the repository's `observability-demo` Docker Compose profil
   cluster key `mysql-prometheus-demo`.
 - MySQL datasource from the Praxis container: `mysql-demo:3306` with the same
   credentials and cluster key.
-- Prometheus Service from the host: `http://127.0.0.1:9090`.
 - Prometheus Service from the Praxis container: `http://prometheus-demo:9090`.
-- Service health check: `GET /-/ready`, response format `auto`, no authentication.
-- Bind the Service to `cluster:mysql-prometheus-demo` and link this knowledge base.
+- Prometheus scrapes cAdvisor as `job="cadvisor-demo"`.
+- The MySQL container is selected with the Compose service label `mysql-demo`.
 
 ## Evidence workflow
 
-1. Confirm the Prometheus scrape target with `/api/v1/targets?state=active` and
-   require `health=up` for the `mysql-demo` job.
-2. Query current MySQL state using `SHOW GLOBAL STATUS` for
-   `Threads_connected`, `Threads_running`, and `Aborted_connects`, plus
-   `SHOW GLOBAL VARIABLES LIKE 'max_connections'`.
-3. Use `/api/v1/query_range` for connection-utilization history. Set `start` and
-   `end` from the user's incident window and use `step=5s` for this demo.
-4. Use `/api/v1/alerts` to check the active `MySQLConnectionPressure` alert.
-5. Correlate by timestamp and distinguish facts: current SQL snapshot, historical
-   metric samples, and alert-rule state.
+1. Confirm the cAdvisor target with `/api/v1/targets?state=active` and require an
+   up target for `job="cadvisor-demo"`.
+2. Use `container_last_seen` to resolve the current MySQL container series and
+   its available labels instead of assuming a generated container name.
+3. Use `/api/v1/query_range` for MySQL container CPU or memory history. Set
+   `start` and `end` from the user's requested window.
+4. When database context is relevant, query the selected MySQL datasource for a
+   current SQL snapshot and keep it distinct from historical container metrics.
+5. Correlate facts by timestamp, container identity, and units. State which
+   claims came from SQL and which came from Prometheus.
 
-Expected demo behavior: the load container holds enough connections to exceed 50%
-of `max_connections`; after roughly 30 seconds the alert becomes firing. The final
-diagnosis should say that the database is reachable but has sustained connection
-pressure, cite the peak/current utilization, and identify whether the alert fired.
-
-If Prometheus has no samples, report the scrape-health gap. Do not convert missing
-monitoring data into a claim that the database was healthy.
+Prometheus retention is two hours in this demo. An empty series outside that
+window is a coverage gap, not evidence of zero usage.

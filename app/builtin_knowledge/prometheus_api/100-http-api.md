@@ -29,7 +29,7 @@ Example Service call:
   "method": "GET",
   "path": "/api/v1/query",
   "query_params": {
-    "query": "mysql_global_status_threads_connected{job=\"mysql-demo\"}"
+    "query": "up{job=\"cadvisor-demo\"}"
   }
 }
 ```

@@ -7,9 +7,11 @@ import os
 import time
 from typing import Any
 from urllib.error import HTTPError, URLError
+from urllib.parse import urlencode
 from urllib.request import ProxyHandler, Request, build_opener
 
 API_URL = os.getenv("PRAXIS_API_URL", "http://praxis-demo:8000/api/v1").rstrip("/")
+PROMETHEUS_URL = os.getenv("DEMO_PROMETHEUS_URL", "http://prometheus-demo:9090").rstrip("/")
 MYSQL_PASSWORD = os.environ["DEMO_MYSQL_APP_PASSWORD"]
 MYSQL_ROOT_PASSWORD = os.environ["DEMO_MYSQL_ROOT_PASSWORD"]
 CLUSTER_KEY = "mysql-prometheus-demo"
@@ -56,6 +58,39 @@ def wait_for_praxis(timeout_seconds: int = 180) -> None:
         except DemoInitError:
             time.sleep(2)
     raise DemoInitError("Praxis API did not become ready within 180 seconds")
+
+
+def query_prometheus(query: str, *, timeout: float = 10) -> dict[str, Any]:
+    """Run an instant Prometheus query without inheriting host proxy settings."""
+    request = Request(f"{PROMETHEUS_URL}/api/v1/query?{urlencode({'query': query})}")
+    try:
+        with OPENER.open(request, timeout=timeout) as response:  # noqa: S310
+            payload = json.loads(response.read().decode())
+    except (HTTPError, URLError, TimeoutError, json.JSONDecodeError) as exc:
+        raise DemoInitError(f"Prometheus query failed: {exc}") from exc
+    if payload.get("status") != "success":
+        raise DemoInitError(f"Prometheus query returned an error: {payload!r}")
+    return payload
+
+
+def wait_for_cadvisor_metrics(timeout_seconds: int = 120) -> None:
+    """Require a cAdvisor series for the Compose MySQL service before reporting ready."""
+    deadline = time.monotonic() + timeout_seconds
+    query = (
+        'container_last_seen{job="cadvisor-demo",'
+        'container_label_com_docker_compose_service="mysql-demo"}'
+    )
+    last_error: DemoInitError | None = None
+    while time.monotonic() < deadline:
+        try:
+            payload = query_prometheus(query, timeout=3)
+            if payload.get("data", {}).get("result"):
+                return
+            last_error = DemoInitError("MySQL container series is empty")
+        except DemoInitError as exc:
+            last_error = exc
+        time.sleep(2)
+    raise DemoInitError(f"cAdvisor metrics did not become ready: {last_error}")
 
 
 def retry_step(
@@ -185,14 +220,16 @@ def verify_registration(datasource_id: int, service_id: int) -> None:
 
 def main() -> None:
     """Initialize and verify all first-run demo objects."""
-    print("[1/4] Waiting for the Praxis API...", flush=True)
+    print("[1/5] Waiting for the Praxis API...", flush=True)
     wait_for_praxis()
-    print("[2/4] Registering Demo MySQL and Demo Prometheus...", flush=True)
+    print("[2/5] Registering Demo MySQL and Demo Prometheus...", flush=True)
     datasource = retry_step("Demo MySQL registration", ensure_datasource)
     service = retry_step("Demo Prometheus registration", ensure_service)
-    print("[3/4] Verifying both connections...", flush=True)
+    print("[3/5] Verifying both connections...", flush=True)
     wait_for_connections(int(datasource["id"]), int(service["id"]))
-    print("[4/4] Confirming both objects are visible in Praxis...", flush=True)
+    print("[4/5] Waiting for MySQL container metrics...", flush=True)
+    wait_for_cadvisor_metrics()
+    print("[5/5] Confirming both objects are visible in Praxis...", flush=True)
     verify_registration(int(datasource["id"]), int(service["id"]))
     print(
         f"""
@@ -205,7 +242,7 @@ Praxis demo is ready.
     Password:       {MYSQL_PASSWORD}
     Root password:  {MYSQL_ROOT_PASSWORD}
   Prometheus:       http://127.0.0.1:{int(os.getenv("DEMO_PROMETHEUS_PORT", "9090"))}
-  MySQL Exporter:   http://127.0.0.1:{int(os.getenv("DEMO_EXPORTER_PORT", "9104"))}/metrics
+  cAdvisor:         http://127.0.0.1:{int(os.getenv("DEMO_CADVISOR_PORT", "8080"))}
 
 Registered in Praxis: {datasource["name"]} (ID {datasource["id"]}), {service["name"]} (ID {service["id"]})
 Knowledge pack: not installed; download it from Knowledge Packs when needed.

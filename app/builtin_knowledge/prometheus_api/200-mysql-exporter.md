@@ -6,7 +6,7 @@ The MySQL exporter reads server status and performance information and exposes i
 as Prometheus metrics. The exporter user should have `PROCESS`,
 `REPLICATION CLIENT`, and `SELECT` grants and a small connection limit.
 
-Useful metrics in the bundled demonstration:
+Useful metrics when a MySQL exporter is deployed:
 
 | Metric | Meaning | Correlation use |
 | --- | --- | --- |

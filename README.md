@@ -58,7 +58,7 @@ Open [http://127.0.0.1:8000](http://127.0.0.1:8000), then configure a model prov
 
 ### Run the complete demo with Docker Compose
 
-The demo includes Praxis, MySQL, MySQL Exporter, Prometheus, generated workload, and preconfigured datasource and service connections.
+The demo includes Praxis, MySQL, cAdvisor, Prometheus, and preconfigured datasource and service connections.
 
 ```bash
 git clone https://github.com/sunetic/praxis.git
@@ -71,7 +71,7 @@ When initialization finishes, open [http://127.0.0.1:8000](http://127.0.0.1:8000
 - Praxis: `http://127.0.0.1:8000`
 - MySQL: `127.0.0.1:3308` (`app` / `praxis-demo-app`, database `app`)
 - Prometheus: `http://127.0.0.1:9090`
-- MySQL Exporter: `http://127.0.0.1:9104/metrics`
+- cAdvisor: `http://127.0.0.1:8080`
 
 Stop the demo with `docker compose down`. To remove its data as well, use `docker compose down --volumes`.
 
