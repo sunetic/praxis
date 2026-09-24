@@ -54,11 +54,8 @@ jobs:
           python-version: "3.11"
           cache: pip
       - run: pip install -e ".[dev]"
-      - name: Type-check native runtime core
-        run: |
-          mypy --follow-imports=silent \
-            app/services/agent/definitions.py app/services/agent/context_budget.py \
-            app/services/agent/persistence.py app/services/agent/runtime.py
+      - name: Type-check native agent runtime
+        run: make MYPY=mypy typecheck-agent-runtime
       - run: pytest -m "not llm" --tb=short -q
 
   demo-compose:
