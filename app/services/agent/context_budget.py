@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import math
 import re
-from typing import Any
+from typing import Any, Self
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -20,7 +20,7 @@ class ContextPolicy(BaseModel):
     context_compression_threshold_percent: int = Field(default=75, ge=25, le=95)
 
     @model_validator(mode="after")
-    def valid_reserve(self):
+    def valid_reserve(self) -> Self:
         if (
             self.max_output_tokens
             >= self.context_window_tokens * self.context_compression_threshold_percent / 100

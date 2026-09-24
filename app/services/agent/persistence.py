@@ -2,12 +2,13 @@
 
 import asyncio
 from collections.abc import Callable
-from typing import TypeVar
+from typing import ParamSpec, TypeVar
 
 T = TypeVar("T")
+P = ParamSpec("P")
 
 
-async def run_db(operation: Callable[..., T], *args, **kwargs) -> T:
+async def run_db(operation: Callable[P, T], *args: P.args, **kwargs: P.kwargs) -> T:
     # Transactions own their sessions inside the worker. Never move a live
     # session between tasks or abandon a mutating transaction on cancellation.
     return await await_completion(

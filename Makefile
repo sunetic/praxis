@@ -70,6 +70,14 @@ test-agent-runtime:
 	uv run --locked python -m pytest \
 		-c tests/agent_runtime/pyproject.toml --confcutdir tests/agent_runtime tests/agent_runtime
 
+.PHONY: typecheck-agent-core
+typecheck-agent-core:
+	uv run --locked mypy --follow-imports=silent \
+		app/services/agent/definitions.py app/services/agent/context_budget.py \
+		app/services/agent/persistence.py app/services/agent/runtime.py
+
+
+
 eval:
 	uv run python -m $(EVAL_MODULE) \
 		--case "$(EVAL_CASE)" \
