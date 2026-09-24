@@ -18,18 +18,18 @@ from app.services.agent.execution import RegisteredTool
 from app.services.agent.runtime import ExecutionBudget
 
 
-def observer_for(store, tool_names=frozenset()):
+def observer_for(store):
     row = store.submit(
         "conversation", "user", "one", "你好", AgentDefinition(name="test", tool_names=frozenset())
     )
     store.claim(row["id"], "owner")
-    observer = RunEvents(store, row["id"], "owner", ExecutionBudget(), 0, tool_names)
+    observer = RunEvents(store, row["id"], "owner", ExecutionBudget(), 0)
     observer.message_id = "message-1"
     return row, observer
 
 
-async def test_textual_tool_markup_discards_visible_message_and_suppresses_remainder(store):
-    row, observer = observer_for(store, frozenset({"request_database_change"}))
+async def test_textual_tool_markup_is_streamed_without_protocol_classification(store):
+    row, observer = observer_for(store)
 
     async def stream():
         yield PartStartEvent(index=0, part=TextPart("我先处理。"))
@@ -43,17 +43,11 @@ async def test_textual_tool_markup_discards_visible_message_and_suppresses_remai
 
     await observer.handle(None, stream())
     events = store.read_events(row["id"], "user")
-    assert [event["kind"] for event in events] == [
-        "run_queued",
-        "run_started",
-        "assistant_delta",
-        "assistant_message_discarded",
-    ]
-    assert events[-1]["payload"] == {
-        "message_id": "message-1",
-        "reason": "textual_tool_call",
-    }
-    assert "DROP TABLE" not in "".join(event["payload"].get("text", "") for event in events)
+    deltas = [event for event in events if event["kind"] == "assistant_delta"]
+    assert "".join(event["payload"]["text"] for event in deltas) == (
+        '我先处理。<invoke name="request_database_change"><parameter name="sql">'
+        "DROP TABLE users</parameter></invoke>"
+    )
 
 
 async def test_quiet_provider_flushes_pending_text_before_stream_finishes(store):

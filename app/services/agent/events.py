@@ -17,7 +17,6 @@ from pydantic_ai.messages import (
 
 from app.services.agent.definitions import RunDependencies
 from app.services.agent.persistence import run_db
-from app.services.agent.protocol import textual_tool_call
 from app.services.agent.runtime import ExecutionBudget
 from app.services.agent.store import RunStore
 
@@ -30,14 +29,12 @@ class RunEvents(AbstractCapability[RunDependencies]):
         owner_id: str,
         budget: ExecutionBudget,
         offset: int,
-        tool_names: frozenset[str] = frozenset(),
     ):
         self.store, self.run_id, self.owner_id = store, run_id, owner_id
         self.budget, self.offset = budget, offset
         self.started = monotonic()
         self.initial_seconds = budget.active_seconds
         self.message_id: str | None = None
-        self.tool_names = tool_names
 
     def current_budget(self, *, reserve_request: bool = False) -> ExecutionBudget:
         usage = replace(self.budget.usage)
@@ -113,11 +110,11 @@ class RunEvents(AbstractCapability[RunDependencies]):
     async def handle(self, ctx, stream):
         # One consumer preserves native event order. A pending read survives the
         # flush deadline, so a quiet provider cannot strand its last text chunk.
-        buffer, full_text, part_id, deadline, discarded = "", "", None, None, False
+        buffer, part_id, deadline = "", None, None
 
         async def flush():
             nonlocal buffer, deadline
-            if buffer and not discarded:
+            if buffer:
                 await run_db(
                     self.store.emit,
                     self.run_id,
@@ -146,22 +143,6 @@ class RunEvents(AbstractCapability[RunDependencies]):
                 elif isinstance(event, PartDeltaEvent) and isinstance(event.delta, TextPartDelta):
                     text = event.delta.content_delta
                 if text:
-                    full_text += text
-                    if not discarded and textual_tool_call(full_text, self.tool_names):
-                        discarded = True
-                        buffer, deadline = "", None
-                        await run_db(
-                            self.store.emit,
-                            self.run_id,
-                            self.owner_id,
-                            "assistant_message_discarded",
-                            {"message_id": self.message_id, "reason": "textual_tool_call"},
-                        )
-                        pending = asyncio.create_task(anext(iterator))
-                        continue
-                    if discarded:
-                        pending = asyncio.create_task(anext(iterator))
-                        continue
                     if part_id != str(event.index):
                         await flush()
                         part_id = str(event.index)

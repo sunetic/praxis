@@ -17,7 +17,6 @@ from pydantic_ai import (
     CancellationToken,
     DeferredToolRequests,
     DeferredToolResults,
-    ModelRetry,
     Tool,
 )
 from pydantic_ai.agent import EventStreamHandler
@@ -30,7 +29,6 @@ from pydantic_ai.toolsets import AbstractToolset, FunctionToolset
 from pydantic_ai.usage import RunUsage, UsageLimits
 
 from app.services.agent.definitions import AgentDefinition, RunDependencies
-from app.services.agent.protocol import textual_tool_call
 from app.services.agent.tools import select_tools
 
 
@@ -81,9 +79,8 @@ async def run_agent(
     """Run the framework to completion or deferral, including mixed text/tool output.
 
     Always create an agent per invocation. Dependencies, history, and configuration
-    cannot leak between conversations. The sole output retry is reserved for a provider
-    protocol violation where a known tool call arrives as visible XML text instead of
-    a native tool call; ordinary answer quality is never retried.
+    cannot leak between conversations. Provider tool calls are handled exclusively by
+    the native structured tool protocol.
     """
     remaining = budget.active_seconds_limit - budget.active_seconds
     if remaining <= 0:
@@ -93,7 +90,6 @@ async def run_agent(
         # as well so a spent budget cannot dispatch a write during continuation.
         raise UsageLimitExceeded("Model request limit exceeded")
     selected = select_tools(tools, definition.tool_names, authorized_tool_names)
-    selected_names = frozenset(tool.name for tool in selected)
     toolset = FunctionToolset(selected)
     agent = Agent(
         model,
@@ -103,20 +99,10 @@ async def run_agent(
         toolsets=[toolset_wrapper(toolset) if toolset_wrapper else toolset],
         output_type=[str, DeferredToolRequests],
         end_strategy="graceful",
-        retries={"tools": 2, "output": 1},
+        retries={"tools": 2},
         model_settings=model_settings,
         capabilities=capabilities,
     )
-
-    @agent.output_validator
-    def require_native_tool_calls(output: str | DeferredToolRequests):
-        if isinstance(output, str) and textual_tool_call(output, selected_names):
-            raise ModelRetry(
-                "You serialized a function call as <invoke> text. Do not write tool-call markup. "
-                "If a tool is needed, call it through the native structured tool interface supplied "
-                "with this request; otherwise answer normally."
-            )
-        return output
 
     started = monotonic()
     timeout = asyncio.timeout(remaining)

@@ -201,7 +201,6 @@ class AgentRunService:
                 owner_id,
                 budget,
                 row["message_offset"],
-                authorized_tool_names,
             )
             profile = (
                 ModelSnapshot.model_validate(row["model_snapshot"]).configuration

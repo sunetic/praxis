@@ -140,8 +140,6 @@ export function applyRunEvent(view: RunView, event: RunEvent): RunView {
     else next.blocks.push(block)
   } else if (event.type === "assistant_message_end") {
     next.blocks = next.blocks.map(block => block.kind === "text" && block.messageId === event.message_id ? { ...block, ended: true } : block)
-  } else if (event.type === "assistant_message_discarded" && event.message_id) {
-    next.blocks = next.blocks.filter(block => block.kind !== "text" || block.messageId !== event.message_id)
   } else if (["tool_start", "tool_result", "tool_reconciled", "approval_required", "approval_decided"].includes(event.type) && event.call_id) {
     const index = next.blocks.findIndex(block => block.kind === "tool" && block.id === event.call_id)
     const prior = index >= 0 ? next.blocks[index] as ToolBlock : null
