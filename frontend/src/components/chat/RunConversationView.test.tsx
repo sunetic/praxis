@@ -68,6 +68,22 @@ describe("native chat interaction", () => {
     expect(screen.queryByText("任务成功")).not.toBeInTheDocument()
   })
 
+  it("sends the selected English interface locale as run context", async () => {
+    const submit = vi.spyOn(agentRunsApi, "submit").mockImplementation(() => new Promise(() => {}))
+    render(<RunConversationView conversationId="conv" scene={{ datasource_ids: [3] }} />, { locale: "en-US" })
+    const input = screen.getByRole("textbox", { name: "Message" })
+    await waitFor(() => expect(input).toBeEnabled())
+    await userEvent.type(input, "SELECT 1")
+    await userEvent.click(screen.getByRole("button", { name: "Send" }))
+    expect(submit).toHaveBeenCalledWith(
+      "conv",
+      expect.any(String),
+      "SELECT 1",
+      { datasource_ids: [3], locale: "en-US" },
+      "append",
+    )
+  })
+
   it("shows context-window usage and the compaction transition beside the composer", async () => {
     vi.mocked(agentRunsApi.runs).mockResolvedValue([run])
     const stream = channel()

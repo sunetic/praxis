@@ -60,6 +60,7 @@ def scoped_tools(configured: frozenset[str], scope: dict) -> frozenset[str]:
 class ChatScene(BaseModel):
     model_config = ConfigDict(extra="forbid")
     agent_id: PositiveInt | None = None
+    locale: Literal["zh-CN", "en-US"] | None = None
     datasource_ids: tuple[PositiveInt, ...] | None = None
     knowledge_base_ids: tuple[PositiveInt, ...] | None = None
     service_ids: tuple[PositiveInt, ...] | None = None
@@ -275,6 +276,15 @@ class RuntimeApplication:
                 "You may create required Function dependencies within the authorized Page and continue "
                 "editing them in this same run. Do not fabricate business data or claim that a DOM render "
                 "proves Function interaction. Ask only for missing information that changes the task.\n"
+            )
+        if selected.locale:
+            language = "English" if selected.locale == "en-US" else "Simplified Chinese"
+            instructions += (
+                f"\nThe product interface language for this run is {language} "
+                f"({selected.locale}). Use {language} for every user-visible assistant message, "
+                "including brief progress updates, tool-transition explanations, clarification "
+                "questions, and the final answer. Preserve source text and identifiers as data. "
+                "Only switch response language when the user explicitly requests another language.\n"
             )
         instructions += (
             "\nThe following authorized scene resources snapshot is current and authoritative. "

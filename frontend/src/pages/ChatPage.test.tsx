@@ -33,7 +33,7 @@ it("submits explicit empty datasource scope without a legacy stream request", as
   await waitFor(() => expect(screen.getByRole("textbox")).toBeEnabled())
   await userEvent.type(screen.getByRole("textbox"), "只解释概念")
   await userEvent.click(screen.getByRole("button", { name: "发送" }))
-  expect(submit).toHaveBeenCalledWith("native-uuid", expect.any(String), "只解释概念", { datasource_ids: [] }, "append")
+  expect(submit).toHaveBeenCalledWith("native-uuid", expect.any(String), "只解释概念", { datasource_ids: [], locale: "zh-CN" }, "append")
 })
 
 it("keeps the persisted scope if saving a datasource change fails", async () => {

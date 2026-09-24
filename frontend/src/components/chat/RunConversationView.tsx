@@ -132,7 +132,7 @@ export function RunConversationView(props: Props) {
 }
 
 function RunConversationSession({ conversationId, scene = {}, title = "Praxis", disabled = false, onEvent }: Props) {
-  const { t } = useShellI18n()
+  const { locale, t } = useShellI18n()
   const controller = useRunConversation(conversationId, onEvent)
   const [input, setInput] = useState("")
   const inputId = useId()
@@ -158,7 +158,7 @@ function RunConversationSession({ conversationId, scene = {}, title = "Praxis", 
   const send = (mode: "append" | "stop_and_modify") => {
     if (!input.trim() || !conversationId || disabled || controller.loading || controller.loadError) return
     const prompt = input; setInput("")
-    void controller.send(prompt, scene, mode)
+    void controller.send(prompt, { ...scene, locale }, mode)
   }
   const suggestions = [
     [t("chat.suggestion.slowSql.label"), t("chat.suggestion.slowSql.prompt")],

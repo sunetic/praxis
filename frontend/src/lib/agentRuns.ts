@@ -2,7 +2,7 @@ import { api } from "./api"
 
 export type RunStatus = "queued" | "running" | "waiting_approval" | "finished" | "cancelled" | "failed" | "limited" | "interrupted"
 export type ConversationAutoApproval = { tool_name: "request_database_change"; agent_id: number | null; datasource_id: number; expires_at: number }
-export type RunScene = { agent_id?: number; datasource_ids?: number[] | null; knowledge_base_ids?: number[] | null; service_ids?: number[] | null; function_ids?: number[]; page_ids?: number[]; skill_draft_ids?: string[]; skills?: string[]; auto_approval?: ConversationAutoApproval | null }
+export type RunScene = { agent_id?: number; datasource_ids?: number[] | null; knowledge_base_ids?: number[] | null; service_ids?: number[] | null; function_ids?: number[]; page_ids?: number[]; skill_draft_ids?: string[]; skills?: string[]; locale?: "zh-CN" | "en-US"; auto_approval?: ConversationAutoApproval | null }
 export type RunConversation = { id: string; title: string; scene: RunScene; created_at: number; active_run_id: string | null }
 export type Reconciliation = { resolution: "succeeded" | "failed" | "not_executed"; evidence: string; execution_stopped: boolean }
 export type AgentRun = {

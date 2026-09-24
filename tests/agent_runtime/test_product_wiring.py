@@ -155,6 +155,28 @@ def test_product_scene_empty_agent_tools_stays_empty_and_bindings_are_enforced(s
         )
 
 
+@pytest.mark.parametrize(
+    ("locale", "language"), (("en-US", "English"), ("zh-CN", "Simplified Chinese"))
+)
+def test_interface_locale_controls_all_visible_agent_messages(store, locale, language):
+    Base.metadata.create_all(store.sessions.kw["bind"])
+    runtime = RuntimeApplication(sessions=store.sessions, models=ModelFactory(lambda: config()))
+
+    definition = runtime.resolve(None, "local", {"locale": locale})
+
+    assert f"interface language for this run is {language} ({locale})" in definition.instructions
+    assert f"Use {language} for every user-visible assistant message" in definition.instructions
+    assert "brief progress updates" in definition.instructions
+
+
+def test_interface_locale_rejects_unsupported_values(store):
+    Base.metadata.create_all(store.sessions.kw["bind"])
+    runtime = RuntimeApplication(sessions=store.sessions, models=ModelFactory(lambda: config()))
+
+    with pytest.raises(ValueError):
+        runtime.resolve(None, "local", {"locale": "en-GB"})
+
+
 def test_scene_tools_intersect_resources_and_custom_configuration(store):
     Base.metadata.create_all(store.sessions.kw["bind"])
     runtime = RuntimeApplication(sessions=store.sessions, models=ModelFactory(config))
