@@ -1,28 +1,29 @@
 import { BrowserRouter, Routes, Route, Navigate, useParams, useNavigate } from "react-router-dom"
-import { useEffect, useState } from "react"
+import { lazy, useEffect, useState } from "react"
 import { Toaster } from "@/components/ui/sonner"
 import { AppLayout } from "@/layouts/AppLayout"
-import { ChatPage } from "@/pages/ChatPage"
-import { DataSourcesPage } from "@/pages/DataSourcesPage"
-import { AgentsPage } from "@/pages/AgentsPage"
-import { SkillsPage } from "@/pages/SkillsPage"
-import { SkillBuilderPage } from "@/pages/SkillBuilderPage"
-import { FunctionListPage } from "@/pages/FunctionListPage"
-import { FunctionBuildPage } from "@/pages/FunctionBuildPage"
-import { SchedulerConsolePage } from "@/pages/SchedulerConsolePage"
-import { ChannelConsolePage } from "@/pages/ChannelConsolePage"
-import { CapabilitiesPage } from "@/pages/CapabilitiesPage"
-import { KnowledgeListPage } from "@/pages/KnowledgeListPage"
-import { KnowledgeDetailPage } from "@/pages/KnowledgeDetailPage"
-import { SettingsPage } from "@/pages/SettingsPage"
-import { ServicesPage } from "@/pages/ServicesPage"
-import { PageListPage } from "@/pages/PageListPage"
-import { PageConsolePage } from "@/pages/PageConsolePage"
-import { PagePublishedPage } from "@/pages/PagePublishedPage"
 import { OnboardingPage } from "@/pages/OnboardingPage"
 import { ShellI18nProvider } from "@/i18n/shellI18n"
 import { EditionProvider } from "@/context/EditionContext"
 import { onboardingApi } from "@/lib/api"
+
+const ChatPage = lazy(() => import("@/pages/ChatPage").then((module) => ({ default: module.ChatPage })))
+const DataSourcesPage = lazy(() => import("@/pages/DataSourcesPage").then((module) => ({ default: module.DataSourcesPage })))
+const AgentsPage = lazy(() => import("@/pages/AgentsPage").then((module) => ({ default: module.AgentsPage })))
+const SkillsPage = lazy(() => import("@/pages/SkillsPage").then((module) => ({ default: module.SkillsPage })))
+const SkillBuilderPage = lazy(() => import("@/pages/SkillBuilderPage").then((module) => ({ default: module.SkillBuilderPage })))
+const FunctionListPage = lazy(() => import("@/pages/FunctionListPage").then((module) => ({ default: module.FunctionListPage })))
+const FunctionBuildPage = lazy(() => import("@/pages/FunctionBuildPage").then((module) => ({ default: module.FunctionBuildPage })))
+const SchedulerConsolePage = lazy(() => import("@/pages/SchedulerConsolePage").then((module) => ({ default: module.SchedulerConsolePage })))
+const ChannelConsolePage = lazy(() => import("@/pages/ChannelConsolePage").then((module) => ({ default: module.ChannelConsolePage })))
+const CapabilitiesPage = lazy(() => import("@/pages/CapabilitiesPage").then((module) => ({ default: module.CapabilitiesPage })))
+const KnowledgeListPage = lazy(() => import("@/pages/KnowledgeListPage").then((module) => ({ default: module.KnowledgeListPage })))
+const KnowledgeDetailPage = lazy(() => import("@/pages/KnowledgeDetailPage").then((module) => ({ default: module.KnowledgeDetailPage })))
+const SettingsPage = lazy(() => import("@/pages/SettingsPage").then((module) => ({ default: module.SettingsPage })))
+const ServicesPage = lazy(() => import("@/pages/ServicesPage").then((module) => ({ default: module.ServicesPage })))
+const PageListPage = lazy(() => import("@/pages/PageListPage").then((module) => ({ default: module.PageListPage })))
+const PageConsolePage = lazy(() => import("@/pages/PageConsolePage").then((module) => ({ default: module.PageConsolePage })))
+const PagePublishedPage = lazy(() => import("@/pages/PagePublishedPage").then((module) => ({ default: module.PagePublishedPage })))
 
 function FunctionLegacyRedirect() {
   const { functionId } = useParams()

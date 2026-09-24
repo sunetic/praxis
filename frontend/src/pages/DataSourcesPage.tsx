@@ -9,6 +9,7 @@ import {
   Dialog,
   DialogContent,
   DialogFooter,
+  DialogDescription,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
@@ -551,6 +552,7 @@ export function DataSourcesPage() {
           <DialogHeader>
             <DialogTitle>{editingId ? t("ds.dialogTitleEdit") : t("ds.dialogTitleAdd")}</DialogTitle>
           </DialogHeader>
+            <DialogDescription>{t("ds.dialogDescription")}</DialogDescription>
 
           <div className="space-y-5">
             {/* ── Basic Info ─────────────────────────────────────── */}

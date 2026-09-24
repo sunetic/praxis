@@ -34,6 +34,7 @@ import {
   Drawer,
   DrawerBody,
   DrawerContent,
+  DrawerDescription,
   DrawerHeader,
   DrawerTitle,
 } from "@/components/ui/drawer"
@@ -912,6 +913,7 @@ export function FunctionListPage() {
         <DrawerContent className="flex max-w-[620px] flex-col bg-card text-foreground shadow-md">
           <DrawerHeader>
             <DrawerTitle>{t("fn.resultTitle")}</DrawerTitle>
+            <DrawerDescription className="sr-only">{t("fn.resultDescription")}</DrawerDescription>
           </DrawerHeader>
 
           <DrawerBody className="space-y-4">

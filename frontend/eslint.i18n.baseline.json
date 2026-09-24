@@ -12,12 +12,6 @@
     "count": 2
   },
   {
-    "file": "src/components/assistant-ui/attachment.tsx",
-    "message": "Do not hard-code visible UI copy. Add a shellI18n key and call t(...).",
-    "source": "Image Attachment Preview",
-    "count": 1
-  },
-  {
     "file": "src/components/assistant-ui/reasoning.tsx",
     "message": "Do not hard-code visible UI copy. Add a shellI18n key and call t(...).",
     "source": "Reasoning",

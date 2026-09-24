@@ -12,7 +12,7 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
 import { ConfirmActionDialog } from "@/components/ui/confirm-action-dialog"
-import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
@@ -340,10 +340,11 @@ export function SkillsPage() {
       </div>
 
       <Dialog open={formOpen} onOpenChange={setFormOpen}>
-        <DialogContent className="w-[min(92vw,560px)]" aria-describedby={undefined}>
+        <DialogContent className="w-[min(92vw,560px)]">
           <DialogHeader>
             <DialogTitle>{editingSkillName ? t("skills.dialog.editTitle") : t("skills.dialog.createTitle")}</DialogTitle>
           </DialogHeader>
+            <DialogDescription>{t("skills.dialog.description")}</DialogDescription>
           <div className="space-y-4">
             <div className="space-y-1.5">
               <label htmlFor="skill-name" className="text-sm font-medium">{t("skills.form.name")}</label>

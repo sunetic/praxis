@@ -121,6 +121,8 @@ const ZH_CN_COPY = {
 
   // ── Chat / Thread ──
   "chat.defaultTitle": "New Chat",
+  "chat.attachmentPreviewTitle": "附件预览",
+  "chat.attachmentPreviewDesc": "放大查看当前图片附件。",
   "chat.sidebar.title": "会话",
   "chat.sidebar.new": "新建",
   "chat.sidebar.clearAll": "清空",
@@ -212,6 +214,7 @@ const ZH_CN_COPY = {
   "ui.confirmDialog.confirm": "确认",
   "ui.confirmDialog.cancel": "取消",
   "ui.drawer.close": "关闭",
+  "ui.loading": "正在加载页面",
 
   // ── Shared components ──
   "shared.codeBlock.copyAria": "复制代码",
@@ -263,6 +266,7 @@ const ZH_CN_COPY = {
   "ds.deleteConfirm": "删除",
   "ds.dialogTitleEdit": "编辑数据源",
   "ds.dialogTitleAdd": "添加数据源",
+  "ds.dialogDescription": "配置连接信息和访问级别，保存前可验证连接。",
   "ds.sectionBasic": "基本信息",
   "ds.label.name": "名称",
   "ds.label.clusterKey": "Cluster Key",
@@ -478,6 +482,7 @@ const ZH_CN_COPY = {
   "scheduler.runs.empty.filtered": "当前筛选下暂无运行记录",
   "scheduler.runs.empty.none": "暂无运行记录",
   "scheduler.drawer.title": "执行详情",
+  "scheduler.drawer.description": "查看本次执行的输入、输出和运行状态。",
   "scheduler.drawer.empty": "暂无执行实例，请先触发 run-now 或选择一条执行记录。",
   "scheduler.drawer.running": "执行中，请稍候…",
   "scheduler.drawer.runId": "执行 ID",
@@ -619,6 +624,7 @@ const ZH_CN_COPY = {
   "fn.error.interrupted": "执行进程已中断，外部修改结果可能需要人工核对。",
   "fn.execute": "执行",
   "fn.resultTitle": "执行结果",
+  "fn.resultDescription": "查看本次 Function 执行的输入、输出和状态。",
   "fn.inputJson": "入参 JSON",
   "fn.executing": "正在执行...",
   "fn.outputLabel": "执行输出",
@@ -824,6 +830,7 @@ const ZH_CN_COPY = {
   "skills.searchPlaceholder": "搜索名称或描述...",
   "skills.dialog.editTitle": "编辑 Skill",
   "skills.dialog.createTitle": "新建 Skill",
+  "skills.dialog.description": "配置可复用的能力说明、适用范围和提示词。",
   "skills.form.name": "名称",
   "skills.form.scope": "适用范围",
   "skills.form.description": "描述",
@@ -883,6 +890,7 @@ const ZH_CN_COPY = {
   "knowledge.dialog.createTitle": "新建知识库",
   "knowledge.dialog.editDesc": "修改知识库信息",
   "knowledge.dialog.createDesc": "创建一个新的知识库",
+  "knowledge.documentPreviewDesc": "查看所选知识文档的完整内容。",
   "knowledge.form.name": "名称 *",
   "knowledge.form.namePlaceholder": "例：MySQL 运维手册",
   "knowledge.form.description": "描述",
@@ -1167,6 +1175,8 @@ const EN_US_COPY: Record<ShellCopyKey, string> = {
 
   // ── Chat / Thread ──
   "chat.defaultTitle": "New Chat",
+  "chat.attachmentPreviewTitle": "Attachment preview",
+  "chat.attachmentPreviewDesc": "View the current image attachment at full size.",
   "chat.sidebar.title": "Chats",
   "chat.sidebar.new": "New",
   "chat.sidebar.clearAll": "Clear",
@@ -1258,6 +1268,7 @@ const EN_US_COPY: Record<ShellCopyKey, string> = {
   "ui.confirmDialog.confirm": "Confirm",
   "ui.confirmDialog.cancel": "Cancel",
   "ui.drawer.close": "Close",
+  "ui.loading": "Loading page",
 
   // ── Shared components ──
   "shared.codeBlock.copyAria": "Copy code",
@@ -1309,6 +1320,7 @@ const EN_US_COPY: Record<ShellCopyKey, string> = {
   "ds.deleteConfirm": "Delete",
   "ds.dialogTitleEdit": "Edit datasource",
   "ds.dialogTitleAdd": "Add datasource",
+  "ds.dialogDescription": "Configure connection details and access, then verify the connection before saving.",
   "ds.sectionBasic": "Basic info",
   "ds.label.name": "Name",
   "ds.label.clusterKey": "Cluster Key",
@@ -1524,6 +1536,7 @@ const EN_US_COPY: Record<ShellCopyKey, string> = {
   "scheduler.runs.empty.filtered": "No run records matching current filters",
   "scheduler.runs.empty.none": "No run records",
   "scheduler.drawer.title": "Run Details",
+  "scheduler.drawer.description": "Review the input, output, and runtime status for this run.",
   "scheduler.drawer.empty": "No run instances yet. Trigger a run-now or select a run record.",
   "scheduler.drawer.running": "Running, please wait...",
   "scheduler.drawer.runId": "Run ID",
@@ -1665,6 +1678,7 @@ const EN_US_COPY: Record<ShellCopyKey, string> = {
   "fn.error.interrupted": "Execution was interrupted. External effects may require manual reconciliation.",
   "fn.execute": "Run",
   "fn.resultTitle": "Execution Result",
+  "fn.resultDescription": "Review the input, output, and status for this Function run.",
   "fn.inputJson": "Input JSON",
   "fn.executing": "Executing...",
   "fn.outputLabel": "Execution Output",
@@ -1870,6 +1884,7 @@ const EN_US_COPY: Record<ShellCopyKey, string> = {
   "skills.searchPlaceholder": "Search name or description...",
   "skills.dialog.editTitle": "Edit Skill",
   "skills.dialog.createTitle": "New Skill",
+  "skills.dialog.description": "Configure reusable guidance, scope, and prompt content.",
   "skills.form.name": "Name",
   "skills.form.scope": "Scope",
   "skills.form.description": "Description",
@@ -1929,6 +1944,7 @@ const EN_US_COPY: Record<ShellCopyKey, string> = {
   "knowledge.dialog.createTitle": "New Knowledge Base",
   "knowledge.dialog.editDesc": "Update knowledge base info",
   "knowledge.dialog.createDesc": "Create a new knowledge base",
+  "knowledge.documentPreviewDesc": "View the full content of the selected knowledge document.",
   "knowledge.form.name": "Name *",
   "knowledge.form.namePlaceholder": "e.g. MySQL Ops Handbook",
   "knowledge.form.description": "Description",

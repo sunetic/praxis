@@ -29,7 +29,7 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { ConfirmActionDialog } from "@/components/ui/confirm-action-dialog"
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
-import { Drawer, DrawerBody, DrawerClose, DrawerContent, DrawerHeader, DrawerTitle } from "@/components/ui/drawer"
+import { Drawer, DrawerBody, DrawerClose, DrawerContent, DrawerDescription, DrawerHeader, DrawerTitle } from "@/components/ui/drawer"
 import { Input } from "@/components/ui/input"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
@@ -1018,6 +1018,7 @@ export function SchedulerConsolePage() {
                 <X className="size-4" />
               </DrawerClose>
             </div>
+            <DrawerDescription className="sr-only">{t("scheduler.drawer.description")}</DrawerDescription>
           </DrawerHeader>
           <DrawerBody className="space-y-4">
             {selectedRun?.target_type === "agent" && selectedRun.conversation_id ? (
