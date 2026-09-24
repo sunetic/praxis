@@ -4,12 +4,12 @@ import { Link, Navigate, useParams, useSearchParams } from "react-router-dom"
 import { RunConversationView } from "@/components/chat/RunConversationView"
 import { PagePreviewRenderer } from "@/components/page/PagePreviewRenderer"
 import { Button } from "@/components/ui/button"
-import { useShellI18n } from "@/i18n/shellI18n"
+import { useShellI18n } from "@/i18n/shellI18nContext"
 import { datasourcesApi, functionsApi, pagesApi, type DataSource } from "@/lib/api"
 import { agentRunsApi, type RunConversation, type RunEvent, type RunScene, type RunView } from "@/lib/agentRuns"
 import { canPublishPage, pageArtifactsApi, type PageDraft, type PagePreview, type PageSource } from "@/lib/pageArtifacts"
 
-type PageRecord = { id: number; name: string; description?: string }
+type PageRecord = { id: number; name: string; description?: string | null }
 type Editor = { revision: string; files: string; bindings: string }
 const fieldClass = "min-h-11 w-full rounded-md border border-input bg-background p-2 text-sm focus-visible:outline-2 focus-visible:outline-ring"
 

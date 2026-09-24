@@ -24,7 +24,7 @@ import {
 } from "@/components/ui/dialog";
 import { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar";
 import { TooltipIconButton } from "@/components/assistant-ui/tooltip-icon-button";
-import { useShellI18n } from "@/i18n/shellI18n";
+import { useShellI18n } from "@/i18n/shellI18nContext";
 import { cn } from "@/lib/utils";
 
 const useFileSrc = (file: File | undefined) => {

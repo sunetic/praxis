@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useState } from "react"
+import { createContext, useEffect, useState } from "react"
 import { settingsApi } from "@/lib/api"
 
 export type Edition = "community" | "enterprise"
@@ -16,12 +16,4 @@ export function EditionProvider({ children }: { children: React.ReactNode }) {
   }, [])
 
   return <EditionContext.Provider value={edition}>{children}</EditionContext.Provider>
-}
-
-export function useEdition(): Edition {
-  return useContext(EditionContext)
-}
-
-export function useIsEnterprise(): boolean {
-  return useContext(EditionContext) === "enterprise"
 }

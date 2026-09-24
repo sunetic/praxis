@@ -103,7 +103,7 @@ describe("Function and Scheduler consoles", () => {
       draft_code: "result = {'ok': True}",
       draft_dependencies: null,
     })
-    functionsApi.update.mockImplementation(async (id: number, payload: Record<string, any>) => ({
+    functionsApi.update.mockImplementation(async (id: number, payload: { name?: string; description?: string }) => ({
       id,
       name: payload.name || "daily-report",
       description: payload.description || "由 Function 控制台创建",

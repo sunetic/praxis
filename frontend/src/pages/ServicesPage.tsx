@@ -40,7 +40,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Textarea } from "@/components/ui/textarea"
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
-import { useShellI18n } from "@/i18n/shellI18n"
+import { useShellI18n } from "@/i18n/shellI18nContext"
 import { datasourcesApi, knowledgeApi, servicesApi } from "@/lib/api"
 import type {
   DataSource,
@@ -225,7 +225,7 @@ export function ServicesPage() {
     () => new Map(datasources.map((item) => [String(item.id), item])),
     [datasources],
   )
-  async function fetchData() {
+  const fetchData = useCallback(async () => {
     setLoading(true)
     setError(null)
     try {
@@ -242,9 +242,9 @@ export function ServicesPage() {
     } finally {
       setLoading(false)
     }
-  }
+  }, [t])
 
-  useEffect(() => { void fetchData() }, [])
+  useEffect(() => { void fetchData() }, [fetchData])
 
   const filtered = useMemo(() => {
     const query = searchQuery.trim().toLowerCase()
@@ -267,8 +267,6 @@ export function ServicesPage() {
     const start = (page - 1) * PAGE_SIZE
     return filtered.slice(start, start + PAGE_SIZE)
   }, [filtered, page])
-
-  useEffect(() => setPage(1), [providerFilter, searchQuery])
 
   const revealAdvancedContent = useCallback((node: HTMLDivElement | null) => {
     node?.scrollIntoView({ block: "nearest" })
@@ -420,7 +418,7 @@ export function ServicesPage() {
   const toolbar = (
     <FilterToolbar>
       <FilterToolbarGroup>
-        <Select value={providerFilter} onValueChange={setProviderFilter}>
+        <Select value={providerFilter} onValueChange={(value) => { setProviderFilter(value); setPage(1) }}>
           <SelectTrigger className="w-44 bg-card"><SelectValue /></SelectTrigger>
           <SelectContent>
             <SelectItem value="all">{t("service.filterAll")}</SelectItem>
@@ -441,7 +439,7 @@ export function ServicesPage() {
             placeholder={t("service.searchPlaceholder")}
             className="w-72 rounded-lg bg-card pl-9 text-sm"
             value={searchQuery}
-            onChange={(event) => setSearchQuery(event.target.value)}
+            onChange={(event) => { setSearchQuery(event.target.value); setPage(1) }}
           />
         </div>
       </FilterToolbarGroup>

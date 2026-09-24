@@ -7,13 +7,13 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { cn } from "@/lib/utils"
 import { onboardingApi, type LlmConfig } from "@/lib/api"
 import { toast } from "sonner"
-import { useShellI18n } from "@/i18n/shellI18n"
+import { useShellI18n, type ShellCopyKey } from "@/i18n/shellI18nContext"
 
 // ── Provider presets ──────────────────────────────────────────────────────────
 
 type ProviderPreset = {
   id: string
-  labelKey?: string
+  labelKey?: ShellCopyKey
   label?: string
   baseUrl: string
   models: string[]
@@ -53,7 +53,7 @@ const PROVIDERS: ProviderPreset[] = [
 
 // ── Step indicator ────────────────────────────────────────────────────────────
 
-type StepDef = { id: number; labelKey: string }
+type StepDef = { id: number; labelKey: ShellCopyKey }
 const STEPS: StepDef[] = [
   { id: 1, labelKey: "onboarding.step.welcome" },
   { id: 2, labelKey: "onboarding.step.llmConfig" },
@@ -85,7 +85,7 @@ function StepIndicator({ current }: { current: number }) {
                 active ? "font-medium text-foreground" : "text-muted-foreground",
               )}
             >
-              {t(step.labelKey as any)}
+              {t(step.labelKey)}
             </span>
             {idx < STEPS.length - 1 && (
               <ChevronRight className="h-4 w-4 text-muted-foreground/40 mx-1" />
@@ -179,7 +179,7 @@ function LlmConfigStep({
   const effectiveModel = isCustom ? form.customModel : form.model
 
   const resolveLabel = useCallback((p: ProviderPreset) => {
-    if (p.labelKey) return t(p.labelKey as any)
+    if (p.labelKey) return t(p.labelKey)
     return p.label ?? p.id
   }, [t])
 

@@ -17,7 +17,7 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { FilterToolbar, FilterToolbarGroup } from "@/components/shared/FilterToolbar"
 import { ListTable, ListTableLoadingRows } from "@/components/shared/ListTable"
 import { WorkbenchPage } from "@/components/shared/WorkbenchPage"
-import { useShellI18n } from "@/i18n/shellI18n"
+import { useShellI18n } from "@/i18n/shellI18nContext"
 import { knowledgeApi } from "@/lib/api"
 import type { KnowledgeBase, KnowledgeDocument, KnowledgeDocumentDetail } from "@/lib/api"
 

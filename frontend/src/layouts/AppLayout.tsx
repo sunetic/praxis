@@ -3,7 +3,7 @@ import { Outlet, useLocation } from "react-router-dom"
 import { Loader2 } from "lucide-react"
 
 import { Sidebar } from "@/components/layout/Sidebar"
-import { useShellI18n } from "@/i18n/shellI18n"
+import { useShellI18n } from "@/i18n/shellI18nContext"
 
 export function AppLayout() {
   const location = useLocation()

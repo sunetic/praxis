@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react"
+import { useCallback, useEffect, useMemo, useState } from "react"
 import { isAxiosError } from "axios"
 import {
   AlertTriangle,
@@ -18,7 +18,7 @@ import {
 import { useNavigate } from "react-router-dom"
 import { toast } from "sonner"
 
-import { useShellI18n, type ShellTranslatorFn } from "@/i18n/shellI18n"
+import { useShellI18n, type ShellTranslatorFn } from "@/i18n/shellI18nContext"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { ConfirmActionDialog } from "@/components/ui/confirm-action-dialog"
@@ -62,7 +62,7 @@ type FunctionListItem = {
   id: number
   name?: string
   slug?: string
-  description?: string
+  description?: string | null
   kind?: string
   status?: string
   updated_at?: string
@@ -99,6 +99,13 @@ type InvokeResponse = {
   error_class?: string
   error_code?: string
   runtime_path?: string
+}
+
+function axiosErrorDetail(error: unknown): string {
+  if (!isAxiosError(error)) return ""
+  const data: unknown = error.response?.data
+  if (!data || typeof data !== "object" || !("detail" in data)) return ""
+  return String((data as { detail?: unknown }).detail ?? "")
 }
 
 function toFriendlyInvokeError(t: ShellTranslatorFn, message: string, errorCode?: string): string {
@@ -238,7 +245,7 @@ export function FunctionListPage() {
   const [datasources, setDatasources] = useState<DataSource[]>([])
   const [invokeSelectedDatasource, setInvokeSelectedDatasource] = useState<number | null>(null)
 
-  const fetchList = (showRefresh = false) => {
+  const fetchList = useCallback((showRefresh = false) => {
     if (showRefresh) setRefreshing(true)
     else setLoading(true)
     setError(null)
@@ -252,24 +259,24 @@ export function FunctionListPage() {
         setLoading(false)
         setRefreshing(false)
       })
-  }
+  }, [t])
 
-  const fetchRuns = () => {
+  const fetchRuns = useCallback(() => {
     setRunsLoading(true)
     setRunsError(null)
     functionsApi.listAllRuns(200)
       .then((data) => setRuns(Array.isArray(data) ? data : []))
       .catch(() => setRunsError(t("fn.runsLoadFailed")))
       .finally(() => setRunsLoading(false))
-  }
+  }, [t])
 
   useEffect(() => {
     fetchList()
-  }, [])
+  }, [fetchList])
 
   useEffect(() => {
     if (activeTab === "history") fetchRuns()
-  }, [activeTab])
+  }, [activeTab, fetchRuns])
 
   const visibleFunctions = useMemo(() => {
     const keyword = search.trim().toLowerCase()
@@ -289,10 +296,6 @@ export function FunctionListPage() {
     return runs.slice(start, start + PAGE_SIZE)
   }, [runs, runsPage])
 
-  useEffect(() => {
-    setPage(1)
-  }, [search])
-
   const handleCreateFunction = async () => {
     if (creating) return
     setCreating(true)
@@ -301,9 +304,7 @@ export function FunctionListPage() {
       setFunctions((prev) => [created, ...prev])
       navigate(`/function/${created.id}/build`)
     } catch (err) {
-      const detail = isAxiosError(err)
-        ? String((err.response?.data as any)?.detail || "")
-        : ""
+      const detail = axiosErrorDetail(err)
       toast.error(detail || t("fn.createFailed"))
     } finally {
       setCreating(false)
@@ -319,9 +320,7 @@ export function FunctionListPage() {
       setDeleteTarget(null)
       toast.success(t("fn.deleted"))
     } catch (err) {
-      const detail = isAxiosError(err)
-        ? String((err.response?.data as any)?.detail || "")
-        : ""
+      const detail = axiosErrorDetail(err)
       toast.error(detail || t("fn.deleteFailed"))
     } finally {
       setBusyAction(null)
@@ -329,7 +328,7 @@ export function FunctionListPage() {
   }
 
   const openInvokeDialog = async (item: FunctionListItem) => {
-    setInputRows([{ id: `row-${Date.now()}`, key: "", value: "" }])
+    setInputRows([{ id: createRunId(), key: "", value: "" }])
     setInvokeOutput(null)
     setInvokeError("")
     setInvokeMeta(null)
@@ -359,8 +358,7 @@ export function FunctionListPage() {
     if (!invokeTarget || suggestingInput) return
     setSuggestingInput(true)
     try {
-      const res = await functionsApi.suggestInput(invokeTarget.id, {})
-      const suggestion = res?.suggestion || res
+      const suggestion = await functionsApi.suggestInput(invokeTarget.id, {})
       if (suggestion?.payload && typeof suggestion.payload === "object") {
         const entries = Object.entries(suggestion.payload as Record<string, unknown>)
         if (entries.length > 0) {
@@ -474,7 +472,7 @@ export function FunctionListPage() {
             <Search className="pointer-events-none absolute left-3 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground/60" />
             <Input
               value={search}
-              onChange={(e) => setSearch(e.target.value)}
+              onChange={(e) => { setSearch(e.target.value); setPage(1) }}
               className="w-72 rounded-lg bg-card pl-9 text-sm"
               placeholder={t("fn.searchPlaceholder")}
             />
@@ -537,7 +535,7 @@ export function FunctionListPage() {
                     {search ? t("fn.emptyNoMatch") : t("fn.emptyNone")}
                   </p>
                   {search ? (
-                    <Button variant="ghost" size="sm" onClick={() => setSearch("")}>
+                    <Button variant="ghost" size="sm" onClick={() => { setSearch(""); setPage(1) }}>
                       {t("fn.clearSearch")}
                     </Button>
                   ) : (

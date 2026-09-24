@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react"
+import { useCallback, useEffect, useMemo, useState } from "react"
 import { useNavigate } from "react-router-dom"
 import { AlertTriangle, Loader2, Pencil, Plus, Search, Sparkles, Trash2, Wand2 } from "lucide-react"
 import { toast } from "sonner"
@@ -7,7 +7,7 @@ import { DetailDrawer } from "@/components/shared/DetailDrawer"
 import { FilterToolbar, FilterToolbarGroup } from "@/components/shared/FilterToolbar"
 import { ListTable, ListTableLoadingRows } from "@/components/shared/ListTable"
 import { PaginationFooter } from "@/components/shared/PaginationFooter"
-import { useShellI18n } from "@/i18n/shellI18n"
+import { useShellI18n } from "@/i18n/shellI18nContext"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
@@ -52,7 +52,7 @@ export function SkillsPage() {
   const [detailSkill, setDetailSkill] = useState<Skill | null>(null)
   const [formData, setFormData] = useState<SkillFormData>(EMPTY_FORM)
 
-  const fetchSkills = async (keyword?: string) => {
+  const fetchSkills = useCallback(async (keyword?: string) => {
     setLoading(true)
     setError(null)
     try {
@@ -64,17 +64,18 @@ export function SkillsPage() {
     } finally {
       setLoading(false)
     }
-  }
+  }, [t])
 
   useEffect(() => {
     fetchSkills()
-  }, [])
+  }, [fetchSkills])
 
   const handleSourceFilterChange = (value: "all" | "built_in" | "custom") => {
     if (value === sourceFilter) return
     setLoading(true)
     setSkills([])
     setSourceFilter(value)
+    setPage(1)
     void fetchSkills(query)
   }
 
@@ -83,6 +84,7 @@ export function SkillsPage() {
     setLoading(true)
     setSkills([])
     setDatabaseFilter(value)
+    setPage(1)
     void fetchSkills(query)
   }
 
@@ -102,10 +104,6 @@ export function SkillsPage() {
     const start = (page - 1) * PAGE_SIZE
     return visibleSkills.slice(start, start + PAGE_SIZE)
   }, [page, visibleSkills])
-
-  useEffect(() => {
-    setPage(1)
-  }, [query, sourceFilter, databaseFilter])
 
   const handleOpenCreate = () => {
     setEditingSkillName(null)
@@ -173,7 +171,7 @@ export function SkillsPage() {
           <Input
             placeholder={t("skills.searchPlaceholder")}
             value={query}
-            onChange={(e) => setQuery(e.target.value)}
+            onChange={(e) => { setQuery(e.target.value); setPage(1) }}
             className="w-72 rounded-lg bg-card pl-9 text-sm"
           />
         </div>
@@ -250,7 +248,7 @@ export function SkillsPage() {
                       {query || sourceFilter !== "all" || databaseFilter !== "all" ? t("skills.empty.noMatch") : t("skills.empty.none")}
                     </p>
                     {query ? (
-                      <Button variant="ghost" size="sm" onClick={() => setQuery("")}>
+                      <Button variant="ghost" size="sm" onClick={() => { setQuery(""); setPage(1) }}>
                         {t("skills.btn.clearSearch")}
                       </Button>
                     ) : (

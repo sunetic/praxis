@@ -3,7 +3,7 @@ import { useNavigate, useParams } from "react-router-dom"
 import { toast } from "sonner"
 import ReactMarkdown from "react-markdown"
 import remarkGfm from "remark-gfm"
-import { useShellI18n } from "@/i18n/shellI18n"
+import { useShellI18n } from "@/i18n/shellI18nContext"
 import {
   AlertTriangle,
   Bot,
@@ -182,8 +182,6 @@ export function SchedulerConsolePage() {
     return visibleSchedules.slice(start, start + SCHEDULE_PAGE_SIZE)
   }, [schedulePage, visibleSchedules])
 
-  useEffect(() => { setSchedulePage(1) }, [search])
-
   const releasedFunctions = useMemo(
     () => functions.filter((item) => String(item.status).toLowerCase() === "released"),
     [functions]
@@ -207,7 +205,7 @@ export function SchedulerConsolePage() {
   )
   const editingIsBuiltIn = editingSchedule?.kind === "built_in"
 
-  const refreshSchedules = async () => {
+  const refreshSchedules = useCallback(async () => {
     setError(null)
     const [scheduleData, functionData, agentData, datasourceData] = await Promise.all([
       schedulesApi.list(),
@@ -219,7 +217,7 @@ export function SchedulerConsolePage() {
     setFunctions(Array.isArray(functionData) ? functionData : [])
     setAgents(Array.isArray(agentData) ? agentData : [])
     setDatasources(filterConnectableDatasources(Array.isArray(datasourceData) ? datasourceData : []))
-  }
+  }, [])
 
   const refreshRuns = useCallback(async (page: number): Promise<ScheduleRun[]> => {
     const offset = Math.max(page - 1, 0) * RUN_PAGE_SIZE
@@ -253,7 +251,7 @@ export function SchedulerConsolePage() {
     return () => {
       cancelled = true
     }
-  }, [])
+  }, [refreshSchedules, t])
 
   useEffect(() => {
     if (loading || schedules.length === 0) return
@@ -264,7 +262,7 @@ export function SchedulerConsolePage() {
 
   useEffect(() => {
     refreshRuns(runPage).catch(() => toast.error(t("scheduler.toast.loadRunsFailed")))
-  }, [refreshRuns, runPage])
+  }, [refreshRuns, runPage, t])
 
   useEffect(() => {
     const hasRunningRun = runs.some((r) => ["queued", "running", "waiting_approval"].includes(r.status))
@@ -274,7 +272,7 @@ export function SchedulerConsolePage() {
       refreshRuns(runPage).catch(() => {})
     }, interval)
     return () => window.clearInterval(timer)
-  }, [refreshRuns, runPage, runScheduleFilter, runs])
+  }, [refreshRuns, refreshSchedules, runPage, runScheduleFilter, runs])
 
   const openCreateDialog = () => {
     const preferredFunctionId = releasedFunctions[0]?.id ? String(releasedFunctions[0].id) : ""
@@ -595,7 +593,7 @@ export function SchedulerConsolePage() {
           <Search className="pointer-events-none absolute left-3 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground/60" />
           <Input
             value={view === "schedules" ? search : runTargetNameFilter}
-            onChange={(e) => view === "schedules" ? setSearch(e.target.value) : setRunTargetNameFilter(e.target.value)}
+            onChange={(e) => { if (view === "schedules") { setSearch(e.target.value); setSchedulePage(1) } else { setRunTargetNameFilter(e.target.value) } }}
             placeholder={view === "schedules" ? t("scheduler.search.schedules") : t("scheduler.search.runs")}
             className="w-72 rounded-lg bg-card pl-9 text-sm"
           />
@@ -690,7 +688,7 @@ export function SchedulerConsolePage() {
                         {search ? t("scheduler.empty.noMatch") : t("scheduler.empty.none")}
                       </p>
                       {search ? (
-                        <Button variant="ghost" size="sm" onClick={() => setSearch("")}>{t("scheduler.btn.clearSearch")}</Button>
+                        <Button variant="ghost" size="sm" onClick={() => { setSearch(""); setSchedulePage(1) }}>{t("scheduler.btn.clearSearch")}</Button>
                       ) : (
                         <Button variant="ghost" size="sm" onClick={openCreateDialog}>
                           <Plus className="size-4" />

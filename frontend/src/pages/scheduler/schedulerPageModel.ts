@@ -33,7 +33,7 @@ export type FunctionSummary = {
   id?: number
   name?: string
   status?: string
-  description?: string
+  description?: string | null
   draft_dependencies?: unknown
 }
 

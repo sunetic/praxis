@@ -44,7 +44,7 @@ import {
 
 import type { FC, ReactNode } from "react";
 import { useCallback } from "react";
-import { useShellI18n } from "@/i18n/shellI18n";
+import { useShellI18n } from "@/i18n/shellI18nContext";
 
 export type ThreadSuggestion = {
   label: string;

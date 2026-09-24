@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react"
 import { Link, useParams } from "react-router-dom"
 import { PagePreviewRenderer } from "@/components/page/PagePreviewRenderer"
-import { useShellI18n } from "@/i18n/shellI18n"
+import { useShellI18n } from "@/i18n/shellI18nContext"
 import { pageArtifactsApi, type PublishedPage } from "@/lib/pageArtifacts"
 
 export function PagePublishedPage() {

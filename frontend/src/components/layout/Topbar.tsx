@@ -1,5 +1,5 @@
 import { Search, Bell, ChevronDown } from "lucide-react"
-import { useShellI18n } from "@/i18n/shellI18n"
+import { useShellI18n } from "@/i18n/shellI18nContext"
 
 export function Topbar() {
   const { locale, toggleLocale, t } = useShellI18n()

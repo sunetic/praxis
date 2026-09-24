@@ -2,7 +2,7 @@ import { NavLink } from "react-router-dom"
 import type { LucideIcon } from "lucide-react"
 import { MessageSquare, Database, Bot, Sparkles, FunctionSquare, CalendarClock, Wrench, Send, Blocks, Settings, Plug, BookOpen, Globe } from "lucide-react"
 import { cn } from "@/lib/utils"
-import { useShellI18n, type ShellCopyKey } from "@/i18n/shellI18n"
+import { useShellI18n, type ShellCopyKey } from "@/i18n/shellI18nContext"
 
 type NavItem = {
   to: string

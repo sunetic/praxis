@@ -3,7 +3,7 @@ import { useNavigate, useSearchParams } from "react-router-dom"
 import { AlertTriangle, Bot, Check, Database, Loader2, Pencil, Play, RefreshCw, Search, Sparkles, Trash2, Wrench, Blocks } from "lucide-react"
 import { toast } from "sonner"
 
-import { useShellI18n } from "@/i18n/shellI18n"
+import { useShellI18n } from "@/i18n/shellI18nContext"
 import { FilterToolbar, FilterToolbarGroup } from "@/components/shared/FilterToolbar"
 import { ListTable, ListTableLoadingRows } from "@/components/shared/ListTable"
 import { PaginationFooter } from "@/components/shared/PaginationFooter"
@@ -33,6 +33,15 @@ import {
   type GuidedMessage,
 } from "@/pages/agents/agentsPageModel"
 
+function readStoredRunDatasourceSelection(): Record<number, number[]> {
+  try {
+    const raw = window.localStorage.getItem(RUN_DS_SELECTION_STORAGE_KEY)
+    return raw ? normalizeRunDatasourceSelection(JSON.parse(raw)) : {}
+  } catch {
+    return {}
+  }
+}
+
 export function AgentsPage() {
   const { t } = useShellI18n()
   const navigate = useNavigate()
@@ -57,7 +66,7 @@ export function AgentsPage() {
   const [guideAnswers, setGuideAnswers] = useState<Partial<Record<GuidedField, string>>>({})
   const [loadingHandoff, setLoadingHandoff] = useState(false)
   const [runningAgentId, setRunningAgentId] = useState<number | null>(null)
-  const [runDatasourceIdsByAgent, setRunDatasourceIdsByAgent] = useState<Record<number, number[]>>({})
+  const [runDatasourceIdsByAgent, setRunDatasourceIdsByAgent] = useState(readStoredRunDatasourceSelection)
   const [runDatasourcePickerAgentId, setRunDatasourcePickerAgentId] = useState<number | null>(null)
   const [runDatasourceFilter, setRunDatasourceFilter] = useState("")
   const [formData, setFormData] = useState<EditingAgent>({
@@ -116,10 +125,6 @@ export function AgentsPage() {
     const start = (page - 1) * PAGE_SIZE
     return visibleAgents.slice(start, start + PAGE_SIZE)
   }, [page, visibleAgents])
-
-  useEffect(() => {
-    setPage(1)
-  }, [query])
 
   /* ---------- datasource run selection helpers ---------- */
 
@@ -234,7 +239,7 @@ export function AgentsPage() {
 
   /* ---------- fetch ---------- */
 
-  const fetchAgents = async () => {
+  const fetchAgents = useCallback(async () => {
     setLoading(true)
     setError(null)
     try {
@@ -254,22 +259,11 @@ export function AgentsPage() {
     } finally {
       setLoading(false)
     }
-  }
+  }, [t])
 
   useEffect(() => {
     fetchAgents()
-  }, [])
-
-  useEffect(() => {
-    try {
-      const raw = window.localStorage.getItem(RUN_DS_SELECTION_STORAGE_KEY)
-      if (!raw) return
-      const parsed = JSON.parse(raw)
-      setRunDatasourceIdsByAgent(normalizeRunDatasourceSelection(parsed))
-    } catch {
-      setRunDatasourceIdsByAgent({})
-    }
-  }, [])
+  }, [fetchAgents])
 
   useEffect(() => {
     try {
@@ -297,7 +291,7 @@ export function AgentsPage() {
     setSearchParams(next, { replace: true })
   }, [searchParams, setSearchParams])
 
-  const startGuidedBuilder = () => {
+  const startGuidedBuilder = useCallback(() => {
     setGuideOpen(true)
     setGuideStep(0)
     setGuideAnswers({})
@@ -315,7 +309,7 @@ export function AgentsPage() {
         content: t(GUIDED_QUESTIONS[0].prompt),
       },
     ])
-  }
+  }, [t])
 
   useEffect(() => {
     if (handoffHandledRef.current) return
@@ -357,7 +351,7 @@ export function AgentsPage() {
     }
 
     run()
-  }, [clearHandoffParams, searchParams])
+  }, [clearHandoffParams, searchParams, startGuidedBuilder, t])
 
   /* ---------- guided builder ---------- */
 
@@ -544,7 +538,7 @@ export function AgentsPage() {
           <Input
             placeholder={t("agents.searchPlaceholder")}
             value={query}
-            onChange={(e) => setQuery(e.target.value)}
+            onChange={(e) => { setQuery(e.target.value); setPage(1) }}
             className="w-72 rounded-lg bg-card pl-9 text-sm"
           />
         </div>
@@ -613,7 +607,7 @@ export function AgentsPage() {
                       {query ? t("agents.emptyNoMatch") : t("agents.emptyNone")}
                     </p>
                     {query ? (
-                      <Button variant="ghost" size="sm" onClick={() => setQuery("")}>
+                      <Button variant="ghost" size="sm" onClick={() => { setQuery(""); setPage(1) }}>
                         {t("agents.clearSearch")}
                       </Button>
                     ) : (

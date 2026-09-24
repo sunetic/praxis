@@ -6,7 +6,7 @@ import { TooltipIconButton } from "@/components/assistant-ui/tooltip-icon-button
 import { Button } from "@/components/ui/button"
 import { Progress } from "@/components/ui/progress"
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
-import { useShellI18n } from "@/i18n/shellI18n"
+import { useShellI18n } from "@/i18n/shellI18nContext"
 import { terminalRun, type ContextCompressionNotice, type Reconciliation, type RunContextStatus, type RunEvent, type RunScene, type RunView, type ToolBlock } from "@/lib/agentRuns"
 import { useRunConversation } from "./useRunConversation"
 
