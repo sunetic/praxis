@@ -5,6 +5,7 @@ these values. They do not describe planning stages or task completion criteria.
 """
 
 from dataclasses import dataclass, field
+from typing import Any
 
 CHAT_INSTRUCTIONS = """Help the user with their current request using the conversation and available tools.
 Answer simple questions directly. For authorized work, use results to decide what to do next.
@@ -25,7 +26,7 @@ class AgentDefinition:
     name: str
     tool_names: frozenset[str]
     instructions: str = CHAT_INSTRUCTIONS
-    scope: dict = field(default_factory=dict)
+    scope: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -35,4 +36,4 @@ class RunDependencies:
     run_id: str
     conversation_id: str
     actor_id: str
-    scope: dict = field(default_factory=dict)
+    scope: dict[str, Any] = field(default_factory=dict)

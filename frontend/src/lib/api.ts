@@ -106,7 +106,7 @@ export type Schedule = {
   datasource_id?: number | null;
   function_id?: number | null;
   function_release_id?: number | null;
-  input_payload?: Record<string, any> | null;
+  input_payload?: Record<string, unknown> | null;
   input_prompt?: string | null;
   next_run_at?: string | null;
   last_run_at?: string | null;
@@ -132,7 +132,7 @@ export type ScheduleRun = {
   conversation_id?: string | null;
   error_summary?: string | null;
   output_summary?: string | null;
-  output_payload?: Record<string, any> | null;
+  output_payload?: Record<string, unknown> | null;
   started_at?: string | null;
   finished_at?: string | null;
   created_at: string;
@@ -173,16 +173,18 @@ export type ChannelTemplateConfig = {
   body?: string;
   at_all?: boolean;
   at_user_ids?: string[];
-  links?: Record<string, any>[];
+  links?: Record<string, unknown>[];
 };
 
 export type SlackTemplateConfig = {
+  body?: string;
   username?: string | null;
   icon_emoji?: string | null;
   channel?: string | null;
 };
 
 export type TelegramTemplateConfig = {
+  body?: string;
   parse_mode?: "Markdown" | "HTML" | "";
   disable_notification?: boolean;
 };
@@ -235,6 +237,79 @@ export type SkillInput = {
 }
 
 export type SkillUpdateInput = Partial<SkillInput>
+
+export type PageRecord = {
+  id: number
+  name: string
+  description?: string | null
+  status?: string
+  current_release_id?: number | null
+  updated_at?: string
+}
+
+export type PageNavigationItem = PageRecord & {
+  path: string
+  entry_type: "published" | "workspace"
+}
+
+export type FunctionRecord = {
+  id: number
+  name: string
+  slug?: string
+  description?: string | null
+  kind?: string
+  status?: string
+  draft_code?: string
+  draft_dependencies?: Record<string, unknown> | null
+  updated_at?: string
+}
+
+export type FunctionRunRecord = {
+  id: number
+  run_id?: string
+  function_id?: number
+  function_name?: string
+  function_slug?: string
+  status?: string
+  duration_ms?: number
+  input_summary?: string
+  output_summary?: string
+  error_class?: string
+  error_message?: string
+  started_at?: string
+  finished_at?: string
+  created_at?: string
+}
+
+export type FunctionReleaseRecord = {
+  id: number
+  function_id?: number
+  version?: number
+  created_at?: string
+  [key: string]: unknown
+}
+
+export type FunctionInputSuggestion = {
+  payload: Record<string, unknown>
+  rationale: string
+  missing_information: string[]
+  assumptions: string[]
+  source?: Record<string, unknown>
+  runtime_path?: "production" | "draft"
+}
+
+export type ApiJsonValue = string | number | boolean | null | ApiJsonValue[] | { [key: string]: ApiJsonValue }
+
+export type FunctionInvokeResult = {
+  status?: string
+  duration_ms?: number
+  run_id?: string
+  output?: ApiJsonValue
+  error_message?: string
+  error_class?: string
+  error_code?: string
+  runtime_path?: string
+}
 
 export const datasourcesApi = {
   list: () => api.get<DataSource[]>('/datasources').then(res => res.data),
@@ -438,48 +513,48 @@ export const skillsApi = {
 
 
 export const pagesApi = {
-  list: () => api.get<any[]>('/pages').then(res => res.data),
-  navigation: () => api.get<any[]>('/pages/navigation').then(res => res.data),
-  create: (data: { name: string; description?: string }) => api.post<any>('/pages', data).then(res => res.data),
-  get: (id: number) => api.get<any>(`/pages/${id}`).then(res => res.data),
-  update: (id: number, data: { name: string; description?: string }) => api.patch<any>(`/pages/${id}`, data).then(res => res.data),
+  list: () => api.get<PageRecord[]>('/pages').then(res => res.data),
+  navigation: () => api.get<PageNavigationItem[]>('/pages/navigation').then(res => res.data),
+  create: (data: { name: string; description?: string }) => api.post<PageRecord>('/pages', data).then(res => res.data),
+  get: (id: number) => api.get<PageRecord>(`/pages/${id}`).then(res => res.data),
+  update: (id: number, data: { name: string; description?: string }) => api.patch<PageRecord>(`/pages/${id}`, data).then(res => res.data),
   delete: (id: number) => api.delete(`/pages/${id}`),
   archive: (id: number) => api.post(`/pages/${id}/archive`, {}).then(res => res.data),
 }
 
 export const functionsApi = {
-  list: () => api.get<any[]>('/functions').then((res) => res.data),
+  list: () => api.get<FunctionRecord[]>('/functions').then((res) => res.data),
   listAllRuns: (limit = 50) =>
-    api.get<any[]>('/functions/runs', { params: { limit } }).then((res) => res.data),
-  create: (data: Record<string, any>) => api.post<any>('/functions', data).then((res) => res.data),
-  get: (id: number) => api.get<any>(`/functions/${id}`).then((res) => res.data),
-  getBySlug: (slug: string) => api.get<any>(`/functions/by-slug/${encodeURIComponent(slug)}`).then((res) => res.data),
-  update: (id: number, data: Record<string, any>) =>
-    api.patch<any>(`/functions/${id}`, data).then((res) => res.data),
+    api.get<FunctionRunRecord[]>('/functions/runs', { params: { limit } }).then((res) => res.data),
+  create: (data: { name?: string; description?: string }) => api.post<FunctionRecord>('/functions', data).then((res) => res.data),
+  get: (id: number) => api.get<FunctionRecord>(`/functions/${id}`).then((res) => res.data),
+  getBySlug: (slug: string) => api.get<FunctionRecord>(`/functions/by-slug/${encodeURIComponent(slug)}`).then((res) => res.data),
+  update: (id: number, data: { name?: string; description?: string }) =>
+    api.patch<FunctionRecord>(`/functions/${id}`, data).then((res) => res.data),
   delete: (id: number) => api.delete(`/functions/${id}`),
-  listReleases: (id: number) => api.get<any[]>(`/functions/${id}/releases`).then((res) => res.data),
+  listReleases: (id: number) => api.get<FunctionReleaseRecord[]>(`/functions/${id}/releases`).then((res) => res.data),
   listRuns: (id: number, limit = 20) =>
-    api.get<any[]>(`/functions/${id}/runs`, { params: { limit } }).then((res) => res.data),
+    api.get<FunctionRunRecord[]>(`/functions/${id}/runs`, { params: { limit } }).then((res) => res.data),
   suggestInput: (
     id: number,
     data: { prompt?: string; runtime_path?: "production" | "draft" }
-  ) => api.post<any>(`/functions/${id}/suggest-input`, data).then((res) => res.data),
-  invoke: (id: number, data?: Record<string, any>) =>
-    api.post<any>(`/functions/${id}/invoke`, data ?? {}).then((res) => res.data),
+  ) => api.post<FunctionInputSuggestion>(`/functions/${id}/suggest-input`, data).then((res) => res.data),
+  invoke: (id: number, data?: Record<string, unknown>) =>
+    api.post<FunctionInvokeResult>(`/functions/${id}/invoke`, data ?? {}).then((res) => res.data),
   cancelRun: (id: number, runId: string) =>
-    api.post<any>(`/functions/${id}/runs/${encodeURIComponent(runId)}/cancel`).then((res) => res.data),
+    api.post<FunctionInvokeResult>(`/functions/${id}/runs/${encodeURIComponent(runId)}/cancel`).then((res) => res.data),
   duplicate: (id: number) =>
-    api.post<any>(`/functions/${id}/duplicate`).then((res) => res.data),
+    api.post<FunctionRecord>(`/functions/${id}/duplicate`).then((res) => res.data),
 }
 
 export const schedulesApi = {
   list: () => api.get<Schedule[]>('/schedules').then((res) => res.data),
   workerHealth: () => api.get<ScheduleWorkerHealth>('/schedules/worker-health').then((res) => res.data),
-  create: (data: Record<string, any>) => api.post<Schedule>('/schedules', data).then((res) => res.data),
-  aiCreate: (data: Record<string, any>) =>
+  create: (data: Record<string, unknown>) => api.post<Schedule>('/schedules', data).then((res) => res.data),
+  aiCreate: (data: Record<string, unknown>) =>
     api.post<{ schedule: Schedule; build_summary: string }>('/schedules/ai-create', data).then((res) => res.data),
   get: (id: number) => api.get<Schedule>(`/schedules/${id}`).then((res) => res.data),
-  update: (id: number, data: Record<string, any>) =>
+  update: (id: number, data: Record<string, unknown>) =>
     api.patch<Schedule>(`/schedules/${id}`, data).then((res) => res.data),
   delete: (id: number) => api.delete(`/schedules/${id}`),
   listRuns: (id: number, limit = 20) =>
@@ -547,25 +622,25 @@ export const channelsApi = {
   send: (
     id: number,
     data?: {
-      message?: Record<string, any>;
-      template?: Record<string, any>;
+      message?: Record<string, unknown>;
+      template?: Record<string, unknown>;
       message_type?: ChannelMessageType;
       title?: string;
       content?: string;
       dry_run?: boolean;
     }
-  ) => api.post<any>(`/channels/${id}/send`, data ?? {}).then((res) => res.data),
+  ) => api.post<Record<string, unknown>>(`/channels/${id}/send`, data ?? {}).then((res) => res.data),
   sendTest: (
     id: number,
     data?: {
-      message?: Record<string, any>;
-      template?: Record<string, any>;
+      message?: Record<string, unknown>;
+      template?: Record<string, unknown>;
       message_type?: ChannelMessageType;
       title?: string;
       content?: string;
       dry_run?: boolean;
     }
-  ) => api.post<any>(`/channels/${id}/send-test`, data ?? {}).then((res) => res.data),
+  ) => api.post<Record<string, unknown>>(`/channels/${id}/send-test`, data ?? {}).then((res) => res.data),
 }
 
 export type PlatformSettings = {

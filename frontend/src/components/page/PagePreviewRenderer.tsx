@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react"
-import { useShellI18n } from "@/i18n/shellI18n"
+import { useShellI18n } from "@/i18n/shellI18nContext"
 
 /** Untrusted compiled HTML has an opaque origin; never grant same-origin or top navigation. */
 export function PagePreviewRenderer({ html, title }: { html: string; title: string }) {

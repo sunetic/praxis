@@ -126,54 +126,6 @@ async def test_background_run_persists_stream_and_native_history(store):
         await service.close()
 
 
-async def test_textual_tool_markup_is_retried_then_becomes_a_real_approval(store):
-    writes = []
-
-    async def write(target: str) -> str:
-        writes.append(target)
-        return "written"
-
-    script = Script(
-        ['准备执行。<invoke name="write"><parameter name="target">sample</parameter></invoke>'],
-        [call("write", '{"target":"sample"}', "native-call")],
-        ["已完成。"],
-    )
-    service = AgentRunService(
-        store,
-        script.factory,
-        {
-            "write": RegisteredTool(
-                tool=Tool(write, sequential=True), authorize=approve_write, mutating=True
-            )
-        },
-        capabilities_for_run=lambda row: frozenset(row["definition"]["tool_names"]),
-        poll_seconds=0.01,
-    )
-    await service.start()
-    try:
-        run = submit(service)
-        paused = await settled(store, run["id"])
-        assert paused["status"] == "waiting_approval"
-        assert writes == []
-        events = store.read_events(run["id"], "user")
-        assert (
-            len([event for event in events if event["kind"] == "assistant_message_discarded"]) == 1
-        )
-        assert "<invoke" not in "".join(
-            event["payload"].get("text", "")
-            for event in events
-            if event["kind"] == "assistant_delta"
-        )
-        approval = paused["approvals"][0]
-        service.approve(run["id"], "user", "native-call", approval["fingerprint"], True)
-        final = await settled(store, run["id"], status="finished")
-        assert final["output"] == "已完成。"
-        assert writes == ["sample"]
-        assert final["budget"]["usage"]["requests"] == 3
-    finally:
-        await service.close()
-
-
 async def test_request_and_result_are_durable_on_each_side_of_a_tool(store):
     async def read(ctx: RunContext[RunDependencies]) -> str:
         history = store.history(ctx.deps.run_id, "user")

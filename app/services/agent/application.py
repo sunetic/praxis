@@ -3,14 +3,16 @@
 import json
 import time
 from datetime import UTC, datetime
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, PositiveInt
 from sqlalchemy import select
+from sqlalchemy.orm import Session, sessionmaker
 
 from app.db.database import SessionLocal
 from app.models.models import Agent, DataSource, Function, KnowledgeBase, Page
 from app.services.agent.definitions import CHAT_INSTRUCTIONS, AgentDefinition
+from app.services.agent.execution import RegisteredTool
 from app.services.agent.models import ModelFactory
 from app.services.agent.service import AgentRunService
 from app.services.agent.store import RunNotFoundError, RunStore
@@ -39,7 +41,7 @@ class ConversationAutoApproval(BaseModel):
     expires_at: float = Field(gt=0, allow_inf_nan=False)
 
 
-def scoped_tools(configured: frozenset[str], scope: dict) -> frozenset[str]:
+def scoped_tools(configured: frozenset[str], scope: dict[str, Any]) -> frozenset[str]:
     """Available capabilities follow resource grants, never the user's wording.
 
     Do not send unusable tool schemas to the model. This is only the scene
@@ -81,12 +83,17 @@ def local_actor() -> str:
 
 
 class RuntimeApplication:
-    def __init__(self, *, sessions=SessionLocal, models: ModelFactory | None = None):
+    def __init__(
+        self,
+        *,
+        sessions: sessionmaker[Session] = SessionLocal,
+        models: ModelFactory | None = None,
+    ) -> None:
         self.sessions = sessions
         self.store = RunStore(sessions)
         self.models = models or ModelFactory()
         self.functions = FunctionRuntimeService(session_factory=sessions)
-        self.tools = {
+        self.tools: dict[str, RegisteredTool] = {
             **database_tools(sessions),
             **knowledge_tools(sessions),
             **service_tools(sessions),
@@ -102,7 +109,7 @@ class RuntimeApplication:
             model_snapshot_factory=self.models.snapshot,
         )
 
-    def capabilities(self, row: dict) -> frozenset[str]:
+    def capabilities(self, row: dict[str, Any]) -> frozenset[str]:
         scope = row["definition"]["scope"]
         agent_id = scope.get("agent_id")
         with self.sessions() as db:
@@ -119,7 +126,9 @@ class RuntimeApplication:
                 names -= {"request_database_change"}
             return scoped_tools(names, scope)
 
-    def resolve(self, conversation_id: str | None, actor_id: str, scene: dict) -> AgentDefinition:
+    def resolve(
+        self, conversation_id: str | None, actor_id: str, scene: dict[str, Any]
+    ) -> AgentDefinition:
         saved_scene = (
             self.store.get_conversation(conversation_id, actor_id)["scene"]
             if conversation_id is not None
@@ -197,7 +206,7 @@ class RuntimeApplication:
             instructions += (
                 f"\nSkill {skill.name}@{skill.version}:\n{skill.rules_prompt or skill.prompt}\n"
             )
-        scope = {
+        scope: dict[str, Any] = {
             "agent_id": selected.agent_id,
             "datasource_ids": sorted(ids),
             "knowledge_base_ids": sorted(knowledge_ids),
@@ -296,11 +305,11 @@ class RuntimeApplication:
             name=name, tool_names=scoped_tools(names, scope), instructions=instructions, scope=scope
         )
 
-    async def start(self):
+    async def start(self) -> None:
         await self.functions.start()
         await self.service.start()
 
-    async def close(self):
+    async def close(self) -> None:
         await self.service.close()
         await self.functions.close()
         await self.models.close()

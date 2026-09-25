@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useNavigate } from "react-router-dom"
-import { BookOpen, Download, ExternalLink, Loader2, Package, Pencil, Plus, RefreshCw, Search, Trash2, User } from "lucide-react"
+import { BookOpen, Download, ExternalLink, Loader2, Pencil, Plus, RefreshCw, Search, Trash2, User } from "lucide-react"
 import { toast } from "sonner"
 
 import { Badge } from "@/components/ui/badge"
@@ -18,7 +18,7 @@ import {
 import { Input } from "@/components/ui/input"
 import { FilterToolbar, FilterToolbarGroup } from "@/components/shared/FilterToolbar"
 import { WorkbenchPage } from "@/components/shared/WorkbenchPage"
-import { useShellI18n } from "@/i18n/shellI18n"
+import { useShellI18n } from "@/i18n/shellI18nContext"
 import { knowledgeApi, knowledgePackApi } from "@/lib/api"
 import type { KnowledgeBase, KnowledgeBaseInput, KnowledgePack } from "@/lib/api"
 
@@ -71,7 +71,7 @@ export function KnowledgeListPage() {
   const [uninstalling, setUninstalling] = useState(false)
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
-  async function fetchData() {
+  const fetchData = useCallback(async () => {
     setLoading(true)
     setError(null)
     try {
@@ -82,7 +82,7 @@ export function KnowledgeListPage() {
     } finally {
       setLoading(false)
     }
-  }
+  }, [t])
 
   const fetchPacks = useCallback(async () => {
     setPacksLoading(true)
@@ -96,12 +96,12 @@ export function KnowledgeListPage() {
     }
   }, [])
 
-  function fetchAll() {
+  const fetchAll = useCallback(() => {
     fetchData()
     fetchPacks()
-  }
+  }, [fetchData, fetchPacks])
 
-  useEffect(() => { fetchAll() }, [])
+  useEffect(() => { fetchAll() }, [fetchAll])
 
   // Poll while any pack is downloading
   useEffect(() => {
@@ -127,7 +127,7 @@ export function KnowledgeListPage() {
         pollRef.current = null
       }
     }
-  }, [packs])
+  }, [fetchData, packs])
 
   // Build unified card list: installed KBs + available (not-yet-installed) packs
   const cards = useMemo<CardItem[]>(() => {

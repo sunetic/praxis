@@ -6,16 +6,16 @@ import { RunConversationView } from "@/components/chat/RunConversationView"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
-import { useShellI18n } from "@/i18n/shellI18n"
+import { useShellI18n } from "@/i18n/shellI18nContext"
 import { skillsApi } from "@/lib/api"
 import { agentRunsApi, type RunConversation, type RunEvent } from "@/lib/agentRuns"
 import { skillDraftsApi, type SkillDraft, type SkillDraftContent } from "@/lib/skillDrafts"
 
 export function SkillBuilderPage() {
   const [params] = useSearchParams()
-  const createdHere = useRef<string | null>(null)
+  const [createdHere, setCreatedHere] = useState<string | null>(null)
   const id = params.get("draftId")
-  return <SkillBuilderWorkspace key={!id || id === createdHere.current ? "new" : id} onCreated={value => { createdHere.current = value }} />
+  return <SkillBuilderWorkspace key={!id || id === createdHere ? "new" : id} onCreated={setCreatedHere} />
 }
 
 function SkillBuilderWorkspace({ onCreated }: { onCreated: (id: string) => void }) {

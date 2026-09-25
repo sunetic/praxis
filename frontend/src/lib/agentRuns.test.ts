@@ -45,13 +45,6 @@ describe("native run projection", () => {
     expect(applyRunEvent(view, events[6])).toBe(view)
     expect(view.blocks.filter(block => block.kind === "text")).toHaveLength(2)
   })
-  it("removes a provider response discarded for textual tool-call markup", () => {
-    let view = applyRunEvent(runView(sampleRun()), event(1, "assistant_delta", { message_id: "bad", part_id: "0", text: "我来处理。" }))
-    view = applyRunEvent(view, event(2, "assistant_message_discarded", { message_id: "bad" }))
-    view = applyRunEvent(view, event(3, "assistant_delta", { message_id: "retry", part_id: "0", text: "请确认数据库变更。" }))
-    expect(view.blocks).toHaveLength(1)
-    expect(view.blocks[0]).toMatchObject({ messageId: "retry", text: "请确认数据库变更。" })
-  })
   it("approval only changes the decision, not execution success", () => {
     let view = applyRunEvent(runView(sampleRun()), event(1, "approval_required", { call_id: "c1", name: "write", fingerprint: "f", arguments: { value: 1 } }))
     view = applyRunEvent(view, event(2, "approval_decided", { call_id: "c1", decision: "approved" }))

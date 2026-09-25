@@ -7,7 +7,7 @@ import { RunConversationView } from "@/components/chat/RunConversationView"
 import { WorkbenchPage } from "@/components/shared/WorkbenchPage"
 import { agentRunsApi, type RunConversation, type RunScene } from "@/lib/agentRuns"
 import { agentsApi, datasourcesApi, type Agent, type DataSource } from "@/lib/api"
-import { useShellI18n } from "@/i18n/shellI18n"
+import { useShellI18n } from "@/i18n/shellI18nContext"
 
 export function ChatPage() {
   const { locale, t } = useShellI18n()

@@ -19,7 +19,7 @@ import { pagesApi } from "@/lib/api"
 type PageListItem = {
   id: number
   name?: string
-  description?: string
+  description?: string | null
   status?: string
   updated_at?: string
 }
@@ -41,6 +41,13 @@ function nextPageName(existingPages: PageListItem[]): string {
     .filter((num) => Number.isInteger(num) && num > 0)
   const next = numbers.length > 0 ? Math.max(...numbers) + 1 : existingPages.length + 1
   return `Page-${next}`
+}
+
+function axiosErrorDetail(error: unknown): string {
+  if (!isAxiosError(error)) return ""
+  const data: unknown = error.response?.data
+  if (!data || typeof data !== "object" || !("detail" in data)) return ""
+  return String((data as { detail?: unknown }).detail ?? "")
 }
 
 export function PageListPage() {
@@ -89,10 +96,6 @@ export function PageListPage() {
     return visiblePages.slice(start, start + PAGE_SIZE)
   }, [visiblePages, page])
 
-  useEffect(() => {
-    setPage(1)
-  }, [search])
-
   const handleCreate = async () => {
     if (creating) return
     setCreating(true)
@@ -104,7 +107,7 @@ export function PageListPage() {
       setPages((prev) => [created, ...prev])
       navigate(`/page/workspace/${created.id}`)
     } catch (err) {
-      const detail = isAxiosError(err) ? String((err.response?.data as any)?.detail || "") : ""
+      const detail = axiosErrorDetail(err)
       toast.error(detail || "创建 Page 失败")
     } finally {
       setCreating(false)
@@ -120,7 +123,7 @@ export function PageListPage() {
       setDeleteTarget(null)
       toast.success("Page 已删除")
     } catch (err) {
-      const detail = isAxiosError(err) ? String((err.response?.data as any)?.detail || "") : ""
+      const detail = axiosErrorDetail(err)
       toast.error(detail || "删除失败")
     } finally {
       setBusyAction(null)
@@ -144,7 +147,7 @@ export function PageListPage() {
             <Search className="pointer-events-none absolute left-3 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground/60" />
             <Input
               value={search}
-              onChange={(e) => setSearch(e.target.value)}
+              onChange={(e) => { setSearch(e.target.value); setPage(1) }}
               className="w-72 rounded-lg bg-card pl-9 text-sm"
               placeholder="搜索名称或描述..."
             />
@@ -218,7 +221,7 @@ export function PageListPage() {
                         {search ? "没有匹配的结果" : "暂无 Page"}
                       </p>
                       {search ? (
-                        <Button variant="ghost" size="sm" onClick={() => setSearch("")}>
+                        <Button variant="ghost" size="sm" onClick={() => { setSearch(""); setPage(1) }}>
                           清除搜索
                         </Button>
                       ) : (

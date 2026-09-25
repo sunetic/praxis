@@ -18,11 +18,13 @@ import {
 import {
   Dialog,
   DialogTitle,
+  DialogDescription,
   DialogContent,
   DialogTrigger,
 } from "@/components/ui/dialog";
 import { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar";
 import { TooltipIconButton } from "@/components/assistant-ui/tooltip-icon-button";
+import { useShellI18n } from "@/i18n/shellI18nContext";
 import { cn } from "@/lib/utils";
 
 const useFileSrc = (file: File | undefined) => {
@@ -78,6 +80,7 @@ const AttachmentPreview: FC<AttachmentPreviewProps> = ({ src }) => {
 
 const AttachmentPreviewDialog: FC<PropsWithChildren> = ({ children }) => {
   const src = useAttachmentSrc();
+  const { t } = useShellI18n();
 
   if (!src) return children;
 
@@ -91,8 +94,11 @@ const AttachmentPreviewDialog: FC<PropsWithChildren> = ({ children }) => {
       </DialogTrigger>
       <DialogContent className="aui-attachment-preview-dialog-content p-2 sm:max-w-3xl [&>button]:rounded-full [&>button]:bg-foreground/60 [&>button]:p-1 [&>button]:opacity-100 [&>button]:ring-0! [&_svg]:text-background [&>button]:hover:[&_svg]:text-destructive">
         <DialogTitle className="aui-sr-only sr-only">
-          Image Attachment Preview
+          {t("chat.attachmentPreviewTitle")}
         </DialogTitle>
+        <DialogDescription className="aui-sr-only sr-only">
+          {t("chat.attachmentPreviewDesc")}
+        </DialogDescription>
         <div className="aui-attachment-preview relative mx-auto flex max-h-[80dvh] w-full items-center justify-center overflow-hidden bg-background">
           <AttachmentPreview src={src} />
         </div>

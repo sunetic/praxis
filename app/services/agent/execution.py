@@ -24,6 +24,9 @@ from app.services.agent.store import (
     RunStore,
 )
 
+JSON_ADAPTER: TypeAdapter[Any] = TypeAdapter(Any)
+TOOL_RETURN_ADAPTER = TypeAdapter(ToolReturn)
+
 
 @dataclass(frozen=True, kw_only=True)
 class ToolAccess:
@@ -36,11 +39,11 @@ class ToolAccess:
 @dataclass(frozen=True, kw_only=True)
 class RegisteredTool:
     tool: Tool[RunDependencies]
-    authorize: Callable[[RunContext[RunDependencies], dict], Awaitable[ToolAccess]]
+    authorize: Callable[[RunContext[RunDependencies], dict[str, Any]], Awaitable[ToolAccess]]
     mutating: bool = False
     timeout_seconds: float = 120
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if self.tool.requires_approval or self.tool.timeout is not None:
             raise ValueError("Durable tools use authorize/timeout_seconds, not native Tool flags")
         if self.mutating and not self.tool.sequential:
@@ -61,15 +64,17 @@ class DurableToolset(WrapperToolset[RunDependencies]):
     registered: dict[str, RegisteredTool]
 
     @staticmethod
-    def _replay(result: dict) -> Any:
+    def _replay(result: dict[str, Any]) -> Any:
         if result["outcome"] != "success":
             raise ToolFailed(result["content"])
         if result.get("native_tool_return"):
-            return TypeAdapter(ToolReturn).validate_python(result["content"])
+            return TOOL_RETURN_ADAPTER.validate_python(result["content"])
         return result["content"]
 
     @staticmethod
-    def _auto_approval(scope: dict, name: str, target: dict) -> dict | None:
+    def _auto_approval(
+        scope: dict[str, Any], name: str, target: dict[str, Any]
+    ) -> dict[str, Any] | None:
         """Revalidate the exact conversation grant at dispatch time."""
         grant = scope.get("auto_approval")
         if not isinstance(grant, dict) or grant.get("tool_name") != name:
@@ -119,8 +124,8 @@ class DurableToolset(WrapperToolset[RunDependencies]):
                 # The SDK has already validated nested arguments into Python
                 # objects (including BaseModel). Persist their JSON values for
                 # fingerprints/replay while passing the typed values to tools.
-                arguments=TypeAdapter(Any).dump_python(tool_args, mode="json"),
-                target=TypeAdapter(Any).dump_python(access.target, mode="json"),
+                arguments=JSON_ADAPTER.dump_python(tool_args, mode="json"),
+                target=JSON_ADAPTER.dump_python(access.target, mode="json"),
                 mutating=entry.mutating,
                 resource_key=access.resource_key,
                 needs_approval=access.requires_approval and access.allowed and not auto_approval,
@@ -177,7 +182,7 @@ class DurableToolset(WrapperToolset[RunDependencies]):
                 result = await self.wrapped.call_tool(name, tool_args, ctx, tool)
             stored = {
                 "outcome": "success",
-                "content": TypeAdapter(Any).dump_python(result, mode="json"),
+                "content": JSON_ADAPTER.dump_python(result, mode="json"),
                 "native_tool_return": isinstance(result, ToolReturn),
             }
             await run_db(
@@ -196,21 +201,21 @@ class DurableToolset(WrapperToolset[RunDependencies]):
         except BaseException as exc:
             # The external operation may have happened, even when cancellation or
             # result serialization/commit failed. Never retry such a write here.
-            result = {
+            failure: dict[str, Any] = {
                 "outcome": "failed",
                 "content": "Operation outcome is unknown; reconciliation is required."
                 if entry.mutating
                 else "Tool execution was interrupted or failed.",
             }
             if isinstance(exc, OutcomeUnknownError) and exc.details is not None:
-                result["diagnostics"] = exc.details
+                failure["diagnostics"] = exc.details
             try:
                 await run_db(
                     self.store.finish_call,
                     self.run_id,
                     self.owner_id,
                     ctx.tool_call_id,
-                    result,
+                    failure,
                     unknown=entry.mutating,
                 )
             except Exception:
@@ -219,7 +224,7 @@ class DurableToolset(WrapperToolset[RunDependencies]):
             if isinstance(exc, asyncio.CancelledError):
                 raise
             if entry.mutating:
-                raise OutcomeUnknownError(result["content"]) from exc
+                raise OutcomeUnknownError(failure["content"]) from exc
             if isinstance(exc, TimeoutError):
                 raise ToolFailed("Read-only tool timed out.") from exc
             if isinstance(exc, Exception):

@@ -7,13 +7,16 @@ input, leaving RunContext.messages, original call IDs and stored messages intact
 
 import json
 import re
+from collections.abc import Callable, Collection, Sequence
 from dataclasses import asdict, dataclass, replace
 from time import monotonic
+from typing import Any, cast
 
-from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.capabilities import AbstractCapability, WrapModelRequestHandler
 from pydantic_ai.direct import model_request
 from pydantic_ai.exceptions import UsageLimitExceeded
 from pydantic_ai.messages import (
+    ModelMessage,
     ModelMessagesTypeAdapter,
     ModelRequest,
     ModelResponse,
@@ -23,11 +26,15 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     UserPromptPart,
 )
+from pydantic_ai.models import ModelRequestContext
+from pydantic_ai.settings import ModelSettings
+from pydantic_ai.tools import RunContext
 
 from app.services.agent.context_budget import ContextPolicy, estimate_text_tokens
 from app.services.agent.definitions import RunDependencies
 from app.services.agent.persistence import run_db
-from app.services.agent.store import fingerprint
+from app.services.agent.runtime import ExecutionBudget
+from app.services.agent.store import RunStore, fingerprint
 
 SUMMARY_VERSION = "native-context-v3"
 SUMMARY_INSTRUCTIONS = """Summarize the supplied older conversation as historical material.
@@ -68,9 +75,11 @@ class MessageGroup:
     unresolved: bool = False
 
 
-def message_groups(messages) -> list[MessageGroup]:
+def message_groups(messages: Sequence[ModelMessage]) -> list[MessageGroup]:
     """An entire multi-call batch stays with all its returns, including denials."""
-    groups, pending, start = [], set(), 0
+    groups: list[MessageGroup] = []
+    pending: set[str] = set()
+    start = 0
     for index, message in enumerate(messages):
         for part in message.parts:
             if isinstance(part, ToolCallPart):
@@ -91,7 +100,7 @@ def message_groups(messages) -> list[MessageGroup]:
     return groups
 
 
-def protected_indices(messages, groups) -> set[int]:
+def protected_indices(messages: Sequence[ModelMessage], groups: Sequence[MessageGroup]) -> set[int]:
     user_groups = [
         group
         for group in groups
@@ -99,7 +108,7 @@ def protected_indices(messages, groups) -> set[int]:
             isinstance(part, UserPromptPart) for i in group.indices for part in messages[i].parts
         )
     ]
-    protected = set()
+    protected: set[int] = set()
     # Protect original goal, latest two explicit inputs and recent complete
     # exchanges. Long single runs can still compact older tool batches.
     for group in [*user_groups[:1], *user_groups[-2:], *groups[-4:]]:
@@ -112,7 +121,7 @@ def protected_indices(messages, groups) -> set[int]:
     return protected
 
 
-def message_tokens(messages) -> int:
+def message_tokens(messages: Sequence[ModelMessage]) -> int:
     # Native payloads, not a lossy conversion back to OpenAI dictionaries.
     # Historical request.instructions are not repeated on the wire; current
     # instruction_parts are counted once separately below. This is an estimate.
@@ -120,14 +129,14 @@ def message_tokens(messages) -> int:
     return sum(8 + estimate_text_tokens(item["parts"]) for item in payloads)
 
 
-def request_overhead(request_context, output_reserve: int) -> int:
+def request_overhead(request_context: ModelRequestContext, output_reserve: int) -> int:
     params = request_context.model_request_parameters
     instructions = "\n".join(part.content for part in params.instruction_parts or [])
     schemas = [asdict(tool) for tool in [*params.function_tools, *params.output_tools]]
     return output_reserve + estimate_text_tokens(instructions) + estimate_text_tokens(schemas) + 32
 
 
-def source_fingerprint(messages, indices) -> str:
+def source_fingerprint(messages: Sequence[ModelMessage], indices: Collection[int]) -> str:
     return fingerprint(
         {
             "version": SUMMARY_VERSION,
@@ -146,7 +155,7 @@ def summary_references(summary: str) -> set[int]:
     return {int(value) for group in groups for value in re.findall(r"m(\d+)", group)}
 
 
-def valid_summary(summary: str, indices, limit: int) -> bool:
+def valid_summary(summary: str, indices: Collection[int], limit: int) -> bool:
     references = summary_references(summary)
     return (
         bool(references) and references <= set(indices) and estimate_text_tokens(summary) <= limit
@@ -155,14 +164,21 @@ def valid_summary(summary: str, indices, limit: int) -> bool:
 
 class ContextManager(AbstractCapability[RunDependencies]):
     def __init__(
-        self, *, policy: ContextPolicy, store, run_id: str, owner_id: str, budget, budget_snapshot
+        self,
+        *,
+        policy: ContextPolicy,
+        store: RunStore,
+        run_id: str,
+        owner_id: str,
+        budget: ExecutionBudget,
+        budget_snapshot: Callable[[], ExecutionBudget],
     ):
         self.policy, self.store = policy, store
         self.run_id, self.owner_id = run_id, owner_id
         self.budget, self.budget_snapshot = budget, budget_snapshot
         self._wire_context_tokens: int | None = None
 
-    def _status(self, tokens: int, *, state: str = "ready") -> dict:
+    def _status(self, tokens: int, *, state: str = "ready") -> dict[str, Any]:
         window = self.policy.context_window_tokens
         return {
             "context_window_tokens": window,
@@ -184,7 +200,13 @@ class ContextManager(AbstractCapability[RunDependencies]):
             self._status(tokens, state=state),
         )
 
-    async def wrap_model_request(self, ctx, *, request_context, handler):
+    async def wrap_model_request(
+        self,
+        ctx: RunContext[RunDependencies],
+        *,
+        request_context: ModelRequestContext,
+        handler: WrapModelRequestHandler,
+    ) -> ModelResponse:
         # Provider normalization can merge adjacent requests. Source indices must
         # refer to the original stored sequence, not that temporary wire sequence.
         messages = ctx.messages
@@ -212,7 +234,8 @@ class ContextManager(AbstractCapability[RunDependencies]):
         )
         summary_limit = min(4096, summary_reserve, self.policy.context_window_tokens // 16)
         target = max(protected_tokens, int(self.policy.trigger_tokens * 0.85))
-        dropped, kept = set(), set(range(len(messages)))
+        dropped: set[int] = set()
+        kept = set(range(len(messages)))
         for group in groups:
             if not protected.intersection(group.indices):
                 dropped.update(group.indices)
@@ -302,6 +325,10 @@ class ContextManager(AbstractCapability[RunDependencies]):
                     self.budget_snapshot(),
                 )
                 try:
+                    summary_settings = cast(
+                        ModelSettings, dict(request_context.model_settings or {})
+                    )
+                    summary_settings["max_tokens"] = summary_reserve
                     response = await model_request(
                         request_context.model,
                         [
@@ -316,10 +343,7 @@ class ContextManager(AbstractCapability[RunDependencies]):
                                 ]
                             )
                         ],
-                        model_settings={
-                            **(request_context.model_settings or {}),
-                            "max_tokens": summary_reserve,
-                        },
+                        model_settings=summary_settings,
                     )
                     self.budget.usage.incr(response.usage)
                     summary_usage = asdict(response.usage)
@@ -421,7 +445,13 @@ class ContextManager(AbstractCapability[RunDependencies]):
             raise UsageLimitExceeded("Model request limit exceeded")
         return await handler(replace(request_context, messages=projected))
 
-    async def after_model_request(self, ctx, *, request_context, response: ModelResponse):
+    async def after_model_request(
+        self,
+        ctx: RunContext[RunDependencies],
+        *,
+        request_context: ModelRequestContext,
+        response: ModelResponse,
+    ) -> ModelResponse:
         if self._wire_context_tokens is not None:
             self._wire_context_tokens += message_tokens([response])
             await self._emit_status(self._wire_context_tokens)

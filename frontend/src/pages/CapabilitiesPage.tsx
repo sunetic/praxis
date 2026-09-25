@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react"
 import { Wrench, ChevronRight, Search, X } from "lucide-react"
-import { useShellI18n } from "@/i18n/shellI18n"
+import { useShellI18n } from "@/i18n/shellI18nContext"
 import { capabilitiesApi, type CapabilitiesResponse, type ToolInfo } from "@/lib/api"
 import { WorkbenchPage } from "@/components/shared/WorkbenchPage"
 import { FilterToolbar, FilterToolbarGroup } from "@/components/shared/FilterToolbar"

@@ -5,6 +5,7 @@ import logging
 import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable
 from functools import partial
+from typing import Any
 
 from pydantic_ai import (
     CancellationToken,
@@ -40,11 +41,11 @@ class AgentRunService:
     def __init__(
         self,
         store: RunStore,
-        model_factory: Callable[[dict], Awaitable[Model]],
+        model_factory: Callable[[dict[str, Any]], Awaitable[Model]],
         tools: dict[str, RegisteredTool],
         *,
-        capabilities_for_run: Callable[[dict], frozenset[str]],
-        model_snapshot_factory: Callable[[], dict] | None = None,
+        capabilities_for_run: Callable[[dict[str, Any]], frozenset[str]],
+        model_snapshot_factory: Callable[[], dict[str, Any]] | None = None,
         poll_seconds: float = 0.1,
     ):
         self.store, self.model_factory, self.tools = store, model_factory, dict(tools)
@@ -54,8 +55,8 @@ class AgentRunService:
         self.capabilities_for_run = capabilities_for_run
         self.model_snapshot_factory = model_snapshot_factory
         self._wake = asyncio.Event()
-        self._dispatcher: asyncio.Task | None = None
-        self._tasks: dict[str, asyncio.Task] = {}
+        self._dispatcher: asyncio.Task[None] | None = None
+        self._tasks: dict[str, asyncio.Task[None]] = {}
         self._tokens: dict[str, CancellationToken] = {}
         self._closing = False
         self._loop: asyncio.AbstractEventLoop | None = None
@@ -80,7 +81,7 @@ class AgentRunService:
         await asyncio.gather(*tasks, return_exceptions=True)
         self._loop = None
 
-    def _notify(self):
+    def _notify(self) -> None:
         if self._loop is not None:
             self._loop.call_soon_threadsafe(self._wake.set)
 
@@ -93,7 +94,7 @@ class AgentRunService:
         definition: AgentDefinition,
         *,
         stop_and_modify: bool = False,
-    ) -> dict:
+    ) -> dict[str, Any]:
         row = self.store.submit(
             conversation_id,
             actor_id,
@@ -108,12 +109,12 @@ class AgentRunService:
 
     def approve(
         self, run_id: str, actor_id: str, call_id: str, fingerprint: str, approved: bool
-    ) -> dict:
+    ) -> dict[str, Any]:
         decision = self.store.decide(run_id, actor_id, call_id, fingerprint, approved)
         self._notify()
         return decision
 
-    def cancel(self, run_id: str, actor_id: str) -> dict:
+    def cancel(self, run_id: str, actor_id: str) -> dict[str, Any]:
         row = self.store.cancel(run_id, actor_id)
         if token := self._tokens.get(run_id):
             if self._loop is not None:
@@ -121,12 +122,14 @@ class AgentRunService:
         self._notify()
         return row
 
-    def resume(self, run_id: str, actor_id: str, expected_event_seq: int) -> dict:
+    def resume(self, run_id: str, actor_id: str, expected_event_seq: int) -> dict[str, Any]:
         row = self.store.resume(run_id, actor_id, expected_event_seq)
         self._notify()
         return row
 
-    async def subscribe(self, run_id: str, actor_id: str, after: int = 0) -> AsyncIterator[dict]:
+    async def subscribe(
+        self, run_id: str, actor_id: str, after: int = 0
+    ) -> AsyncIterator[dict[str, Any]]:
         await run_db(self.store.get, run_id, actor_id)
         while True:
             batch = await run_db(self.store.read_events, run_id, actor_id, after)
@@ -138,7 +141,7 @@ class AgentRunService:
                 return
             await asyncio.sleep(self.poll_seconds)
 
-    async def _dispatch(self):
+    async def _dispatch(self) -> None:
         while not self._closing:
             self._wake.clear()
             try:
@@ -159,7 +162,7 @@ class AgentRunService:
             except TimeoutError:
                 pass
 
-    async def _heartbeat(self, run_id: str, owner_id: str, token: CancellationToken):
+    async def _heartbeat(self, run_id: str, owner_id: str, token: CancellationToken) -> None:
         while True:
             await asyncio.sleep(min(self.poll_seconds, self.store.lease_seconds / 3))
             try:
@@ -173,7 +176,7 @@ class AgentRunService:
                 logger.error("agent_run_heartbeat_failed run_id=%s", run_id)
                 return
 
-    async def _execute(self, row: dict, owner_id: str, token: CancellationToken):
+    async def _execute(self, row: dict[str, Any], owner_id: str, token: CancellationToken) -> None:
         run_id = row["id"]
         heartbeat = asyncio.create_task(self._heartbeat(run_id, owner_id, token))
         budget, history = None, []
@@ -201,7 +204,6 @@ class AgentRunService:
                 owner_id,
                 budget,
                 row["message_offset"],
-                authorized_tool_names,
             )
             profile = (
                 ModelSnapshot.model_validate(row["model_snapshot"]).configuration

@@ -140,39 +140,20 @@ async def test_mixed_preamble_and_tool_call_does_not_end_the_run_early():
     assert "_runtime" not in schema["properties"]
 
 
-async def test_textual_known_tool_call_gets_one_native_protocol_retry():
+async def test_textual_tool_markup_is_plain_output_and_never_dispatched():
     executed = []
 
     async def lookup(key: str) -> str:
         executed.append(key)
         return "42"
 
-    script = Script(
-        ['我来查询。<invoke name="lookup"><parameter name="key">count</parameter></invoke>'],
-        [call("lookup", '{"key":"count"}')],
-        ["结果是 42。"],
-    )
+    output = '我来查询。<invoke name="lookup"><parameter name="key">count</parameter></invoke>'
+    script = Script([output])
     result = await invoke(script, tools=[Tool(lookup)])
 
-    assert result.output == "结果是 42。"
-    assert executed == ["count"]
-    assert len(script.requests) == 3
-    assert any(
-        isinstance(part, RetryPromptPart)
-        and "native structured tool interface" in str(part.content)
-        for part in script.requests[1][0][-1].parts
-    )
-
-
-async def test_textual_known_tool_call_protocol_retry_is_bounded():
-    async def lookup(key: str) -> str:
-        pytest.fail("Textual tool markup must never execute")
-
-    leaked = ['<invoke name="lookup"><parameter name="key">count</parameter></invoke>']
-    script = Script(leaked, leaked)
-    with pytest.raises(UnexpectedModelBehavior, match="maximum output retries"):
-        await invoke(script, tools=[Tool(lookup)])
-    assert len(script.requests) == 2
+    assert result.output == output
+    assert executed == []
+    assert len(script.requests) == 1
 
 
 async def test_business_failures_do_not_use_parameter_retry_budget_or_abort_task():

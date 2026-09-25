@@ -9,6 +9,7 @@ import {
   Dialog,
   DialogContent,
   DialogHeader,
+  DialogDescription,
   DialogTitle,
 } from "@/components/ui/dialog"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
@@ -16,7 +17,7 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { FilterToolbar, FilterToolbarGroup } from "@/components/shared/FilterToolbar"
 import { ListTable, ListTableLoadingRows } from "@/components/shared/ListTable"
 import { WorkbenchPage } from "@/components/shared/WorkbenchPage"
-import { useShellI18n } from "@/i18n/shellI18n"
+import { useShellI18n } from "@/i18n/shellI18nContext"
 import { knowledgeApi } from "@/lib/api"
 import type { KnowledgeBase, KnowledgeDocument, KnowledgeDocumentDetail } from "@/lib/api"
 
@@ -414,6 +415,7 @@ export function KnowledgeDetailPage() {
           <DialogHeader>
             <DialogTitle>{viewDoc?.title}</DialogTitle>
           </DialogHeader>
+            <DialogDescription>{t("knowledge.documentPreviewDesc")}</DialogDescription>
           <div className="flex-1 overflow-y-auto rounded-lg border border-border bg-muted/10 p-4">
             <pre className="whitespace-pre-wrap text-sm leading-relaxed font-mono text-foreground">
               {viewDoc?.content}

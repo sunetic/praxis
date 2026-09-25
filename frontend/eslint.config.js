@@ -6,7 +6,7 @@ import tseslint from 'typescript-eslint'
 import { defineConfig, globalIgnores } from 'eslint/config'
 
 export default defineConfig([
-  globalIgnores(['dist']),
+  globalIgnores(['dist', 'playwright-report', 'test-results']),
   {
     files: ['**/*.{ts,tsx}'],
     extends: [
@@ -18,6 +18,12 @@ export default defineConfig([
     languageOptions: {
       ecmaVersion: 2020,
       globals: globals.browser,
+    },
+    rules: {
+      // Route synchronization and remote resource loading intentionally update local state in effects.
+      // Exhaustive dependency checking remains an error, so those effects cannot capture stale values.
+      'react-hooks/set-state-in-effect': 'off',
+      'react-hooks/exhaustive-deps': 'error',
     },
   },
 ])

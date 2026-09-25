@@ -7,6 +7,7 @@ EVAL_OUTPUT ?=
 EVAL_SUITE ?= postgresql
 EVAL_EXPECTED_MODEL ?=
 EVAL_PROFILE ?= praxis
+MYPY ?= uv run --locked mypy
 
 ifeq ($(EVAL_SUITE),mysql)
 EVAL_MODULE := evals.mysql_dba.run
@@ -69,6 +70,22 @@ test:
 test-agent-runtime:
 	uv run --locked python -m pytest \
 		-c tests/agent_runtime/pyproject.toml --confcutdir tests/agent_runtime tests/agent_runtime
+
+.PHONY: typecheck-agent-runtime typecheck-agent-core
+typecheck-agent-runtime:
+	$(MYPY) --follow-imports=silent \
+		app/services/agent/definitions.py app/services/agent/context_budget.py \
+		app/services/agent/persistence.py app/services/agent/runtime.py \
+		app/services/agent/store.py app/services/agent/store_base.py \
+		app/services/agent/store_conversations.py app/services/agent/store_calls.py \
+		app/services/agent/store_execution.py app/services/agent/service.py \
+		app/services/agent/context.py app/services/agent/application.py \
+		app/services/agent/events.py app/services/agent/execution.py \
+		app/services/agent/scheduled_runner.py
+
+typecheck-agent-core: typecheck-agent-runtime
+
+
 
 eval:
 	uv run python -m $(EVAL_MODULE) \

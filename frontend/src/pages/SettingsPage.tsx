@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react"
 import { BrainCircuit, Gauge, ShieldCheck } from "lucide-react"
-import { useShellI18n } from "@/i18n/shellI18n"
+import { useShellI18n } from "@/i18n/shellI18nContext"
 import { settingsApi } from "@/lib/api"
 import { WorkbenchPage } from "@/components/shared/WorkbenchPage"
 import { Input } from "@/components/ui/input"

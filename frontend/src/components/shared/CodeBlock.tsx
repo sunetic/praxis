@@ -1,7 +1,7 @@
 import { useState } from "react"
 import { Check, ClipboardCopy } from "lucide-react"
 import { cn } from "@/lib/utils"
-import { useShellI18n } from "@/i18n/shellI18n"
+import { useShellI18n } from "@/i18n/shellI18nContext"
 
 type CodeBlockProps = {
   content: string

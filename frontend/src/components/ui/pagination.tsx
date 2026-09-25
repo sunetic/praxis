@@ -2,9 +2,9 @@ import * as React from "react"
 import { type VariantProps } from "class-variance-authority"
 import { ChevronLeft, ChevronRight, MoreHorizontal } from "lucide-react"
 
-import { buttonVariants } from "@/components/ui/button"
+import { buttonVariants } from "@/components/ui/buttonVariants"
 import { cn } from "@/lib/utils"
-import { useShellI18n } from "@/i18n/shellI18n"
+import { useShellI18n } from "@/i18n/shellI18nContext"
 
 function Pagination({ className, ...props }: React.ComponentProps<"nav">) {
   return (

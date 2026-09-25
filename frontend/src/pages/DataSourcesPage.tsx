@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react"
+import { useCallback, useEffect, useMemo, useState } from "react"
 import { ChevronDown, ChevronUp, Database, Loader2, Pencil, Plus, RefreshCw, Search, Trash2, Zap } from "lucide-react"
 import { toast } from "sonner"
 
@@ -9,6 +9,7 @@ import {
   Dialog,
   DialogContent,
   DialogFooter,
+  DialogDescription,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
@@ -20,7 +21,7 @@ import { FilterToolbar, FilterToolbarGroup } from "@/components/shared/FilterToo
 import { ListTable, ListTableLoadingRows } from "@/components/shared/ListTable"
 import { PaginationFooter } from "@/components/shared/PaginationFooter"
 import { WorkbenchPage } from "@/components/shared/WorkbenchPage"
-import { useShellI18n } from "@/i18n/shellI18n"
+import { useShellI18n } from "@/i18n/shellI18nContext"
 import { datasourcesApi } from "@/lib/api"
 import type { DataSource, DataSourceInput, DataSourceUpdateInput } from "@/lib/api"
 
@@ -107,7 +108,7 @@ export function DataSourcesPage() {
   const [metaOpen, setMetaOpen] = useState(false)
 
   // ── Fetch ──────────────────────────────────────────────────────────────────
-  const fetchDatasources = async () => {
+  const fetchDatasources = useCallback(async () => {
     setLoading(true)
     setError(null)
     try {
@@ -119,11 +120,11 @@ export function DataSourcesPage() {
     } finally {
       setLoading(false)
     }
-  }
+  }, [t])
 
   useEffect(() => {
     fetchDatasources()
-  }, [])
+  }, [fetchDatasources])
 
   // ── Derived data ───────────────────────────────────────────────────────────
   const clusterKeyOptions = useMemo(
@@ -159,11 +160,6 @@ export function DataSourcesPage() {
     const start = (page - 1) * PAGE_SIZE
     return filteredDatasources.slice(start, start + PAGE_SIZE)
   }, [filteredDatasources, page])
-
-  // ── Reset page on filter change ────────────────────────────────────────────
-  useEffect(() => {
-    setPage(1)
-  }, [search, clusterFilter])
 
   // ── Handlers ───────────────────────────────────────────────────────────────
   const handleVerifyConnection = async () => {
@@ -320,11 +316,11 @@ export function DataSourcesPage() {
               placeholder={t("ds.searchPlaceholder")}
               className="w-72 rounded-lg bg-card pl-9 text-sm"
               value={search}
-              onChange={(e) => setSearch(e.target.value)}
+              onChange={(e) => { setSearch(e.target.value); setPage(1) }}
             />
           </div>
           {clusterKeyOptions.length > 1 && (
-            <Select value={clusterFilter} onValueChange={setClusterFilter}>
+            <Select value={clusterFilter} onValueChange={(value) => { setClusterFilter(value); setPage(1) }}>
               <SelectTrigger className="w-44 bg-card">
                 <SelectValue />
               </SelectTrigger>
@@ -551,6 +547,7 @@ export function DataSourcesPage() {
           <DialogHeader>
             <DialogTitle>{editingId ? t("ds.dialogTitleEdit") : t("ds.dialogTitleAdd")}</DialogTitle>
           </DialogHeader>
+            <DialogDescription>{t("ds.dialogDescription")}</DialogDescription>
 
           <div className="space-y-5">
             {/* ── Basic Info ─────────────────────────────────────── */}

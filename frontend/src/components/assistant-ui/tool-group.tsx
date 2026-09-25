@@ -19,7 +19,7 @@ import {
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
 import { cn } from "@/lib/utils";
-import { useShellI18n } from "@/i18n/shellI18n";
+import { useShellI18n } from "@/i18n/shellI18nContext";
 
 const ANIMATION_DURATION = 200;
 

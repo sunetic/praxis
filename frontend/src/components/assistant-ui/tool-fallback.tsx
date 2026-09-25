@@ -25,7 +25,7 @@ import {
 } from "@/components/assistant-ui/pending-action-context";
 import { cn } from "@/lib/utils";
 import type { PendingAction } from "@/lib/api";
-import { useShellI18n } from "@/i18n/shellI18n";
+import { useShellI18n } from "@/i18n/shellI18nContext";
 
 const ANIMATION_DURATION = 200;
 

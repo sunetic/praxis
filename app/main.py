@@ -1,4 +1,5 @@
 import json
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, Request
@@ -39,9 +40,20 @@ logger = get_logger("app.main")
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 _HANDBOOK_SITE = _REPO_ROOT / "site_handbook"
 
+
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    await startup()
+    try:
+        yield
+    finally:
+        await shutdown()
+
+
 app = FastAPI(
     title=settings.app_name,
     debug=settings.debug,
+    lifespan=lifespan,
 )
 agent_runtime = RuntimeApplication()
 app.state.agent_runtime = agent_runtime
@@ -64,7 +76,6 @@ except ImportError:
     _has_tracing = False
 
 
-@app.on_event("startup")
 async def startup():
     configure_logging(settings.debug)
     if _HANDBOOK_SITE.is_dir():
@@ -139,7 +150,6 @@ async def startup():
         logger.info("scheduler_runtime_autostart_disabled")
 
 
-@app.on_event("shutdown")
 async def shutdown():
     if _has_tracing:
         shutdown_tracing()

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react"
+import { useCallback, useEffect, useMemo, useState } from "react"
 import { useNavigate, useParams } from "react-router-dom"
 import { CheckCircle2, Circle, Loader2 } from "lucide-react"
 import { toast } from "sonner"
@@ -10,8 +10,8 @@ import { NativeSelect } from "@/components/ui/select"
 import { Switch } from "@/components/ui/switch"
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Textarea } from "@/components/ui/textarea"
-import { useShellI18n } from "@/i18n/shellI18n"
-import { channelsApi, type Channel, type ChannelInput, type ChannelMessageType, type ChannelProvider } from "@/lib/api"
+import { useShellI18n } from "@/i18n/shellI18nContext"
+import { channelsApi, type Channel, type ChannelInput, type ChannelMessageType, type ChannelProvider, type ChannelTemplateConfig, type SlackTemplateConfig, type TelegramTemplateConfig } from "@/lib/api"
 
 type SecurityMode = "keyword" | "sign" | "ip"
 type WizardStep = 1 | 2 | 3
@@ -115,10 +115,10 @@ export function ChannelConsolePage() {
     { title: t("channel.telegram.ref.getChatId"), url: "https://core.telegram.org/bots/faq#how-do-i-get-my-chat-id", updatedAt: "2025-01-08" },
   ]
 
-  const hydrateDingTalkDraft = (channel: Channel) => {
-    const config = (channel.config || {}) as Record<string, any>
-    const security = (config.security || {}) as Record<string, any>
-    const template = (config.template || {}) as Record<string, any>
+  const hydrateDingTalkDraft = useCallback((channel: Channel) => {
+    const config = channel.config
+    const security = config.security ?? { mode: "sign" }
+    const template = (config.template ?? {}) as Partial<ChannelTemplateConfig>
     setChannelName(channel.name || t("channel.defaultBotName"))
     setWebhookUrl(config.webhook_url || "")
     setSecurityMode((security.mode as SecurityMode) || "sign")
@@ -130,29 +130,29 @@ export function ChannelConsolePage() {
     setMessageBody(template.body || t("channel.defaultMsgBody"))
     setAtAll(Boolean(template.at_all))
     setAtUserIds(Array.isArray(template.at_user_ids) ? template.at_user_ids.join(",") : "")
-  }
+  }, [t])
 
-  const hydrateSlackDraft = (channel: Channel) => {
-    const config = (channel.config || {}) as Record<string, any>
-    const template = (config.template || {}) as Record<string, any>
+  const hydrateSlackDraft = useCallback((channel: Channel) => {
+    const config = channel.config
+    const template = (config.template ?? {}) as SlackTemplateConfig
     setChannelName(channel.name || "Slack Bot")
     setSlackWebhookUrl(config.webhook_url || "")
     setSlackUsername(template.username || "")
     setSlackIconEmoji(template.icon_emoji || "")
     setSlackChannel(template.channel || "")
     setSlackMessageBody(template.body || "Praxis test message")
-  }
+  }, [])
 
-  const hydrateTelegramDraft = (channel: Channel) => {
-    const config = (channel.config || {}) as Record<string, any>
-    const template = (config.template || {}) as Record<string, any>
+  const hydrateTelegramDraft = useCallback((channel: Channel) => {
+    const config = channel.config
+    const template = (config.template ?? {}) as TelegramTemplateConfig
     setChannelName(channel.name || "Telegram Bot")
     setTelegramBotToken(config.bot_token || "")
     setTelegramChatId(config.chat_id || "")
     setTelegramParseMode(template.parse_mode || "Markdown")
     setTelegramDisableNotification(Boolean(template.disable_notification))
     setTelegramMessageBody(template.body || "Praxis test message")
-  }
+  }, [])
 
   useEffect(() => {
     let cancelled = false
@@ -188,7 +188,7 @@ export function ChannelConsolePage() {
     return () => {
       cancelled = true
     }
-  }, [])
+  }, [hydrateDingTalkDraft, hydrateSlackDraft, hydrateTelegramDraft, isDingTalk, isSlack, isTelegram])
 
   useEffect(() => {
     if (isDingTalk) setStep(1)
@@ -246,7 +246,7 @@ export function ChannelConsolePage() {
   }, [slackWebhookUrl])
 
   const slackRequestPreview = useMemo(() => {
-    const payload: Record<string, any> = { text: slackMessageBody }
+    const payload: Record<string, unknown> = { text: slackMessageBody }
     if (slackUsername.trim()) payload.username = slackUsername.trim()
     if (slackIconEmoji.trim()) payload.icon_emoji = slackIconEmoji.trim()
     if (slackChannel.trim()) payload.channel = slackChannel.trim()
@@ -263,7 +263,7 @@ export function ChannelConsolePage() {
 
   // ── Telegram derived values ──
   const telegramRequestPreview = useMemo(() => {
-    const payload: Record<string, any> = { chat_id: telegramChatId, text: telegramMessageBody }
+    const payload: Record<string, unknown> = { chat_id: telegramChatId, text: telegramMessageBody }
     if (telegramParseMode) payload.parse_mode = telegramParseMode
     if (telegramDisableNotification) payload.disable_notification = true
     return JSON.stringify(payload, null, 2)

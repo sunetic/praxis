@@ -3,12 +3,12 @@ import { isAxiosError } from "axios"
 import { Link, useParams, useSearchParams } from "react-router-dom"
 import { RunConversationView } from "@/components/chat/RunConversationView"
 import { Button } from "@/components/ui/button"
-import { useShellI18n } from "@/i18n/shellI18n"
+import { useShellI18n } from "@/i18n/shellI18nContext"
 import { datasourcesApi, functionsApi, type DataSource } from "@/lib/api"
 import { agentRunsApi, type RunConversation, type RunEvent, type RunView } from "@/lib/agentRuns"
 import { canPublishDraft, functionArtifactsApi, type FunctionDraft } from "@/lib/functionArtifacts"
 
-type FunctionRecord = { id: number; name: string; description?: string; kind?: string }
+type FunctionRecord = { id: number; name: string; description?: string | null; kind?: string }
 type Editor = { code: string; manifest: string; revision: string }
 const fieldClass = "min-h-11 w-full rounded-md border border-input bg-background p-2 text-sm focus-visible:outline-2 focus-visible:outline-ring"
 

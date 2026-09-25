@@ -7,6 +7,7 @@ from pydantic import Field, ValidationError
 from pydantic_ai import RunContext, Tool
 from pydantic_ai.exceptions import ToolFailed
 from sqlalchemy import select
+from sqlalchemy.orm import Session, sessionmaker
 
 from app.models.artifacts import page_owned_functions
 from app.models.models import Agent, Page
@@ -32,7 +33,7 @@ PAGE_TOOLS = frozenset(
 PageID = Annotated[int, Field(gt=0)]
 
 
-def page_tools(sessions):
+def page_tools(sessions: sessionmaker[Session]) -> dict[str, RegisteredTool]:
     store = PageAuthoringStore(sessions)
 
     def allowed(ctx, page_id, binding_ids=()):
