@@ -106,8 +106,14 @@ class RuntimeApplication:
             self.models.get_model,
             self.tools,
             capabilities_for_run=self.capabilities,
+            confirmation_bypass=self.confirmation_bypass,
             model_snapshot_factory=self.models.snapshot,
         )
+
+    def confirmation_bypass(self) -> bool:
+        """Read the global policy at dispatch time so toggles affect the next tool call."""
+        with self.sessions() as db:
+            return get_setting(db, "ai_action_confirmation_bypass") is True
 
     def capabilities(self, row: dict[str, Any]) -> frozenset[str]:
         scope = row["definition"]["scope"]

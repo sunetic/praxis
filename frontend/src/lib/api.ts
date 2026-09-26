@@ -645,6 +645,7 @@ export const channelsApi = {
 
 export type PlatformSettings = {
   sql_allow_mutating?: boolean
+  ai_action_confirmation_bypass?: boolean
   ai_api_key_configured: boolean
   ai_model?: string
   ai_base_url?: string

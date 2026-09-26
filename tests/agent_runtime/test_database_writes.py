@@ -205,13 +205,22 @@ async def test_lost_execution_reply_is_unknown_and_does_not_retry(writes, monkey
     assert effects == [(1, SQL)]
 
 
-async def test_write_policy_filters_schemas_and_no_confirmation_bypass(writes):
+async def test_global_confirmation_bypass_executes_and_preserves_write_policy(writes):
     runtime, _, _, conversation, effects = writes
     with runtime.sessions.begin() as db:
         upsert_setting(db, "ai_action_confirmation_bypass", True)
-    row = await submit(writes, Script([write_call()], ["取消。 "]))
-    assert row["status"] == "waiting_approval" and effects == []
-    runtime.service.cancel(row["id"], "local")
+    row = await submit(writes, Script([write_call()], ["已执行。 "]))
+    assert row["status"] == "finished"
+    assert effects == [(1, SQL)]
+    approval = row["approvals"][0]
+    assert approval["decision"] == "approved"
+    assert approval["decided_by"] == "platform_confirmation_bypass"
+    event = next(
+        item
+        for item in runtime.store.read_events(row["id"], "local")
+        if item["kind"] == "approval_decided"
+    )
+    assert event["payload"]["policy"]["mode"] == "global_confirmation_bypass"
     with runtime.sessions.begin() as db:
         upsert_setting(db, "sql_allow_mutating", False)
     assert "request_database_change" not in runtime.resolve(conversation, "local", {}).tool_names

@@ -14,7 +14,7 @@ from pydantic_ai import (
     ToolDenied,
     capture_run_messages,
 )
-from pydantic_ai.exceptions import RunCancelled, UsageLimitExceeded
+from pydantic_ai.exceptions import RunCancelled, UnexpectedModelBehavior, UsageLimitExceeded
 from pydantic_ai.models import Model
 
 from app.services.agent.context import ContextLimitExceeded, ContextManager
@@ -45,6 +45,7 @@ class AgentRunService:
         tools: dict[str, RegisteredTool],
         *,
         capabilities_for_run: Callable[[dict[str, Any]], frozenset[str]],
+        confirmation_bypass: Callable[[], bool] | None = None,
         model_snapshot_factory: Callable[[], dict[str, Any]] | None = None,
         poll_seconds: float = 0.1,
     ):
@@ -53,6 +54,7 @@ class AgentRunService:
         if poll_seconds <= 0:
             raise ValueError("poll_seconds must be positive")
         self.capabilities_for_run = capabilities_for_run
+        self.confirmation_bypass = confirmation_bypass
         self.model_snapshot_factory = model_snapshot_factory
         self._wake = asyncio.Event()
         self._dispatcher: asyncio.Task[None] | None = None
@@ -253,6 +255,7 @@ class AgentRunService:
                         run_id=run_id,
                         owner_id=owner_id,
                         registered=self.tools,
+                        confirmation_bypass=self.confirmation_bypass,
                     ),
                 )
             history = result.all_messages()
@@ -268,6 +271,9 @@ class AgentRunService:
             status, error_code = "limited", "context_limit"
         except UsageLimitExceeded:
             status, error_code = "limited", "resource_limit"
+        except UnexpectedModelBehavior:
+            status, error_code = "failed", "model_output_unstable"
+            logger.warning("agent_run_model_output_unstable run_id=%s", run_id, exc_info=True)
         except (OutcomeUnknownError, LeaseLostError):
             status, error_code = "interrupted", "reconciliation_required"
         except Exception:

@@ -614,12 +614,14 @@ class PlatformSettingsUpdateRequest(BaseModel):
     ai_model: str | None = None
     ai_base_url: str | None = None
     sql_allow_mutating: bool | None = None
+    ai_action_confirmation_bypass: bool | None = None
     context_window_tokens: int | None = Field(default=None, ge=8_192, le=2_000_000)
     context_compression_threshold_percent: int | None = Field(default=None, ge=50, le=95)
 
 
 class PlatformSettingsResponse(BaseModel):
     sql_allow_mutating: bool = False
+    ai_action_confirmation_bypass: bool = False
     ai_api_key_configured: bool = False
     ai_model: str | None = None
     ai_base_url: str | None = None

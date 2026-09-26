@@ -94,7 +94,7 @@ export async function consumeRunEvents(response: Response, accept: (event: RunEv
 export type TextBlock = { kind: "text"; id: string; messageId: string; text: string; ended: boolean }
 export type ToolBlock = {
   kind: "tool"; id: string; name: string; arguments: Record<string, unknown>; target: Record<string, unknown>
-  status: string; fingerprint?: string; decision?: string; result?: unknown; submitting?: boolean; error?: string; reconciled?: boolean; autoApproved?: boolean
+  status: string; fingerprint?: string; decision?: string; result?: unknown; errorCode?: string; submitting?: boolean; error?: string; reconciled?: boolean; autoApproved?: boolean
 }
 export type RunView = {
   run: AgentRun; cursor: number; blocks: (TextBlock | ToolBlock)[]
@@ -152,6 +152,7 @@ export function applyRunEvent(view: RunView, event: RunEvent): RunView {
     if (event.type === "tool_result" || event.type === "tool_reconciled") {
       tool.status = event.status ?? (event.outcome === "success" ? "succeeded" : event.outcome === "interrupted" ? "outcome_unknown" : event.outcome ?? "failed")
       tool.result = event.content
+      tool.errorCode = event.error_code ?? prior?.errorCode
       if (event.type === "tool_reconciled") { tool.reconciled = true; tool.submitting = false; tool.error = undefined }
     }
     if (event.type === "approval_required") { tool.status = "waiting_approval"; tool.fingerprint = event.fingerprint; tool.decision = "pending"; activity("approval") }

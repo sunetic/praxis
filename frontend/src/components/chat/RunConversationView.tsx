@@ -45,17 +45,20 @@ function ToolCard({ call, approve, reconcile, pendingCount }: { call: ToolBlock;
   const expanded = disclosure.status === call.status ? disclosure.open : important
   const pending = call.status === "waiting_approval" && call.decision === "pending"
   const labels: Record<string, string> = { executing: t("runtime.executing"), succeeded: t("runtime.executed"), failed: t("runtime.failed"), denied: t("runtime.denied"), outcome_unknown: t("runtime.outcomeUnknownReconcile"), interrupted: t("runtime.interrupted"), waiting_approval: t("runtime.awaitingApproval"), pending: t("runtime.pending") }
+  const localizedResult = call.errorCode === "model_output_unstable" ? t("runtime.modelOutputUnstableActionStopped") : call.errorCode === "action_not_dispatched" ? t("runtime.actionNotDispatched") : null
+  const statusLabel = call.errorCode === "model_output_unstable" ? t("runtime.stoppedForSafety") : labels[call.status] ?? call.status
+
   return <div className={`my-3 min-w-0 overflow-hidden rounded-lg border ${important ? "border-warning/40 bg-warning/5" : "border-border bg-muted/30"}`} data-tool-id={call.id}>
     <button type="button" className="flex min-h-10 w-full items-center gap-2 px-3 text-left text-sm transition-colors hover:bg-muted/70 focus-visible:outline-2 focus-visible:outline-ring" aria-expanded={expanded} onClick={() => setDisclosure({ status: call.status, open: !expanded })}>
       {call.status === "succeeded" ? <Check className="size-4 shrink-0" /> : important ? <CircleAlert className="size-4 shrink-0" /> : <Wrench className="size-4 shrink-0" />}
       <span className="min-w-0 break-all font-medium">{call.name}</span>
-      <span className="ml-auto shrink-0 text-xs text-muted-foreground">{call.reconciled ? t("runtime.userReportedCheck") : labels[call.status] ?? call.status}</span>
+      <span className="ml-auto shrink-0 text-xs text-muted-foreground">{call.reconciled ? t("runtime.userReportedCheck") : statusLabel}</span>
       <ChevronRight className={`size-4 shrink-0 ${expanded ? "rotate-90" : ""}`} />
     </button>
     {expanded && <div className="space-y-3 border-t border-border px-3 py-3 text-sm">
       <p className="text-xs font-medium text-muted-foreground">{t("runtime.targetAndArguments")}</p>
       <pre className="max-h-64 overflow-auto whitespace-pre-wrap break-all rounded-md bg-background p-3 font-mono text-xs">{JSON.stringify({ target: call.target, arguments: call.arguments }, null, 2)}</pre>
-      {call.result !== undefined && <pre className="max-h-72 overflow-auto whitespace-pre-wrap break-all rounded-md border border-dashed border-border bg-background p-3 font-mono text-xs">{typeof call.result === "string" ? call.result : JSON.stringify(call.result, null, 2)}</pre>}
+      {localizedResult ? <p role="alert" className="rounded-md border border-warning/40 bg-warning/5 p-3 leading-6">{localizedResult}</p> : call.result !== undefined && <pre className="max-h-72 overflow-auto whitespace-pre-wrap break-all rounded-md border border-dashed border-border bg-background p-3 font-mono text-xs">{typeof call.result === "string" ? call.result : JSON.stringify(call.result, null, 2)}</pre>}
       {call.status === "outcome_unknown" && <p role="alert">{t("runtime.theOperationMayHaveTakenEffectStopping")}</p>}
       {call.status === "outcome_unknown" && call.fingerprint && reconcile && <ReconcileForm call={call} onSave={reconcile} />}
       {call.reconciled && <p className="text-xs text-muted-foreground">{t("runtime.checkNotPlatformVerified")}</p>}
@@ -112,12 +115,12 @@ function RunState({ view, stop, reconnect, resume }: { view: RunView; stop: () =
     label = labels[view.activity ?? "queued"]
   } else if (view.run.status !== "finished") {
     const labels = { cancelled: t("runtime.stopped"), failed: t("runtime.runFailed"), interrupted: t("runtime.interruptedReconcileBeforeResuming"), limited: t("runtime.runLimitReached") }
-    label = view.run.error_code === "context_limit" ? t("runtime.contextLimit") : labels[view.run.status as keyof typeof labels] ?? view.run.status
+    label = view.run.error_code === "context_limit" ? t("runtime.contextLimit") : view.run.error_code === "model_output_unstable" ? t("runtime.modelOutputUnstableRunStopped") : labels[view.run.status as keyof typeof labels] ?? view.run.status
   }
   if (!label && !view.error) return null
   return <div className="mt-3 flex min-h-8 flex-wrap items-center gap-2 text-xs text-muted-foreground">
     <span role="status">{label}{active ? ` · ${Math.max(0, Math.floor((now - view.activityAt) / 1000))}s` : ""}</span>
-    {view.run.error_code && <code>{view.run.error_code}</code>}
+    {view.run.error_code && !["context_limit", "model_output_unstable"].includes(view.run.error_code) && <code>{view.run.error_code}</code>}
     {active && <Button variant="ghost" size="sm" className="min-h-11 px-2.5" onClick={stop} disabled={view.run.cancel_requested}>{t("runtime.stop")}</Button>}
     {view.error === "cancel" && <span role="alert" className="text-destructive">{t("runtime.stopRequestWasNotConfirmedRetry")}</span>}
     {view.run.status === "interrupted" && !view.run.cancel_requested && <Button variant="outline" size="sm" className="min-h-11" onClick={resume} disabled={view.resuming || !view.terminalSeen || view.cursor < view.run.event_seq || view.blocks.some(block => block.kind === "tool" && ["outcome_unknown", "executing"].includes(block.status))}>{view.resuming ? t("runtime.resuming") : t("runtime.resumeRun")}</Button>}

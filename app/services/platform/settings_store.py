@@ -10,6 +10,7 @@ from app.models.models import PlatformSetting
 
 DEFAULT_PLATFORM_SETTINGS: dict[str, Any] = {
     "sql_allow_mutating": False,
+    "ai_action_confirmation_bypass": False,
     "context_window_tokens": 128_000,
     "context_compression_threshold_percent": 75,
 }

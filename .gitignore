@@ -79,6 +79,7 @@ logs/
 .cursor
 .codex
 .agents
+.worktrees/
 .opencode
 .continue
 .windsurf

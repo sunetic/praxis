@@ -203,6 +203,24 @@ describe("native chat interaction", () => {
     expect(screen.queryByText(/正在停止/)).not.toBeInTheDocument()
   })
 
+  it("explains when unstable model output causes a proactive safety stop", async () => {
+    vi.mocked(agentRunsApi.runs).mockResolvedValue([run])
+    const stream = channel()
+    vi.spyOn(agentRunsApi, "stream").mockResolvedValue(stream.response)
+    render(<RunConversationView conversationId="conv" />)
+    await act(async () => {
+      stream.push(event(1, "tool_result", { call_id: "invalid-3", name: "request_database_change", outcome: "failed", error_code: "model_output_unstable", content: "The model repeatedly produced invalid action details and appeared unstable." }))
+      stream.push(event(2, "run_failed", { status: "failed", error_code: "model_output_unstable" }))
+      stream.close()
+    })
+
+    expect(await screen.findByText("已主动停止")).toBeInTheDocument()
+    expect(screen.getByText(/模型连续生成的操作参数都未通过校验/)).toBeInTheDocument()
+    expect(screen.getByText(/系统已主动停止本次运行/)).toBeInTheDocument()
+    expect(screen.queryByText(/The model repeatedly produced invalid/)).not.toBeInTheDocument()
+    expect(screen.queryByText("model_output_unstable")).not.toBeInTheDocument()
+  })
+
   it("makes an inaccessible stream actionable without endlessly retrying or resubmitting", async () => {
     vi.mocked(agentRunsApi.runs).mockResolvedValue([run])
     const stream = channel()

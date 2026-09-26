@@ -21,6 +21,7 @@ describe("SettingsPage native model configuration", () => {
       ai_api_key_configured: true,
       ai_model: "gpt-test",
       sql_allow_mutating: true,
+      ai_action_confirmation_bypass: false,
       context_window_tokens: 128000,
       context_compression_threshold_percent: 75,
     })
@@ -104,20 +105,23 @@ describe("SettingsPage native model configuration", () => {
     })))
   })
 
-  it("offers write permission but no approval bypass", async () => {
+  it("offers and persists the global approval bypass", async () => {
     const user = userEvent.setup()
     render(<SettingsPage />)
 
     await user.click(screen.getByRole("tab", { name: "安全" }))
     const writes = await screen.findByRole("switch", { name: "允许写操作" })
+    const bypass = screen.getByRole("switch", { name: "跳过操作确认" })
     expect(writes).toBeChecked()
-    expect(screen.getAllByRole("switch")).toHaveLength(1)
-    expect(screen.queryByText("Bypass 模式（跳过确认）")).not.toBeInTheDocument()
+    expect(bypass).not.toBeChecked()
+    expect(screen.getAllByRole("switch")).toHaveLength(2)
 
-    await user.click(writes)
+    await user.click(bypass)
     await waitFor(() => expect(settingsApi.patch).toHaveBeenCalledWith({
-      sql_allow_mutating: false,
+      ai_action_confirmation_bypass: true,
     }))
+    expect(bypass).toBeChecked()
+    expect(screen.getByText("操作自动执行")).toBeInTheDocument()
   })
 
   it("restores write permission when saving fails", async () => {

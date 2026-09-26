@@ -95,11 +95,17 @@ async def run(args):
                 },
             )
             response.raise_for_status()
-            assert "ai_action_confirmation_bypass" not in response.json()
+            assert response.json()["ai_action_confirmation_bypass"] is False
             response = await client.patch(
                 "/api/v1/settings", json={"ai_action_confirmation_bypass": True}
             )
-            assert response.status_code == 422
+            response.raise_for_status()
+            assert response.json()["ai_action_confirmation_bypass"] is True
+            response = await client.patch(
+                "/api/v1/settings", json={"ai_action_confirmation_bypass": False}
+            )
+            response.raise_for_status()
+            assert response.json()["ai_action_confirmation_bypass"] is False
         with SessionLocal.begin() as db:
             for key, value in {
                 "ai_max_output_tokens": config.max_output_tokens,

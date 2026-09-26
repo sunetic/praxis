@@ -193,7 +193,7 @@ class ExecutionStoreMixin(StoreBase):
                 pending = None
             if status != "waiting_approval":
                 self._cancel_unused_approvals(db, run_id)
-                self._settle_unresolved(db, row)
+                self._settle_unresolved(db, row, error_code=error_code)
             db.execute(
                 update(tables.runs)
                 .where(tables.runs.c.id == run_id)

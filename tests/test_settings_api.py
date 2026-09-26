@@ -7,7 +7,6 @@ from test_api_e2e_p0 import api_client  # noqa: F401
 @pytest.mark.parametrize(
     "payload",
     [
-        {"ai_action_confirmation_bypass": True},
         {"build_engine": "reasoning"},
         {"external_cli_command": "cli"},
         {"external_cli_pre_flags": "--help"},
@@ -21,7 +20,6 @@ def test_retired_engine_settings_are_not_accepted(api_client, payload):  # noqa:
     response = client.get("/api/v1/settings").json()
     assert (
         not {
-            "ai_action_confirmation_bypass",
             "build_engine",
             "external_cli_command",
             "external_cli_pre_flags",
@@ -29,6 +27,18 @@ def test_retired_engine_settings_are_not_accepted(api_client, payload):  # noqa:
         }
         & response.keys()
     )
+
+
+def test_confirmation_bypass_defaults_off_and_can_be_enabled(api_client):  # noqa: F811
+    client, _ = api_client
+    current = client.get("/api/v1/settings")
+    assert current.status_code == 200
+    assert current.json()["ai_action_confirmation_bypass"] is False
+
+    updated = client.patch("/api/v1/settings", json={"ai_action_confirmation_bypass": True})
+    assert updated.status_code == 200
+    assert updated.json()["ai_action_confirmation_bypass"] is True
+    assert client.get("/api/v1/settings").json()["ai_action_confirmation_bypass"] is True
 
 
 def test_native_context_configuration_and_validation(api_client):  # noqa: F811

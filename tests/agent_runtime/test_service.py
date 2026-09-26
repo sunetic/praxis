@@ -98,6 +98,81 @@ async def test_nested_typed_arguments_remain_typed_after_durable_approval_resume
         await service.close()
 
 
+async def test_global_confirmation_bypass_applies_to_every_approval_tool(store):
+    calls = []
+
+    async def publish(target: str) -> str:
+        calls.append(target)
+        return "published"
+
+    script = Script([call("publish", '{"target":"page:1"}', "publish-1")], ["已发布。"])
+    service = AgentRunService(
+        store,
+        script.factory,
+        {
+            "publish": RegisteredTool(
+                tool=Tool(publish, sequential=True), authorize=approve_write, mutating=True
+            )
+        },
+        capabilities_for_run=lambda row: frozenset(row["definition"]["tool_names"]),
+        confirmation_bypass=lambda: True,
+        poll_seconds=0.01,
+    )
+    await service.start()
+    try:
+        run = submit(service)
+        final = await settled(store, run["id"], status="finished")
+        assert final["status"] == "finished"
+        assert calls == ["page:1"]
+        approval = final["approvals"][0]
+        assert approval["decision"] == "approved"
+        assert approval["decided_by"] == "platform_confirmation_bypass"
+        events = store.read_events(run["id"], "user")
+        assert any(
+            event["kind"] == "approval_decided" and event["payload"].get("automatic") is True
+            for event in events
+        )
+    finally:
+        await service.close()
+
+
+async def test_repeated_invalid_tool_arguments_stop_as_unstable_model_output(store):
+    async def lookup(count: int) -> str:
+        pytest.fail(f"Invalid tool arguments must never be dispatched: {count}")
+
+    script = Script(
+        [call("lookup", '{"count":"invalid"}', "invalid-1")],
+        [call("lookup", '{"count":"still-invalid"}', "invalid-2")],
+        [call("lookup", '{"count":"invalid-again"}', "invalid-3")],
+    )
+    service = AgentRunService(
+        store,
+        script.factory,
+        {"lookup": RegisteredTool(tool=Tool(lookup), authorize=allow_read)},
+        capabilities_for_run=lambda row: frozenset(row["definition"]["tool_names"]),
+        poll_seconds=0.01,
+    )
+    await service.start()
+    try:
+        row = submit(service)
+        final = await settled(store, row["id"], status="failed")
+
+        assert final["error_code"] == "model_output_unstable"
+        assert final["tool_calls"] == []
+        results = [
+            event["payload"]
+            for event in store.read_events(row["id"], "user")
+            if event["kind"] == "tool_result"
+        ]
+        assert results[-1]["name"] == "lookup"
+        assert results[-1]["outcome"] == "failed"
+        assert results[-1]["error_code"] == "model_output_unstable"
+        assert "appeared unstable" in results[-1]["content"]
+        assert "not dispatched" in results[-1]["content"]
+    finally:
+        await service.close()
+
+
 async def test_background_run_persists_stream_and_native_history(store):
     script = Script(["可以，", "直接回答。"])
     service = AgentRunService(

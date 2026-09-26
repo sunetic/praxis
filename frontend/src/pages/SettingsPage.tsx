@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react"
-import { BrainCircuit, Gauge, ShieldCheck } from "lucide-react"
+import { AlertTriangle, BrainCircuit, Gauge, ShieldCheck } from "lucide-react"
 import { useShellI18n } from "@/i18n/shellI18nContext"
 import { settingsApi } from "@/lib/api"
 import { WorkbenchPage } from "@/components/shared/WorkbenchPage"
@@ -209,15 +209,17 @@ function LlmTab() {
 function SafetyTab() {
   const { t } = useShellI18n()
   const [allowMutating, setAllowMutating] = useState(false)
-  const [savingKey, setSavingKey] = useState<"mutating" | null>(null)
-  const [savedKey, setSavedKey] = useState<"mutating" | null>(null)
-  const [errorKey, setErrorKey] = useState<"load" | "mutating" | null>(null)
+  const [confirmationBypass, setConfirmationBypass] = useState(false)
+  const [savingKey, setSavingKey] = useState<"mutating" | "bypass" | null>(null)
+  const [savedKey, setSavedKey] = useState<"mutating" | "bypass" | null>(null)
+  const [errorKey, setErrorKey] = useState<"load" | "mutating" | "bypass" | null>(null)
   const [loaded, setLoaded] = useState(false)
 
   useEffect(() => {
     settingsApi.get()
       .then((data) => {
         setAllowMutating(data.sql_allow_mutating === true)
+        setConfirmationBypass(data.ai_action_confirmation_bypass === true)
         setLoaded(true)
       })
       .catch(() => setErrorKey("load"))
@@ -235,6 +237,23 @@ function SafetyTab() {
     } catch {
       setAllowMutating(!checked)
       setErrorKey("mutating")
+    } finally {
+      setSavingKey(null)
+    }
+  }, [])
+
+  const handleBypassToggle = useCallback(async (checked: boolean) => {
+    setConfirmationBypass(checked)
+    setSavingKey("bypass")
+    setSavedKey(null)
+    setErrorKey(null)
+    try {
+      await settingsApi.patch({ ai_action_confirmation_bypass: checked })
+      setSavedKey("bypass")
+      setTimeout(() => setSavedKey(null), 2000)
+    } catch {
+      setConfirmationBypass(!checked)
+      setErrorKey("bypass")
     } finally {
       setSavingKey(null)
     }
@@ -291,7 +310,41 @@ function SafetyTab() {
         </div>
       </div>
 
-
+      <div className="space-y-3 border-t border-border pt-5">
+        <div className="flex items-start gap-3 rounded-lg border border-border bg-muted/30 p-4">
+          <Switch
+            id="ai-action-confirmation-bypass"
+            checked={confirmationBypass}
+            onCheckedChange={handleBypassToggle}
+            disabled={savingKey !== null}
+          />
+          <div className="space-y-1">
+            <div className="flex items-center gap-2">
+              <label htmlFor="ai-action-confirmation-bypass" className="cursor-pointer text-sm font-medium">
+                {t("settings.safety.bypassLabel")}
+              </label>
+              {confirmationBypass && <AlertTriangle className="size-4 text-negative" aria-hidden="true" />}
+            </div>
+            <p className="text-xs text-muted-foreground">
+              {t("settings.safety.bypassDesc")}
+            </p>
+          </div>
+        </div>
+        <div className="flex items-center gap-2 pt-1">
+          <span className={cn(
+            "rounded px-2 py-0.5 text-xs font-medium",
+            confirmationBypass
+              ? "bg-negative/15 text-negative"
+              : "bg-muted text-muted-foreground"
+          )}>
+            {confirmationBypass
+              ? t("settings.safety.bypassBadge")
+              : t("settings.safety.confirmRequiredBadge")}
+          </span>
+          {savedKey === "bypass" && <span className="text-sm text-positive">{t("settings.saved")}</span>}
+          {errorKey === "bypass" && <span className="text-sm text-negative" role="alert">{t("settings.safety.saveError")}</span>}
+        </div>
+      </div>
     </div>
   )
 }

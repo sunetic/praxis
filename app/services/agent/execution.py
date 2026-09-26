@@ -62,6 +62,7 @@ class DurableToolset(WrapperToolset[RunDependencies]):
     run_id: str
     owner_id: str
     registered: dict[str, RegisteredTool]
+    confirmation_bypass: Callable[[], bool] | None = None
 
     @staticmethod
     def _replay(result: dict[str, Any]) -> Any:
@@ -72,7 +73,7 @@ class DurableToolset(WrapperToolset[RunDependencies]):
         return result["content"]
 
     @staticmethod
-    def _auto_approval(
+    def _conversation_auto_approval(
         scope: dict[str, Any], name: str, target: dict[str, Any]
     ) -> dict[str, Any] | None:
         """Revalidate the exact conversation grant at dispatch time."""
@@ -109,11 +110,21 @@ class DurableToolset(WrapperToolset[RunDependencies]):
             raise RunConflictError("Mutating tool has no resolved resource lock key")
         if not ctx.tool_call_id:
             raise RunConflictError("Native call identity is required")
-        auto_approval = (
-            self._auto_approval(ctx.deps.scope, name, access.target)
-            if entry.mutating and access.allowed and access.requires_approval
-            else None
-        )
+        auto_approval = None
+        if access.allowed and access.requires_approval:
+            bypass = (
+                await run_db(self.confirmation_bypass)
+                if self.confirmation_bypass is not None
+                else False
+            )
+            auto_approval = (
+                {
+                    "decided_by": "platform_confirmation_bypass",
+                    "mode": "global_confirmation_bypass",
+                }
+                if bypass
+                else self._conversation_auto_approval(ctx.deps.scope, name, access.target)
+            )
         try:
             call = await run_db(
                 self.store.prepare_call,

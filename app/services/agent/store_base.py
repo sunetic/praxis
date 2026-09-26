@@ -223,7 +223,9 @@ class StoreBase:
         )
         self._event(db, row["id"], "run_cancelled", {"status": "cancelled"})
 
-    def _settle_unresolved(self, db: Session, row: dict[str, Any]) -> None:
+    def _settle_unresolved(
+        self, db: Session, row: dict[str, Any], *, error_code: str | None = None
+    ) -> None:
         """Close original calls with execution facts on cancellation/failure, never replay.
 
         This repairs the message protocol from recorded outcomes, not from a task
@@ -251,8 +253,17 @@ class StoreBase:
                 tables.tool_calls.c.run_id == row["id"], tables.tool_calls.c.call_id == call_id
             )
             record = db.execute(select(tables.tool_calls).where(key)).mappings().first()
-            outcome: Literal["success", "failed", "denied", "interrupted"] = "denied"
-            content: Any = "Run stopped before this action was dispatched."
+            unstable_model = error_code == "model_output_unstable" and record is None
+            outcome: Literal["success", "failed", "denied", "interrupted"] = (
+                "failed" if unstable_model else "denied"
+            )
+            content: Any = (
+                "The model repeatedly produced invalid action details and appeared unstable. "
+                "To avoid an unintended operation, the system stopped retrying; this action "
+                "was not dispatched."
+                if unstable_model
+                else "The run ended before this action was dispatched. This action was not executed."
+            )
             if record and record["status"] in {"executing", "outcome_unknown"}:
                 outcome, content = (
                     "interrupted",
@@ -272,11 +283,16 @@ class StoreBase:
                     tool_name=part.tool_name, tool_call_id=call_id, content=content, outcome=outcome
                 )
             )
-            self._event(
-                db,
-                row["id"],
-                "tool_result",
-                {"call_id": call_id, "outcome": outcome, "content": content},
-            )
+            payload = {
+                "call_id": call_id,
+                "name": part.tool_name,
+                "outcome": outcome,
+                "content": content,
+            }
+            if record is None:
+                payload["error_code"] = (
+                    "model_output_unstable" if unstable_model else "action_not_dispatched"
+                )
+            self._event(db, row["id"], "tool_result", payload)
         if results:
             self._save_messages(db, row, [*history, ModelRequest(parts=results)])
