@@ -294,6 +294,7 @@ export const SHELL_ZH_CN_COPY = {
 
   // ── Services page ──
   "service.provider.http": "通用 HTTP API",
+  "service.provider.mcp": "MCP 服务",
   "service.resource.cluster": "集群",
   "service.resource.datasource": "数据源",
   "service.resource.none": "未关联",
@@ -346,7 +347,12 @@ export const SHELL_ZH_CN_COPY = {
   "service.label.type": "服务类型",
   "service.label.baseUrl": "基础 URL",
   "service.example.baseUrl": "http://prometheus:9090",
+  "service.example.mcpUrl": "http://mcp-server:8000/mcp",
   "service.label.response": "响应格式",
+  "service.label.mcpTransport": "MCP 传输协议",
+  "service.mcp.streamableHttp": "Streamable HTTP",
+  "service.mcp.sse": "SSE（兼容模式）",
+  "service.mcp.bindingHint": "MCP 凭据和工具只对绑定的数据源或集群授权，必须选择一项。",
   "service.response.auto": "自动识别",
   "service.response.json": "JSON",
   "service.response.text": "文本",

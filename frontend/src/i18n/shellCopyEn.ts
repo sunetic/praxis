@@ -295,6 +295,7 @@ export const SHELL_EN_US_COPY: Record<ShellCopyKey, string> = {
 
   // ── Services page ──
   "service.provider.http": "Generic HTTP API",
+  "service.provider.mcp": "MCP server",
   "service.resource.cluster": "Cluster",
   "service.resource.datasource": "Datasource",
   "service.resource.none": "Not linked",
@@ -347,7 +348,12 @@ export const SHELL_EN_US_COPY: Record<ShellCopyKey, string> = {
   "service.label.type": "Service type",
   "service.label.baseUrl": "Base URL",
   "service.example.baseUrl": "http://prometheus:9090",
+  "service.example.mcpUrl": "http://mcp-server:8000/mcp",
   "service.label.response": "Response format",
+  "service.label.mcpTransport": "MCP transport",
+  "service.mcp.streamableHttp": "Streamable HTTP",
+  "service.mcp.sse": "SSE (compatibility)",
+  "service.mcp.bindingHint": "MCP credentials and tools are authorized only for the linked datasource or cluster. Select one.",
   "service.response.auto": "Auto detect",
   "service.response.json": "JSON",
   "service.response.text": "Text",

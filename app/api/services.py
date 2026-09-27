@@ -15,6 +15,10 @@ from app.services.integration.http_service import (
     config_for_storage,
     public_service_config,
 )
+from app.services.integration.mcp_service import (
+    MCPServiceError,
+    test_mcp_connection,
+)
 
 router = APIRouter(prefix="/services", tags=["Services"])
 logger = get_logger("api.services")
@@ -114,6 +118,20 @@ def update_service(
     update = payload.model_dump(exclude_unset=True, exclude={"secrets", "knowledge_base_ids"})
     if "config" in update and update["config"] is not None:
         update["config"] = config_for_storage(payload.config)
+    resulting_type = str(update.get("service_type") or db_service.service_type)
+    resulting_config = dict(update.get("config") or db_service.config or {})
+    if resulting_type == "mcp":
+        if resulting_config.get("mcp_transport") not in {"streamable_http", "sse"}:
+            raise HTTPException(
+                status_code=422,
+                detail="MCP services require streamable_http or sse transport",
+            )
+        resulting_ref = update.get("resource_ref", db_service.resource_ref)
+        if not resulting_ref:
+            raise HTTPException(
+                status_code=422,
+                detail="MCP services require a datasource or cluster binding",
+            )
     for field, value in update.items():
         setattr(db_service, field, value)
 
@@ -154,10 +172,28 @@ async def _test_connection(
     config: dict[str, Any],
     secrets: dict[str, Any] | None,
 ) -> schemas.ServiceTestResponse:
+    if service_type == "mcp":
+        try:
+            mcp_result = await test_mcp_connection(
+                service_id=service_id,
+                config=config,
+                secrets=secrets,
+            )
+            return schemas.ServiceTestResponse(
+                success=True,
+                message=f"MCP connection successful; discovered {len(mcp_result.tools)} tools",
+                tool_count=len(mcp_result.tools),
+                tools=list(mcp_result.tools),
+            )
+        except MCPServiceError as exc:
+            return schemas.ServiceTestResponse(
+                success=False,
+                message=str(exc),
+            )
     path = str(config.get("health_check_path") or "/")
     method = str(config.get("health_check_method") or "GET")
     try:
-        result = await call_http_service(
+        http_result = await call_http_service(
             service_id=service_id,
             service_type=service_type,
             raw_config=config,
@@ -168,7 +204,7 @@ async def _test_connection(
         return schemas.ServiceTestResponse(
             success=True,
             message="Connection successful",
-            http_status=int(result["http_status"]),
+            http_status=int(http_result["http_status"]),
         )
     except ServiceHTTPError as exc:
         return schemas.ServiceTestResponse(
@@ -178,7 +214,11 @@ async def _test_connection(
         )
 
 
-@router.post("/test-config", response_model=schemas.ServiceTestResponse)
+@router.post(
+    "/test-config",
+    response_model=schemas.ServiceTestResponse,
+    response_model_exclude_none=True,
+)
 async def test_service_config(payload: schemas.ServiceCreate):
     return await _test_connection(
         service_id=None,
@@ -188,7 +228,11 @@ async def test_service_config(payload: schemas.ServiceCreate):
     )
 
 
-@router.post("/{service_id}/test", response_model=schemas.ServiceTestResponse)
+@router.post(
+    "/{service_id}/test",
+    response_model=schemas.ServiceTestResponse,
+    response_model_exclude_none=True,
+)
 async def test_service_connection(service_id: int, db: Session = Depends(get_db)):
     service = _query_services(db).filter(models.Service.id == service_id).first()
     if not service:
@@ -201,7 +245,11 @@ async def test_service_connection(service_id: int, db: Session = Depends(get_db)
     )
 
 
-@router.post("/{service_id}/test-config", response_model=schemas.ServiceTestResponse)
+@router.post(
+    "/{service_id}/test-config",
+    response_model=schemas.ServiceTestResponse,
+    response_model_exclude_none=True,
+)
 async def test_service_update_config(
     service_id: int,
     payload: schemas.ServiceUpdate,

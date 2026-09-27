@@ -1,19 +1,26 @@
 import { useEffect, useRef, useState } from "react"
 import { useSearchParams } from "react-router-dom"
-import { Database, Loader2, MessageSquarePlus, ShieldCheck } from "lucide-react"
+import { Database, Loader2, MessageSquarePlus, Server, ShieldCheck } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { RunConversationView } from "@/components/chat/RunConversationView"
 import { WorkbenchPage } from "@/components/shared/WorkbenchPage"
 import { agentRunsApi, type RunConversation, type RunScene } from "@/lib/agentRuns"
-import { agentsApi, datasourcesApi, type Agent, type DataSource } from "@/lib/api"
+import { agentsApi, datasourcesApi, servicesApi, type Agent, type DataSource, type Service } from "@/lib/api"
 import { useShellI18n } from "@/i18n/shellI18nContext"
+
+type ChatInitialization = [
+  RunConversation[],
+  { sources: DataSource[]; error: boolean },
+  { services: Service[]; error: boolean },
+]
 
 export function ChatPage() {
   const { locale, t } = useShellI18n()
   const [params, setParams] = useSearchParams()
   const [conversations, setConversations] = useState<RunConversation[]>([])
   const [sources, setSources] = useState<DataSource[]>([])
+  const [mcpServices, setMcpServices] = useState<Service[]>([])
   const [selected, setSelected] = useState<string | null>(null)
   const [scene, setScene] = useState<RunScene>({})
   const [error, setError] = useState(false)
@@ -21,20 +28,23 @@ export function ChatPage() {
   const [savingScope, setSavingScope] = useState(false)
   const [scopeError, setScopeError] = useState(false)
   const [sourcesError, setSourcesError] = useState(false)
+  const [mcpServicesError, setMcpServicesError] = useState(false)
   const [scopeAgent, setScopeAgent] = useState<Agent | null>(null)
   const [agentError, setAgentError] = useState(false)
   const [now, setNow] = useState(() => Date.now() / 1000)
-  const initializing = useRef<Promise<[RunConversation[], { sources: DataSource[]; error: boolean }]> | null>(null)
+  const initializing = useRef<Promise<ChatInitialization> | null>(null)
   const createBusy = useRef(false)
   useEffect(() => {
     let alive = true
     initializing.current ??= Promise.all([
-      agentRunsApi.conversations().then(async records => records.length || params.get("conversationId") ? records : [await agentRunsApi.createConversation(t("runtime.newConversation"), { datasource_ids: [] })]),
+      agentRunsApi.conversations().then(async records => records.length || params.get("conversationId") ? records : [await agentRunsApi.createConversation(t("runtime.newConversation"), { datasource_ids: [], mcp_service_ids: [] })]),
       datasourcesApi.list().then(sources => ({ sources, error: false })).catch(() => ({ sources: [], error: true })),
+      servicesApi.list().then(services => ({ services, error: false })).catch(() => ({ services: [], error: true })),
     ])
-    void initializing.current.then(([records, datasources]) => {
+    void initializing.current.then(([records, datasources, serviceResult]) => {
       if (!alive) return
       setConversations(records); setSources(datasources.sources.filter(source => source.status === "active")); setSourcesError(datasources.error)
+      setMcpServices(serviceResult.services.filter(service => service.status === "active" && service.service_type === "mcp")); setMcpServicesError(serviceResult.error)
       const requested = params.get("conversationId")
       const current = requested ? records.find(record => record.id === requested) : records[0]
       if (!current) throw new Error("Requested conversation is unavailable")
@@ -61,8 +71,18 @@ export function ChatPage() {
   const scopeLoading = Boolean(scene.agent_id && scopeAgent?.id !== scene.agent_id)
   const scopedSources = scene.agent_id ? sources.filter(source => scopeAgent?.id === scene.agent_id && scopeAgent?.datasource_ids.includes(source.id)) : sources
   const effectiveDatasourceIds = scene.datasource_ids ?? (scene.agent_id && scopeAgent?.id === scene.agent_id ? scopeAgent.datasource_ids : [])
+  const selectedSourceRefs = new Set(
+    sources.flatMap(source => effectiveDatasourceIds.includes(source.id)
+      ? [`datasource:${source.id}`, ...(source.cluster_key ? [`cluster:${source.cluster_key}`] : [])]
+      : []),
+  )
+  const scopedMcpServices = mcpServices.filter(service => service.resource_ref && selectedSourceRefs.has(service.resource_ref))
+  const scopedMcpIds = new Set(scopedMcpServices.map(service => service.id))
+  const effectiveMcpIds = scene.mcp_service_ids ?? []
   const invalidScope = Boolean(scene.agent_id && scopeAgent?.id === scene.agent_id && effectiveDatasourceIds.some(id => !scopeAgent.datasource_ids.includes(id)))
+  const invalidMcpScope = effectiveMcpIds.some(id => !scopedMcpIds.has(id))
   const multipleSources = effectiveDatasourceIds.length > 1
+  const multipleMcpServices = effectiveMcpIds.length > 1
   const autoApprovalActive = Boolean(
     scene.auto_approval
     && scene.auto_approval.expires_at > now
@@ -77,7 +97,18 @@ export function ChatPage() {
   const changeScope = async (value: string) => {
     if (!selected || savingScope) return
     setSavingScope(true); setScopeError(false)
-    const next = { ...scene, datasource_ids: value === "none" ? [] : [Number(value)], auto_approval: null }
+    const next = { ...scene, datasource_ids: value === "none" ? [] : [Number(value)], mcp_service_ids: [], auto_approval: null }
+    try {
+      const saved = await agentRunsApi.updateConversation(selected, next)
+      setConversations(current => current.map(item => item.id === saved.id ? saved : item))
+      setScene(saved.scene)
+    } catch { setScopeError(true) }
+    finally { setSavingScope(false) }
+  }
+  const changeMcpScope = async (value: string) => {
+    if (!selected || savingScope) return
+    setSavingScope(true); setScopeError(false)
+    const next = { ...scene, mcp_service_ids: value === "none" ? [] : [Number(value)] }
     try {
       const saved = await agentRunsApi.updateConversation(selected, next)
       setConversations(current => current.map(item => item.id === saved.id ? saved : item))
@@ -173,6 +204,22 @@ export function ChatPage() {
                 {scopedSources.map(source => <option key={source.id} value={source.id}>{source.name}</option>)}
               </select>
             </label>
+            <label className="flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
+              <Server className="size-3.5 shrink-0" />
+              <span className="sr-only">{t("runtime.mcpScope")}</span>
+              <select
+                aria-label={t("runtime.mcpScope")}
+                className="h-8 max-w-[19rem] rounded-lg border border-border bg-background px-3 text-xs text-foreground outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20"
+                disabled={savingScope || !selected || scopeLoading || invalidScope || mcpServicesError || scopedMcpServices.length === 0}
+                value={invalidMcpScope ? "unavailable" : multipleMcpServices ? "selection" : effectiveMcpIds.length === 1 ? String(effectiveMcpIds[0]) : "none"}
+                onChange={event => void changeMcpScope(event.target.value)}
+              >
+                <option value="none">{scopedMcpServices.length ? t("runtime.noMcp") : t("runtime.mcpUnavailable")}</option>
+                {invalidMcpScope && <option value="unavailable" disabled>{t("agents.unavailableSelection")}</option>}
+                {multipleMcpServices && <option value="selection" disabled>{effectiveMcpIds.map(id => mcpServices.find(service => service.id === id)?.name ?? `#${id}`).join(", ")}</option>}
+                {scopedMcpServices.map(service => <option key={service.id} value={service.id}>{service.name}</option>)}
+              </select>
+            </label>
             {scopeAgent && <><div className="h-4 w-px bg-border" /><p className="min-w-0 flex-1 truncate text-xs text-muted-foreground">{scopeAgent.name}</p></>}
             <Button
               type="button"
@@ -193,11 +240,13 @@ export function ChatPage() {
           {savingScope && <p role="status" className="text-xs text-muted-foreground">{t("runtime.savingScopeBeforeSendingExistingRunsKeep")}</p>}
           {scopeError && <p role="alert" className="text-sm text-destructive">{t("runtime.scopeWasNotSavedThePreviousScope")}</p>}
           {invalidScope && <p role="alert" className="text-sm text-destructive">{t("agents.scopeRevoked")}</p>}
+          {invalidMcpScope && <p role="alert" className="text-sm text-destructive">{t("runtime.mcpUnavailable")}</p>}
+          {mcpServicesError && <p role="alert" className="text-sm text-destructive">{t("runtime.mcpListUnavailable")}</p>}
           {(sourcesError || agentError) && <p role="alert" className="text-sm text-destructive">{t("runtime.datasourceListIsUnavailableYouCanStill")}</p>}
           {error && <div role="alert" className="flex items-center gap-3 text-sm text-destructive"><p>{t("runtime.couldNotLoadOrCreateTheConversation")}</p><Button variant="outline" size="sm" onClick={() => window.location.reload()}>{t("runtime.reload")}</Button></div>}
         </CardContent>
       </Card>
-      <RunConversationView conversationId={selected} scene={scene} disabled={savingScope || invalidScope} />
+      <RunConversationView conversationId={selected} scene={scene} disabled={savingScope || invalidScope || invalidMcpScope} />
     </div>
   </div>
   return <WorkbenchPage className="min-w-0" primary={primary} />

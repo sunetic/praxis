@@ -55,6 +55,7 @@ const PAGE_SIZE = 10
 
 const PROVIDERS = [
   { value: "http_api", labelKey: "service.provider.http" as const, healthPath: "/health" },
+  { value: "mcp", labelKey: "service.provider.mcp" as const, healthPath: "/" },
   { value: "prometheus", label: "Prometheus", healthPath: "/-/ready" },
   { value: "alertmanager", label: "Alertmanager", healthPath: "/-/ready" },
   { value: "grafana", label: "Grafana", healthPath: "/api/health" },
@@ -82,6 +83,7 @@ type ServiceFormState = {
 
 const emptyConfig: ServiceHTTPConfig = {
   base_url: "",
+  mcp_transport: null,
   auth_type: "none",
   api_key_header: "X-API-Key",
   default_headers: {},
@@ -350,7 +352,7 @@ export function ServicesPage() {
         ? await servicesApi.testUpdateConfig(editingService.id, buildPayload())
         : await servicesApi.testConfig(buildPayload())
       if (result.success) {
-        toast.success(`${t("service.connectSuccess")}${result.http_status ? ` · HTTP ${result.http_status}` : ""}`)
+        toast.success(result.message || t("service.connectSuccess"))
       } else {
         toast.error(result.message || t("service.connectFailed"))
       }
@@ -538,6 +540,7 @@ export function ServicesPage() {
   )
 
   const authType = form.config.auth_type
+  const isMcp = form.service_type === "mcp"
   return (
     <TooltipProvider>
       <WorkbenchPage toolbar={toolbar} primary={primary} />
@@ -559,7 +562,15 @@ export function ServicesPage() {
                 <label className="mb-1.5 block text-sm font-medium">{t("service.label.type")}</label>
                 <Select value={form.service_type} onValueChange={(value) => {
                   const preset = PROVIDERS.find((item) => item.value === value)
-                  setForm((current) => ({ ...current, service_type: value, config: { ...current.config, health_check_path: preset?.healthPath || current.config.health_check_path } }))
+                  setForm((current) => ({
+                    ...current,
+                    service_type: value,
+                    config: {
+                      ...current.config,
+                      health_check_path: preset?.healthPath || current.config.health_check_path,
+                      mcp_transport: value === "mcp" ? current.config.mcp_transport || "streamable_http" : null,
+                    },
+                  }))
                 }}>
                   <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
                   <SelectContent>
@@ -574,21 +585,24 @@ export function ServicesPage() {
               <div className="grid gap-4 sm:grid-cols-[1fr_160px]">
                 <div>
                   <label className="mb-1.5 block text-sm font-medium">{t("service.label.baseUrl")}</label>
-                  <Input value={form.config.base_url} onChange={(event) => updateConfig("base_url", event.target.value)} placeholder={t("service.example.baseUrl")} />
+                  <Input value={form.config.base_url} onChange={(event) => updateConfig("base_url", event.target.value)} placeholder={isMcp ? t("service.example.mcpUrl") : t("service.example.baseUrl")} />
                 </div>
                 <div>
-                  <label className="mb-1.5 block text-sm font-medium">{t("service.label.response")}</label>
-                  <Select value={form.config.response_format} onValueChange={(value) => updateConfig("response_format", value as ServiceHTTPConfig["response_format"])}>
+                  <label className="mb-1.5 block text-sm font-medium">{isMcp ? t("service.label.mcpTransport") : t("service.label.response")}</label>
+                  {isMcp ? <Select value={form.config.mcp_transport || "streamable_http"} onValueChange={(value) => updateConfig("mcp_transport", value as "streamable_http" | "sse")}>
+                    <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
+                    <SelectContent><SelectItem value="streamable_http">{t("service.mcp.streamableHttp")}</SelectItem><SelectItem value="sse">{t("service.mcp.sse")}</SelectItem></SelectContent>
+                  </Select> : <Select value={form.config.response_format} onValueChange={(value) => updateConfig("response_format", value as ServiceHTTPConfig["response_format"])}>
                     <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
                     <SelectContent><SelectItem value="auto">{t("service.response.auto")}</SelectItem><SelectItem value="json">{t("service.response.json")}</SelectItem><SelectItem value="text">{t("service.response.text")}</SelectItem></SelectContent>
-                  </Select>
+                  </Select>}
                 </div>
               </div>
               <div className="mt-4 grid gap-4 sm:grid-cols-[1fr_160px]">
-                <div>
+                {!isMcp && <div>
                   <label className="mb-1.5 block text-sm font-medium">{t("service.label.healthPath")}</label>
                   <Input value={form.config.health_check_path} onChange={(event) => updateConfig("health_check_path", event.target.value)} placeholder={t("service.example.healthPath")} />
-                </div>
+                </div>}
                 <div>
                   <label className="mb-1.5 block text-sm font-medium">{t("service.label.timeout")}</label>
                   <Input type="number" min={1} max={120} value={form.config.timeout_seconds} onChange={(event) => updateConfig("timeout_seconds", Number(event.target.value) || 30)} />
@@ -621,6 +635,7 @@ export function ServicesPage() {
             <section className="grid gap-4 sm:grid-cols-2">
               <div>
                 <label className="mb-1.5 block text-sm font-medium">{t("service.resource.label")}</label>
+                {isMcp && <p className="mb-2 text-xs text-muted-foreground">{t("service.mcp.bindingHint")}</p>}
                 <div className="grid grid-cols-[120px_1fr] gap-2">
                   <Select value={form.resourceType} onValueChange={(value) => setForm({ ...form, resourceType: value as ResourceRefType, resourceValue: "" })}>
                     <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
@@ -675,7 +690,7 @@ export function ServicesPage() {
             <Button variant="outline" onClick={() => void handleTestInDialog()} disabled={testing || !form.config.base_url}>
               {testing ? <Loader2 className="size-4 animate-spin" /> : <Zap className="size-4" />}{t("service.action.test")}
             </Button>
-            <div className="flex gap-2"><Button variant="outline" onClick={() => setDialogOpen(false)}>{t("service.cancel")}</Button><Button onClick={() => void handleSave()} disabled={saving || !form.name.trim() || !form.config.base_url.trim()}>{saving && <Loader2 className="size-4 animate-spin" />}{editingService ? t("service.save") : t("service.submitCreate")}</Button></div>
+            <div className="flex gap-2"><Button variant="outline" onClick={() => setDialogOpen(false)}>{t("service.cancel")}</Button><Button onClick={() => void handleSave()} disabled={saving || !form.name.trim() || !form.config.base_url.trim() || (isMcp && !form.resourceValue)}>{saving && <Loader2 className="size-4 animate-spin" />}{editingService ? t("service.save") : t("service.submitCreate")}</Button></div>
           </DialogFooter>
         </DialogContent>
       </Dialog>

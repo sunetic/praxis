@@ -16,6 +16,7 @@ from pydantic_ai import (
 )
 from pydantic_ai.exceptions import RunCancelled, UnexpectedModelBehavior, UsageLimitExceeded
 from pydantic_ai.models import Model
+from pydantic_ai.toolsets import AbstractToolset
 
 from app.services.agent.context import ContextLimitExceeded, ContextManager
 from app.services.agent.context_budget import ContextPolicy
@@ -47,6 +48,11 @@ class AgentRunService:
         capabilities_for_run: Callable[[dict[str, Any]], frozenset[str]],
         confirmation_bypass: Callable[[], bool] | None = None,
         model_snapshot_factory: Callable[[], dict[str, Any]] | None = None,
+        toolsets_for_run: Callable[
+            [dict[str, Any], RunDependencies, str],
+            list[AbstractToolset[RunDependencies]],
+        ]
+        | None = None,
         poll_seconds: float = 0.1,
     ):
         self.store, self.model_factory, self.tools = store, model_factory, dict(tools)
@@ -56,6 +62,7 @@ class AgentRunService:
         self.capabilities_for_run = capabilities_for_run
         self.confirmation_bypass = confirmation_bypass
         self.model_snapshot_factory = model_snapshot_factory
+        self.toolsets_for_run = toolsets_for_run
         self._wake = asyncio.Event()
         self._dispatcher: asyncio.Task[None] | None = None
         self._tasks: dict[str, asyncio.Task[None]] = {}
@@ -199,6 +206,9 @@ class AgentRunService:
                 actor_id=row["actor_id"],
                 scope=definition.scope,
             )
+            additional_toolsets = (
+                self.toolsets_for_run(row, deps, owner_id) if self.toolsets_for_run else []
+            )
             authorized_tool_names = await run_db(self.capabilities_for_run, row)
             observer = RunEvents(
                 self.store,
@@ -257,6 +267,7 @@ class AgentRunService:
                         registered=self.tools,
                         confirmation_bypass=self.confirmation_bypass,
                     ),
+                    additional_toolsets=additional_toolsets,
                 )
             history = result.all_messages()
             if isinstance(result.output, DeferredToolRequests):
