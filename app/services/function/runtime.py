@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import re
 import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
@@ -24,6 +23,11 @@ from app.services.datasource.router import (
     DataSourceRoutingError,
     normalize_role,
     resolve_datasource_by_role,
+)
+from app.services.datasource.sql_safety import (
+    ReadSqlValidationError,
+    datasource_dialect,
+    validate_read_sql,
 )
 from app.services.function.process_execution import FunctionProcessError, FunctionProcesses
 from app.services.function.runtime_contract import get_function_runtime_contract
@@ -376,9 +380,20 @@ class _RuntimeDatasourceConnection:
 
 
 class _RuntimeDatabaseCapability:
-    def __init__(self, broker: _RuntimeDatasourceBroker, *, execution_mode: str = "apply"):
+    def __init__(
+        self,
+        broker: _RuntimeDatasourceBroker,
+        *,
+        execution_mode: str = "apply",
+        write_mode: str = "readonly",
+    ):
         self._broker = broker
-        self._execution_mode = execution_mode
+        self._execution_mode = str(execution_mode or "plan").strip().lower()
+        self._write_mode = str(write_mode or "readonly").strip().lower()
+        if self._execution_mode not in {"plan", "apply"}:
+            raise RuntimeDatasourceAccessError("execution_mode must be plan or apply")
+        if self._write_mode not in {"readonly", "write"}:
+            raise RuntimeDatasourceAccessError("write_mode must be readonly or write")
         self._opened_sessions: list[Session] = []
 
     def query(
@@ -395,7 +410,6 @@ class _RuntimeDatabaseCapability:
             path="db.query",
             error_cls=RuntimeDatasourceAccessError,
         )
-        self._ensure_query_allowed(sql)
         query_sql = str(sql or "")
         query_params = params
         if query_params is not None and "?" in query_sql:
@@ -403,14 +417,23 @@ class _RuntimeDatabaseCapability:
             # Normalize qmark placeholders to avoid runtime string-formatting errors.
             query_sql = query_sql.replace("?", "%s")
         resolved = self._broker.resolve(datasource=datasource, role=role)
-        result = _run_coroutine_sync(
-            get_db_pool().execute_query(
+        pool = get_db_pool()
+        if self._can_write():
+            operation = pool.execute_query(
                 resolved.datasource,
                 query_sql,
                 role=resolved.resolved_role,
                 params=query_params,
             )
-        )
+        else:
+            self._ensure_read_sql(sql, resolved.datasource)
+            operation = pool.execute_read_query(
+                resolved.datasource,
+                query_sql,
+                params=query_params,
+                limit=1000,
+            )
+        result = _run_coroutine_sync(operation)
         return {
             **result,
             "resolved_datasource_id": resolved.datasource.id,
@@ -432,6 +455,7 @@ class _RuntimeDatabaseCapability:
             error_cls=RuntimeDatasourceAccessError,
         )
         resolved = self._broker.resolve(datasource=datasource, role=role)
+        self._ensure_read_sql(sql, resolved.datasource)
         result = _run_coroutine_sync(
             get_db_pool().execute_explain(
                 resolved.datasource,
@@ -465,6 +489,7 @@ class _RuntimeDatabaseCapability:
             path="db.get_session_by_id",
             error_cls=RuntimeDatasourceAccessError,
         )
+        self._ensure_write_allowed("db.get_session_by_id")
         datasource = self._broker.get_by_id(int(datasource_id))
         sqlalchemy_url = _build_sqlalchemy_url_for_datasource(datasource)
         factory = _get_runtime_session_factory(sqlalchemy_url)
@@ -485,21 +510,29 @@ class _RuntimeDatabaseCapability:
             path="db.query_by_id",
             error_cls=RuntimeDatasourceAccessError,
         )
-        self._ensure_query_allowed(sql)
         query_sql = str(sql or "")
         query_params = params
         if query_params is not None and "?" in query_sql:
             query_sql = query_sql.replace("?", "%s")
         datasource = self._broker.get_by_id(int(datasource_id))
         resolved_role = _role_for_datasource(datasource)
-        result = _run_coroutine_sync(
-            get_db_pool().execute_query(
+        pool = get_db_pool()
+        if self._can_write():
+            operation = pool.execute_query(
                 datasource,
                 query_sql,
                 role=resolved_role,
                 params=query_params,
             )
-        )
+        else:
+            self._ensure_read_sql(sql, datasource)
+            operation = pool.execute_read_query(
+                datasource,
+                query_sql,
+                params=query_params,
+                limit=1000,
+            )
+        result = _run_coroutine_sync(operation)
         return {
             **result,
             "resolved_datasource_id": datasource.id,
@@ -520,6 +553,7 @@ class _RuntimeDatabaseCapability:
             error_cls=RuntimeDatasourceAccessError,
         )
         datasource = self._broker.get_by_id(int(datasource_id))
+        self._ensure_read_sql(sql, datasource)
         resolved_role = _role_for_datasource(datasource)
         result = _run_coroutine_sync(
             get_db_pool().execute_explain(
@@ -543,16 +577,20 @@ class _RuntimeDatabaseCapability:
             except Exception:
                 continue
 
-    def _ensure_query_allowed(self, sql: str) -> None:
-        if self._execution_mode != "plan":
-            return
-        normalized = re.sub(r"\s+", " ", str(sql or "")).strip().lower()
-        if not normalized:
-            raise RuntimeDatasourceAccessError("SQL must not be empty")
-        if normalized.startswith(("select", "with", "explain", "show", "describe", "desc")):
+    def _can_write(self) -> bool:
+        return self._write_mode == "write" and self._execution_mode == "apply"
+
+    def _ensure_read_sql(self, sql: str, datasource: models.DataSource) -> None:
+        try:
+            validate_read_sql(str(sql or ""), datasource_dialect(datasource.db_type))
+        except ReadSqlValidationError as exc:
+            raise RuntimeDatasourceAccessError(str(exc)) from exc
+
+    def _ensure_write_allowed(self, capability: str) -> None:
+        if self._can_write():
             return
         raise RuntimeDatasourceAccessError(
-            "Write SQL is forbidden in plan mode; confirm and use apply mode to execute"
+            f"{capability} requires write_mode=write and execution_mode=apply"
         )
 
 
@@ -839,7 +877,12 @@ def _build_db_capability(
         else None,
     )
     execution_mode = str(context.get("execution_mode") or "apply")
-    return _RuntimeDatabaseCapability(broker, execution_mode=execution_mode)
+    write_mode = str(context.get("write_mode") or "readonly")
+    return _RuntimeDatabaseCapability(
+        broker,
+        execution_mode=execution_mode,
+        write_mode=write_mode,
+    )
 
 
 def _build_platform_capability(
@@ -1130,7 +1173,7 @@ class FunctionRuntimeService:
         scope_metadata: dict[str, Any] | None = None,
     ) -> tuple[dict[str, Any], dict[str, Any]]:
         normalized_scope = scope_metadata or {}
-        bound_context = {
+        bound_context: dict[str, Any] = {
             "datasource_id": datasource_id,
             "scope": normalized_scope,
         }
@@ -1139,6 +1182,14 @@ class FunctionRuntimeService:
         )
         if isinstance(execution_mode, str) and execution_mode.strip():
             bound_context["execution_mode"] = execution_mode.strip().lower()
+        write_mode = (
+            normalized_scope.get("write_mode") if isinstance(normalized_scope, dict) else None
+        )
+        bound_context["write_mode"] = (
+            write_mode.strip().lower()
+            if isinstance(write_mode, str) and write_mode.strip()
+            else "readonly"
+        )
         return payload, bound_context
 
     async def invoke(

@@ -43,12 +43,10 @@ LIMIT 10;
 ```
 
 ### Step 3: Execution Plan
+Call `explain_database_query` with the underlying `SELECT` statement and
+`analyze=false`; do not include the `EXPLAIN` prefix in the tool argument.
 ```sql
-EXPLAIN FORMAT=TREE <query>;
-```
-Or for older versions:
-```sql
-EXPLAIN <query>;
+<query>
 ```
 Look for:
 - `type: ALL` (full table scan)
@@ -73,6 +71,6 @@ WHERE table_schema = DATABASE() AND table_name = '<table_name>';
 - High exam-to-sent ratio with proper indexes → check if query can be rewritten with better selectivity
 
 ## Rules
-- MySQL `EXPLAIN FORMAT=TREE` (8.0.18+) gives actual cost estimates — prefer it over traditional `EXPLAIN`.
+- Start with the tool's estimated plan. Use `analyze=true` only for a bounded read-only query on a compatible MySQL version.
 - Online DDL: MySQL 8.0 supports `ALGORITHM=INPLACE` for most index additions, but verify before recommending for production.
 - Always check if the slow query is from a known ORM pattern (N+1, missing eager load) before suggesting index fixes.

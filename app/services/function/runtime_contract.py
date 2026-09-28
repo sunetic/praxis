@@ -22,6 +22,7 @@ _FUNCTION_RUNTIME_CONTRACT: dict[str, Any] = {
             "scope": "dict",
             "trace_id": "str",
             "execution_mode": "plan|apply",
+            "write_mode": "readonly|write",
         },
         "access_style": "dict_get_only",
         "forbidden_patterns": [

@@ -8,7 +8,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from evals.dba_core.runtime import docker
+from evals.dba_core.runtime import container_cli, docker
 
 SUITE_DIR = Path(__file__).resolve().parent
 PG_USER = "praxis_dba"
@@ -27,7 +27,6 @@ class PostgreSQLFixture:
         """Start PostgreSQL and wait until it accepts connections."""
         docker(
             "run",
-            "--rm",
             "-d",
             "--name",
             container,
@@ -49,7 +48,18 @@ class PostgreSQLFixture:
         deadline = time.monotonic() + 90
         while time.monotonic() < deadline:
             result = subprocess.run(
-                ["docker", "exec", container, "pg_isready", "-U", PG_USER, "-d", PG_DATABASE],
+                [
+                    container_cli(),
+                    "exec",
+                    container,
+                    "pg_isready",
+                    "-h",
+                    "127.0.0.1",
+                    "-U",
+                    PG_USER,
+                    "-d",
+                    PG_DATABASE,
+                ],
                 capture_output=True,
                 text=True,
                 check=False,

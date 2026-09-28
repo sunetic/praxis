@@ -7,7 +7,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from evals.dba_core.runtime import docker
+from evals.dba_core.runtime import container_cli, docker
 
 SUITE_DIR = Path(__file__).resolve().parent
 MYSQL_USER = "root"
@@ -26,7 +26,6 @@ class MySQLFixture:
         """Start MySQL and wait until it accepts connections."""
         docker(
             "run",
-            "--rm",
             "-d",
             "--name",
             container,
@@ -47,7 +46,7 @@ class MySQLFixture:
         while time.monotonic() < deadline:
             result = subprocess.run(
                 [
-                    "docker",
+                    container_cli(),
                     "exec",
                     container,
                     "mysql",

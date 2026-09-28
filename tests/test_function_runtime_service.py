@@ -66,6 +66,7 @@ def _create_datasource(
     db: Session,
     *,
     name: str,
+    db_type: str = "oceanbase",
     tenant_role: str = "user",
     cluster_key: str = "cluster-a",
 ) -> models.DataSource:
@@ -73,7 +74,7 @@ def _create_datasource(
         name=name,
         host="127.0.0.1",
         port=2881,
-        db_type="oceanbase",
+        db_type=db_type,
         cluster_key=cluster_key,
         tenant_role=tenant_role,
         user=f"{name}_user",
@@ -159,6 +160,7 @@ async def test_function_runtime_success_with_context_binding(session_factory):
     assert row.runtime_context == {
         "datasource_id": 42,
         "scope": {"scope_object_id": "page-1"},
+        "write_mode": "readonly",
     }
     verify_db.close()
 
@@ -491,6 +493,10 @@ def test_runtime_db_capability_allows_datasource_resolution_by_id(session_factor
         async def execute_query(self, datasource, sql, role="user", params=None):
             return {"columns": ["v"], "rows": [{"v": 1}], "row_count": 1}
 
+        async def execute_read_query(self, datasource, sql, params=None, limit=200):
+            _ = datasource, sql, params, limit
+            return {"columns": ["v"], "rows": [{"v": 1}], "returned_rows": 1}
+
         async def execute_explain(self, datasource, sql, role="user"):
             return {"columns": [], "rows": [], "row_count": 0}
 
@@ -523,6 +529,10 @@ def test_runtime_db_capability_allows_access_without_policy(session_factory, mon
         async def execute_query(self, datasource, sql, role="user", params=None):
             return {"columns": ["v"], "rows": [{"v": 1}], "row_count": 1}
 
+        async def execute_read_query(self, datasource, sql, params=None, limit=200):
+            _ = datasource, sql, params, limit
+            return {"columns": ["v"], "rows": [{"v": 1}], "returned_rows": 1}
+
         async def execute_explain(self, datasource, sql, role="user"):
             return {"columns": [], "rows": [], "row_count": 0}
 
@@ -551,6 +561,10 @@ def test_runtime_db_capability_blocks_write_sql_in_plan_mode(session_factory, mo
         async def execute_query(self, datasource, sql, role="user", params=None):
             return {"columns": ["v"], "rows": [{"v": 1}], "row_count": 1}
 
+        async def execute_read_query(self, datasource, sql, params=None, limit=200):
+            _ = datasource, sql, params, limit
+            return {"columns": ["v"], "rows": [{"v": 1}], "returned_rows": 1}
+
         async def execute_explain(self, datasource, sql, role="user"):
             return {"columns": [], "rows": [], "row_count": 0}
 
@@ -570,6 +584,80 @@ def test_runtime_db_capability_blocks_write_sql_in_plan_mode(session_factory, mo
         capability.query("update t set c = 1")
 
 
+def test_runtime_db_capability_enforces_readonly_and_explain_boundaries(
+    session_factory, monkeypatch
+):
+    db = session_factory()
+    ds = _create_datasource(db, name="monitor-readonly", db_type="postgresql")
+    ds_id = ds.id
+    db.close()
+    calls: list[tuple[str, str]] = []
+
+    class FakePool:
+        async def execute_query(self, datasource, sql, role="user", params=None):
+            _ = datasource, role, params
+            calls.append(("write", sql))
+            return {"columns": [], "rows": [], "row_count": 0}
+
+        async def execute_read_query(self, datasource, sql, params=None, limit=200):
+            _ = datasource, params, limit
+            calls.append(("read", sql))
+            return {"columns": ["v"], "rows": [{"v": 1}], "returned_rows": 1}
+
+        async def execute_explain(self, datasource, sql, role="user"):
+            _ = datasource, role
+            calls.append(("explain", sql))
+            return {"columns": [], "rows": [], "returned_rows": 0}
+
+    monkeypatch.setattr("app.services.function.runtime.get_db_pool", lambda: FakePool())
+    probe_db = session_factory()
+    broker = _RuntimeDatasourceBroker(
+        control_db_url=str(probe_db.get_bind().url),
+        default_datasource_id=ds_id,
+    )
+    probe_db.close()
+    capability = _RuntimeDatabaseCapability(broker)
+
+    assert capability.query("SELECT 1")["rows"] == [{"v": 1}]
+    with pytest.raises(RuntimeDatasourceAccessError):
+        capability.query("DELETE FROM important_table")
+    with pytest.raises(RuntimeDatasourceAccessError):
+        capability.explain("ANALYZE DELETE FROM important_table")
+    with pytest.raises(RuntimeDatasourceAccessError, match="write_mode=write"):
+        capability.get_session_by_id(ds_id)
+    assert calls == [("read", "SELECT 1")]
+
+
+def test_runtime_db_capability_requires_explicit_write_apply_mode(session_factory, monkeypatch):
+    db = session_factory()
+    ds = _create_datasource(db, name="monitor-write")
+    ds_id = ds.id
+    db.close()
+    calls: list[str] = []
+
+    class FakePool:
+        async def execute_query(self, datasource, sql, role="user", params=None):
+            _ = datasource, role, params
+            calls.append(sql)
+            return {"columns": [], "rows": [], "row_count": 1}
+
+    monkeypatch.setattr("app.services.function.runtime.get_db_pool", lambda: FakePool())
+    probe_db = session_factory()
+    broker = _RuntimeDatasourceBroker(
+        control_db_url=str(probe_db.get_bind().url),
+        default_datasource_id=ds_id,
+    )
+    probe_db.close()
+
+    plan = _RuntimeDatabaseCapability(broker, execution_mode="plan", write_mode="write")
+    with pytest.raises(RuntimeDatasourceAccessError):
+        plan.query("UPDATE t SET c = 1")
+
+    apply = _RuntimeDatabaseCapability(broker, execution_mode="apply", write_mode="write")
+    apply.query("UPDATE t SET c = 1")
+    assert calls == ["UPDATE t SET c = 1"]
+
+
 def test_runtime_db_capability_converts_qmark_placeholder(session_factory, monkeypatch):
     db = session_factory()
     ds = _create_datasource(db, name="monitor-qmark")
@@ -583,6 +671,12 @@ def test_runtime_db_capability_converts_qmark_placeholder(session_factory, monke
             captured["sql"] = sql
             captured["params"] = params
             return {"columns": ["v"], "rows": [{"v": 1}], "row_count": 1}
+
+        async def execute_read_query(self, datasource, sql, params=None, limit=200):
+            _ = datasource, limit
+            captured["sql"] = sql
+            captured["params"] = params
+            return {"columns": ["v"], "rows": [{"v": 1}], "returned_rows": 1}
 
         async def execute_explain(self, datasource, sql, role="user"):
             return {"columns": [], "rows": [], "row_count": 0}
@@ -626,7 +720,8 @@ def test_runtime_db_capability_get_conn_by_id(session_factory, monkeypatch):
     control_db_url = str(probe_db.get_bind().url)
     probe_db.close()
     capability = _RuntimeDatabaseCapability(
-        _RuntimeDatasourceBroker(control_db_url=control_db_url, default_datasource_id=ds_id)
+        _RuntimeDatasourceBroker(control_db_url=control_db_url, default_datasource_id=ds_id),
+        write_mode="write",
     )
 
     conn = capability.get_conn_by_id(ds_id)
@@ -700,7 +795,8 @@ def test_runtime_db_capability_get_conn_by_id_targets_exact_datasource(
         _RuntimeDatasourceBroker(
             control_db_url=control_db_url,
             default_datasource_id=business_ds_id,
-        )
+        ),
+        write_mode="write",
     )
 
     conn = capability.get_conn_by_id(sys_ds_id)
@@ -994,12 +1090,30 @@ def test_runtime_scheduler_history_delete_apply_removes_matching_runs(session_fa
     verify_db.close()
 
 
-def test_bind_runtime_context_promotes_execution_mode_from_scope(session_factory):
+def test_bind_runtime_context_promotes_database_access_modes_from_scope(session_factory):
     service = FunctionRuntimeService(session_factory=session_factory)
     payload, context = service.bind_runtime_context(
         {"ok": True},
-        scope_metadata={"execution_mode": "plan", "scope_type": "function-build"},
+        scope_metadata={
+            "execution_mode": "plan",
+            "write_mode": "write",
+            "scope_type": "function-build",
+        },
     )
     assert payload == {"ok": True}
     assert context["execution_mode"] == "plan"
-    assert context["scope"] == {"execution_mode": "plan", "scope_type": "function-build"}
+    assert context["write_mode"] == "write"
+    assert context["scope"] == {
+        "execution_mode": "plan",
+        "write_mode": "write",
+        "scope_type": "function-build",
+    }
+
+
+def test_bind_runtime_context_defaults_to_readonly(session_factory):
+    service = FunctionRuntimeService(session_factory=session_factory)
+
+    _, context = service.bind_runtime_context({}, scope_metadata={"execution_mode": "apply"})
+
+    assert context["execution_mode"] == "apply"
+    assert context["write_mode"] == "readonly"

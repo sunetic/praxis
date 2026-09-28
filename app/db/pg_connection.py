@@ -35,9 +35,9 @@ def _extract_db_operation(sql: str) -> str:
     )
 
 
-def _convert_params(sql: str, params: list) -> tuple[str, list]:
+def _convert_params(sql: str, params: list[Any]) -> tuple[str, list[Any]]:
     """Convert %s placeholders to $1, $2, ... for asyncpg."""
-    result = []
+    result: list[str] = []
     idx = 0
     i = 0
     while i < len(sql):
@@ -53,13 +53,15 @@ def _convert_params(sql: str, params: list) -> tuple[str, list]:
 
 class PgConnectionPool:
     def __init__(self) -> None:
-        self._pools: dict[tuple, asyncpg.Pool] = {}
+        self._pools: dict[tuple[str, int, str, str, asyncio.AbstractEventLoop], asyncpg.Pool] = {}
 
     @staticmethod
     def _current_loop() -> asyncio.AbstractEventLoop:
         return asyncio.get_running_loop()
 
-    def _pool_key(self, host: str, port: int, user: str, database: str) -> tuple:
+    def _pool_key(
+        self, host: str, port: int, user: str, database: str
+    ) -> tuple[str, int, str, str, asyncio.AbstractEventLoop]:
         return (host, int(port), user, database, self._current_loop())
 
     async def _get_pool(
@@ -83,7 +85,14 @@ class PgConnectionPool:
             )
         return self._pools[key]
 
-    async def execute_read_query(self, datasource, sql: str, *, limit: int = 200) -> dict:
+    async def execute_read_query(
+        self,
+        datasource: Any,
+        sql: str,
+        *,
+        params: list[Any] | None = None,
+        limit: int = 200,
+    ) -> dict[str, Any]:
         """Bounded native read-only transaction; never retry a submitted operation."""
         pool = await self._get_pool(
             datasource.host,
@@ -94,9 +103,10 @@ class PgConnectionPool:
         )
         async with pool.acquire() as conn:
             async with conn.transaction(readonly=True):
-                statement = await conn.prepare(sql)
+                converted_sql, converted_params = _convert_params(sql, params or [])
+                statement = await conn.prepare(converted_sql)
                 columns = [attribute.name for attribute in statement.get_attributes()]
-                cursor = await statement.cursor()
+                cursor = await statement.cursor(*converted_params)
                 records = await cursor.fetch(limit + 1)
                 return {
                     "columns": columns,
@@ -111,7 +121,7 @@ class PgConnectionPool:
         datasource: Any,
         sql: str,
         role: str = "user",
-        params: list | None = None,
+        params: list[Any] | None = None,
     ) -> dict[str, Any]:
         host = datasource.host
         port = datasource.port
@@ -153,8 +163,34 @@ class PgConnectionPool:
         datasource: Any,
         sql: str,
         role: str = "user",
+        *,
+        analyze: bool = False,
+        timeout_seconds: int = 10,
     ) -> dict[str, Any]:
-        return await self.execute_query(datasource, f"EXPLAIN {sql}", role)
+        _ = role
+        timeout_ms = max(1, min(int(timeout_seconds), 60)) * 1000
+        prefix = "EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON)" if analyze else "EXPLAIN (FORMAT JSON)"
+        pool = await self._get_pool(
+            datasource.host,
+            datasource.port,
+            datasource.user or "",
+            datasource.password or "",
+            datasource.database or "",
+        )
+        async with pool.acquire() as conn:
+            async with conn.transaction(readonly=True):
+                await conn.execute(f"SET LOCAL statement_timeout = {timeout_ms}")
+                records = await conn.fetch(f"{prefix} {sql}")
+                columns = list(records[0].keys()) if records else []
+                return {
+                    "columns": columns,
+                    "rows": [dict(record) for record in records],
+                    "returned_rows": len(records),
+                    "truncated": False,
+                    "total_rows": len(records),
+                    "analyze": analyze,
+                    "timeout_seconds": timeout_ms // 1000,
+                }
 
     async def test_connection(
         self,

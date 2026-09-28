@@ -3,15 +3,12 @@
 import hashlib
 import hmac
 import json
-import re
 from datetime import UTC, datetime
 from typing import Annotated
 
 from pydantic import Field, TypeAdapter
 from pydantic_ai import ModelRetry, RunContext, Tool
 from pydantic_ai.exceptions import ToolFailed
-from sqlglot import exp, parse
-from sqlglot.errors import SqlglotError
 
 from app.core.security import get_encryption_key
 from app.db.pool_factory import get_pool_for_datasource
@@ -20,6 +17,13 @@ from app.services.agent.definitions import RunDependencies
 from app.services.agent.execution import RegisteredTool, ToolAccess
 from app.services.agent.persistence import run_db
 from app.services.agent.store import OutcomeUnknownError, RunStore
+from app.services.datasource.sql_safety import (
+    ReadSqlValidationError,
+    datasource_dialect,
+)
+from app.services.datasource.sql_safety import (
+    validate_read_sql as _validate_read_sql,
+)
 from app.services.datasource.write_executor import (
     WriteNotExecutedError,
     WriteOutcomeUnknownError,
@@ -28,40 +32,22 @@ from app.services.datasource.write_executor import (
 )
 from app.services.platform.settings_store import get_setting
 
-DATABASE_TOOLS = frozenset({"list_datasources", "query_database", "request_database_change"})
+DATABASE_TOOLS = frozenset(
+    {
+        "list_datasources",
+        "query_database",
+        "explain_database_query",
+        "request_database_change",
+    }
+)
 
 
 def validate_read_sql(sql: str, dialect: str) -> None:
     """Syntax boundary, backed by a read-only DB transaction (not a safety claim by the LLM)."""
-    if re.search(r"/\*(?:!|M!)", sql, re.IGNORECASE):
-        raise ToolFailed("Executable SQL comments are not supported by this read tool.")
     try:
-        statements = parse(sql, read=dialect)
-    except SqlglotError as exc:
-        raise ToolFailed("SQL could not be parsed; provide one read-only query.") from exc
-    if len(statements) != 1:
-        raise ToolFailed(
-            f"query_database accepts exactly one SQL statement per call, but received "
-            f"{len(statements)}. Submit each read-only SELECT/WITH query, SHOW, or DESCRIBE "
-            "as a separate query_database call."
-        )
-    if not isinstance(statements[0], (exp.Query, exp.Show, exp.Describe)):
-        raise ToolFailed(
-            "query_database accepts exactly one read-only SELECT/WITH query, SHOW, or "
-            "DESCRIBE statement. Use request_database_change for writes or schema changes."
-        )
-    if any(
-        isinstance(node, (exp.DML, exp.DDL, exp.Into, exp.Lock)) for node in statements[0].walk()
-    ):
-        raise ToolFailed(
-            "Writes, SELECT INTO, and locking clauses are not authorized by this read tool."
-        )
-    if any(isinstance(node, exp.Anonymous) for node in statements[0].walk()):
-        # An arbitrary stored routine/UDF may affect external resources even in
-        # a read-only transaction. Only parser-recognized built-ins are accepted.
-        raise ToolFailed(
-            "Custom or unrecognized SQL functions are not available in the read-only tool."
-        )
+        _validate_read_sql(sql, dialect)
+    except ReadSqlValidationError as exc:
+        raise ToolFailed(str(exc)) from exc
 
 
 def database_tools(session_factory) -> dict[str, RegisteredTool]:
@@ -169,7 +155,7 @@ def database_tools(session_factory) -> dict[str, RegisteredTool]:
         datasource = await run_db(resolve, ctx, args["datasource_id"])
         if datasource is None:
             return  # Authorization reports the denied resource, not a syntax retry.
-        dialect = "postgres" if datasource.db_type in {"postgres", "postgresql"} else "mysql"
+        dialect = datasource_dialect(datasource.db_type)
         try:
             validate_write_sql(args["sql"], dialect)
         except ValueError as exc:
@@ -231,7 +217,7 @@ def database_tools(session_factory) -> dict[str, RegisteredTool]:
         datasource = await run_db(resolve, ctx, datasource_id)
         if datasource is None:
             raise ToolFailed("Datasource is not currently authorized or active.")
-        dialect = "postgres" if datasource.db_type in {"postgres", "postgresql"} else "mysql"
+        dialect = datasource_dialect(datasource.db_type)
         validate_read_sql(sql, dialect)
         pool = get_pool_for_datasource(datasource)
         try:
@@ -241,6 +227,64 @@ def database_tools(session_factory) -> dict[str, RegisteredTool]:
             if datasource.password:
                 detail = detail.replace(datasource.password, "[redacted]")
             raise ToolFailed(f"Database query failed: {detail[:2000]}") from exc
+        return TypeAdapter(dict).dump_python(
+            {
+                "datasource_id": datasource.id,
+                "database": datasource.database,
+                "observed_at": datetime.now(UTC).isoformat(),
+                **result,
+            },
+            mode="json",
+        )
+
+    async def explain_database_query(
+        ctx: RunContext[RunDependencies],
+        datasource_id: Annotated[int, Field(gt=0)],
+        sql: Annotated[
+            str,
+            Field(
+                min_length=1,
+                max_length=100_000,
+                description=(
+                    "Exactly one read-only SELECT/WITH query without an EXPLAIN prefix. "
+                    "The tool constructs the engine-specific execution-plan statement."
+                ),
+            ),
+        ],
+        analyze: Annotated[
+            bool,
+            Field(
+                description=(
+                    "When true, execute the read-only query to collect actual timing and "
+                    "buffer evidence. Keep false for the initial estimated plan."
+                )
+            ),
+        ] = False,
+        timeout_seconds: Annotated[int, Field(ge=1, le=30)] = 10,
+    ) -> dict:
+        """Return a bounded execution plan for one authorized read-only query.
+
+        The caller supplies only the underlying SELECT/WITH statement. Estimated
+        plans are the default. An analyzed plan executes the query inside a
+        database-native read-only transaction with a server-side timeout.
+        """
+        datasource = await run_db(resolve, ctx, datasource_id)
+        if datasource is None:
+            raise ToolFailed("Datasource is not currently authorized or active.")
+        validate_read_sql(sql, datasource_dialect(datasource.db_type))
+        pool = get_pool_for_datasource(datasource)
+        try:
+            result = await pool.execute_explain(
+                datasource,
+                sql,
+                analyze=analyze,
+                timeout_seconds=timeout_seconds,
+            )
+        except Exception as exc:
+            detail = str(exc)
+            if datasource.password:
+                detail = detail.replace(datasource.password, "[redacted]")
+            raise ToolFailed(f"Database EXPLAIN failed: {detail[:2000]}") from exc
         return TypeAdapter(dict).dump_python(
             {
                 "datasource_id": datasource.id,
@@ -312,6 +356,11 @@ def database_tools(session_factory) -> dict[str, RegisteredTool]:
     return {
         "list_datasources": RegisteredTool(tool=Tool(list_datasources), authorize=authorize_list),
         "query_database": RegisteredTool(tool=Tool(query_database), authorize=authorize_query),
+        "explain_database_query": RegisteredTool(
+            tool=Tool(explain_database_query),
+            authorize=authorize_query,
+            timeout_seconds=35,
+        ),
         "request_database_change": RegisteredTool(
             tool=Tool(request_database_change, sequential=True, args_validator=validate_write),
             authorize=authorize_write,

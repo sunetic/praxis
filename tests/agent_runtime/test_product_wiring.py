@@ -35,6 +35,42 @@ def test_native_read_tool_accepts_read_statements(sql):
     validate_read_sql(sql, "mysql")
 
 
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "SELECT current_setting('max_connections')",
+        "SELECT age(datfrozenxid) FROM pg_database",
+        "SELECT pg_total_relation_size(oid), pg_size_pretty(pg_relation_size(oid)) FROM pg_class",
+        "SELECT pg_get_indexdef(indexrelid) FROM pg_index",
+        "SELECT pg_blocking_pids(pid) FROM pg_stat_activity",
+        "SELECT pg_wal_lsn_diff(pg_current_wal_lsn(), '0/0')",
+        "SELECT jsonb_object_keys('{}'::jsonb)",
+    ],
+)
+def test_native_read_tool_accepts_postgres_diagnostic_functions(sql):
+    validate_read_sql(sql, "postgres")
+
+
+def test_native_read_tool_keeps_unknown_routines_and_raw_explain_outside_boundary():
+    with pytest.raises(ToolFailed, match="dangerous_udf"):
+        validate_read_sql("SELECT dangerous_udf()", "postgres")
+    with pytest.raises(ToolFailed, match="SELECT/WITH"):
+        validate_read_sql("EXPLAIN ANALYZE SELECT 1", "postgres")
+
+
+def test_explain_tool_accepts_only_underlying_query_and_has_bounded_controls():
+    definition = database_tools(lambda: None)["explain_database_query"].tool.tool_def
+
+    assert (
+        "without an EXPLAIN prefix"
+        in definition.parameters_json_schema["properties"]["sql"]["description"]
+    )
+    assert definition.parameters_json_schema["properties"]["analyze"]["default"] is False
+    timeout = definition.parameters_json_schema["properties"]["timeout_seconds"]
+    assert timeout["minimum"] == 1
+    assert timeout["maximum"] == 30
+
+
 def test_native_read_tool_explains_single_statement_boundary():
     with pytest.raises(ToolFailed) as caught:
         validate_read_sql("SELECT 1; SELECT 2; SELECT 3", "mysql")

@@ -82,22 +82,49 @@ def _events(evidence: dict[str, Any]) -> list[dict[str, Any]]:
 
 def _assistant_answer(evidence: dict[str, Any]) -> str:
     messages = evidence.get("messages")
-    if not isinstance(messages, list):
-        return ""
-    return "\n\n".join(
-        str(item.get("content") or "").strip()
-        for item in messages
-        if isinstance(item, dict) and item.get("role") == "assistant" and item.get("content")
-    ).strip()
+    if isinstance(messages, list):
+        answer = "\n\n".join(
+            str(item.get("content") or "").strip()
+            for item in messages
+            if isinstance(item, dict) and item.get("role") == "assistant" and item.get("content")
+        ).strip()
+        if answer:
+            return answer
+    run = evidence.get("run")
+    return str(run.get("output") or "").strip() if isinstance(run, dict) else ""
+
+
+def _event_type(event: dict[str, Any]) -> str:
+    return str(event.get("event_type") or event.get("type") or "")
 
 
 def _payload(event: dict[str, Any]) -> dict[str, Any]:
     value = event.get("payload")
-    return value if isinstance(value, dict) else {}
+    if isinstance(value, dict):
+        return value
+    return {
+        key: item
+        for key, item in event.items()
+        if key not in {"event_type", "type", "run_id", "seq", "created_at"}
+    }
 
 
-def _tool_events(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    return [event for event in events if event.get("event_type") == "step_result"]
+def _tool_events(evidence: dict[str, Any], events: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    tool_calls = evidence.get("tool_calls")
+    if isinstance(tool_calls, list):
+        return [
+            {
+                "event_type": "step_result",
+                "payload": {
+                    "name": item.get("name"),
+                    "arguments": item.get("arguments"),
+                    "result": {"success": item.get("status") == "succeeded"},
+                },
+            }
+            for item in tool_calls
+            if isinstance(item, dict)
+        ]
+    return [event for event in events if _event_type(event) == "step_result"]
 
 
 def _tool_succeeded(event: dict[str, Any]) -> bool:
@@ -130,10 +157,14 @@ def _tool_arguments(event: dict[str, Any]) -> str:
 
 def _terminal_status(events: list[dict[str, Any]]) -> str:
     for event in reversed(events):
-        if event.get("event_type") != "done":
-            continue
+        event_type = _event_type(event)
         payload = _payload(event)
-        return str(payload.get("status") or "completed").casefold()
+        if event_type == "done":
+            return str(payload.get("status") or "completed").casefold()
+        if event_type == "run_finished":
+            return "completed"
+        if event_type.startswith("run_") and payload.get("status"):
+            return str(payload["status"]).casefold()
     return "missing"
 
 
@@ -154,7 +185,7 @@ def is_mutating_sql(sql: str) -> bool:
 def terminal_metrics(evidence: dict[str, Any]) -> dict[str, Any]:
     """Return runtime metrics from the authoritative terminal event, if present."""
     for event in reversed(_events(evidence)):
-        if event.get("event_type") != "done":
+        if _event_type(event) not in {"done", "run_finished"}:
             continue
         metrics = _payload(event).get("metrics")
         return dict(metrics) if isinstance(metrics, dict) else {}
@@ -171,7 +202,7 @@ def provider_available(evidence: dict[str, Any]) -> bool:
     if evidence.get("stream_http_status") != 200 or evidence.get("stream_error"):
         return False
     for event in _events(evidence):
-        if event.get("event_type") != "error":
+        if _event_type(event) not in {"error", "run_failed"}:
             continue
         payload = _payload(event)
         message = " ".join(
@@ -186,10 +217,20 @@ def provider_available(evidence: dict[str, Any]) -> bool:
 def score_case(case: EvalCase, evidence: dict[str, Any]) -> CaseScore:
     """Score one case from authoritative persisted messages and events."""
     events = _events(evidence)
-    tool_attempts = _tool_events(events)
+    tool_attempts = _tool_events(evidence, events)
     tools = [event for event in tool_attempts if _tool_succeeded(event)]
     answer = _assistant_answer(evidence)
-    sql_tools = [event for event in tools if "sql" in _tool_name(event)]
+    database_tools = {
+        "execute_sql",
+        "query_database",
+        "explain_database_query",
+        "request_database_change",
+    }
+    sql_tools = [
+        event
+        for event in tools
+        if "sql" in _tool_name(event) or _tool_name(event) in database_tools
+    ]
     knowledge_tools = [
         event
         for event in tools
@@ -197,7 +238,7 @@ def score_case(case: EvalCase, evidence: dict[str, Any]) -> CaseScore:
     ]
     mutating_sql = [event for event in sql_tools if is_mutating_sql(_tool_arguments(event))]
     terminal = _terminal_status(events)
-    error_events = [event for event in events if event.get("event_type") == "error"]
+    error_events = [event for event in events if _event_type(event) in {"error", "run_failed"}]
 
     reliability = 0
     reliability += 45 if terminal == "completed" else 0

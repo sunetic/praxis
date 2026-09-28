@@ -296,10 +296,24 @@ def probe_provider(config: LLMConfig, attempts: int = 4) -> dict[str, Any]:
     }
 
 
+def container_cli() -> str:
+    """Resolve the container CLI used by isolated Eval fixtures."""
+    requested = os.environ.get("DBA_EVAL_CONTAINER_CLI", "").strip()
+    if requested:
+        if shutil.which(requested) is None:
+            raise RuntimeError(f"Configured container CLI '{requested}' was not found on PATH")
+        return requested
+    for candidate in ("docker", "nerdctl"):
+        if shutil.which(candidate) is not None:
+            return candidate
+    raise RuntimeError("Docker or nerdctl is required for the isolated database fixture")
+
+
 def docker(*args: str, input_text: str | None = None, timeout: float = 120) -> str:
-    """Run Docker with checked errors and bounded output."""
+    """Run the selected Docker-compatible CLI with checked, bounded output."""
+    cli = container_cli()
     result = subprocess.run(
-        ["docker", *args],
+        [cli, *args],
         cwd=PROJECT_ROOT,
         input=input_text,
         capture_output=True,
@@ -309,7 +323,7 @@ def docker(*args: str, input_text: str | None = None, timeout: float = 120) -> s
     )
     if result.returncode != 0:
         message = result.stderr.strip() or result.stdout.strip()
-        raise RuntimeError(f"docker {' '.join(args[:3])} failed: {message}")
+        raise RuntimeError(f"{cli} {' '.join(args[:3])} failed: {message}")
     return result.stdout.strip()
 
 
@@ -417,9 +431,44 @@ def _parse_sse_line(line: str) -> dict[str, Any] | str:
     return parsed if isinstance(parsed, dict) else body
 
 
+def _skills_for_case(engine: str, case_id: str) -> tuple[str, ...]:
+    """Model the explicit Skill selection a user makes for each DBA task."""
+    mappings = {
+        "postgresql": {
+            "C01": ("pg-connection-diagnosis", "pg-vacuum-health"),
+            "C02": ("pg-slow-query-triage",),
+            "C03": ("pg-lock-diagnosis",),
+            "C04": ("pg-connection-diagnosis",),
+            "C05": ("pg-vacuum-health",),
+            "C06": ("pg-slow-query-triage",),
+            "C07": ("pg-slow-query-triage",),
+            "C10": (
+                "pg-lock-diagnosis",
+                "pg-connection-diagnosis",
+                "pg-vacuum-health",
+            ),
+        },
+        "mysql": {
+            "M01": ("mysql-connection-diagnosis", "mysql-innodb-health"),
+            "M02": ("mysql-slow-query-triage",),
+            "M03": ("mysql-lock-diagnosis",),
+            "M04": ("mysql-connection-diagnosis",),
+            "M05": ("mysql-innodb-health",),
+            "M06": ("mysql-slow-query-triage",),
+            "M07": ("mysql-slow-query-triage",),
+            "M10": (
+                "mysql-lock-diagnosis",
+                "mysql-connection-diagnosis",
+                "mysql-innodb-health",
+            ),
+        },
+    }
+    return mappings.get(engine, {}).get(case_id, ())
+
+
 async def _collect_case_stream(
     url: str,
-    payload: dict[str, Any],
+    _payload: dict[str, Any],
     case_timeout: float,
 ) -> tuple[list[dict[str, Any] | str], int | None, str | None, bool]:
     """Collect one Chat stream under a total case deadline.
@@ -437,7 +486,11 @@ async def _collect_case_stream(
     try:
         async with httpx.AsyncClient(timeout=transport_timeout, trust_env=False) as client:
             async with asyncio.timeout(case_timeout):
-                async with client.stream("POST", url, json=payload) as stream:
+                async with client.stream(
+                    "GET",
+                    url,
+                    headers={"Last-Event-ID": "0", "Accept": "text/event-stream"},
+                ) as stream:
                     stream_status = stream.status_code
                     stream.raise_for_status()
                     async for line in stream.aiter_lines():
@@ -454,6 +507,8 @@ def _run_case(
     api: str,
     case: EvalCase,
     datasource_id: int,
+    knowledge_base_id: int,
+    skills: tuple[str, ...],
     attempt: int,
     output_dir: Path,
     case_timeout: float,
@@ -464,39 +519,53 @@ def _run_case(
             f"{api}/conversations",
             json={
                 "title": f"DBA Eval {case.case_id} attempt {attempt}",
-                "datasource_id": datasource_id,
-                "active_skills": [],
-                "category": "primary",
-                "read_only": True,
+                "scene": {
+                    "datasource_ids": [datasource_id],
+                    "knowledge_base_ids": [knowledge_base_id],
+                    "skills": list(skills),
+                    "locale": "zh-CN",
+                },
             },
         )
         response.raise_for_status()
         conversation = response.json()
-        conversation_id = int(conversation["id"])
+        conversation_id = str(conversation["id"])
+        run_response = client.post(
+            f"{api}/conversations/{conversation_id}/runs",
+            json={
+                "client_request_id": f"eval-{case.case_id}-{attempt}",
+                "prompt": case.prompt,
+                "scene": {},
+                "mode": "append",
+            },
+        )
+        run_response.raise_for_status()
+        run_id = str(run_response.json()["id"])
         stream_items, stream_status, stream_error, case_timed_out = asyncio.run(
             _collect_case_stream(
-                f"{api}/chat/{conversation_id}/stream",
-                {"content": case.prompt, "locale": "zh-CN"},
+                f"{api}/runs/{run_id}/events",
+                {},
                 case_timeout,
             )
         )
-        messages_response = client.get(f"{api}/messages/conversation/{conversation_id}")
-        events_response = client.get(f"{api}/chat/{conversation_id}/events")
-        messages_response.raise_for_status()
-        events_response.raise_for_status()
+        final_response = client.get(f"{api}/runs/{run_id}")
+        final_response.raise_for_status()
+        run = final_response.json()
     evidence: dict[str, Any] = {
         "case_id": case.case_id,
         "title": case.title,
         "prompt": case.prompt,
         "attempt": attempt,
         "conversation_id": conversation_id,
+        "run_id": run_id,
         "stream_http_status": stream_status,
         "stream_error": stream_error,
         "case_timed_out": case_timed_out,
         "duration_seconds": round(time.monotonic() - started, 3),
         "stream": stream_items,
-        "messages": messages_response.json(),
-        "events": events_response.json(),
+        "events": [item for item in stream_items if isinstance(item, dict)],
+        "run": run,
+        "tool_calls": run.get("tool_calls") or [],
     }
     score = score_case(case, evidence).to_dict()
     runtime_metrics = terminal_metrics(evidence)
@@ -516,6 +585,7 @@ def _run_case(
         "title": case.title,
         "attempt": attempt,
         "conversation_id": conversation_id,
+        "run_id": run_id,
         "duration_seconds": evidence["duration_seconds"],
         "evidence": str(evidence_path.relative_to(output_dir)),
         "provider_available": provider_available(evidence),
@@ -676,8 +746,7 @@ def run_eval(
         raise ValueError("--case-delay cannot be negative")
     if args.max_tool_rounds < 1:
         raise ValueError("--max-tool-rounds must be at least 1")
-    if shutil.which("docker") is None:
-        raise RuntimeError(f"Docker is required for the isolated {fixture.engine} fixture")
+    selected_container_cli = container_cli()
 
     config = resolve_llm_config(args.settings_db)
     require_expected_model(config, args.expected_model)
@@ -707,6 +776,7 @@ def run_eval(
         "workload_repeats": args.workload_repeats,
         "max_tool_rounds": args.max_tool_rounds if args.profile == "model" else None,
         "database_image": args.database_image,
+        "container_cli": selected_container_cli,
     }
     baseline = _load_baseline(args.baseline, catalog, args.profile)
     print(
@@ -730,7 +800,6 @@ def run_eval(
     session_fixture: ChildProcess | None = None
     before: dict[str, Any] = {}
     after: dict[str, Any] = {}
-    database_started = False
     results: list[dict[str, Any]] = []
     runtime_error: str | None = None
     try:
@@ -739,7 +808,6 @@ def run_eval(
             flush=True,
         )
         fixture.start(container, database_port, args.database_image)
-        database_started = True
         fixture.seed(container, args.workload_repeats)
         before = fixture.snapshot(container)
 
@@ -758,6 +826,7 @@ def run_eval(
 
         api: str | None = None
         datasource_id: int | None = None
+        knowledge_base_id: int | None = None
         if args.profile == "praxis":
             backend_env = os.environ.copy()
             backend_env.update(
@@ -791,7 +860,7 @@ def run_eval(
             )
             wait_for_http(f"http://127.0.0.1:{backend_port}/health", backend.process)
             api = f"http://127.0.0.1:{backend_port}/api/v1"
-            datasource_id, _ = _create_runtime_resources(
+            datasource_id, knowledge_base_id = _create_runtime_resources(
                 api,
                 runtime_dir / "data",
                 fixture.datasource_payload(database_port),
@@ -822,13 +891,15 @@ def run_eval(
                         )
                     )
                 else:
-                    if api is None or datasource_id is None:
+                    if api is None or datasource_id is None or knowledge_base_id is None:
                         raise RuntimeError("Praxis profile resources were not initialized")
                     results.append(
                         _run_case(
                             api,
                             case,
                             datasource_id,
+                            knowledge_base_id,
+                            _skills_for_case(suite.key, case.case_id),
                             attempt,
                             output_dir,
                             args.case_timeout,
@@ -846,13 +917,12 @@ def run_eval(
             session_fixture.stop()
         if backend is not None:
             backend.stop()
-        if database_started:
-            subprocess.run(
-                ["docker", "stop", "--time", "5", container],
-                capture_output=True,
-                text=True,
-                check=False,
-            )
+        subprocess.run(
+            [selected_container_cli, "rm", "-f", container],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
 
     unchanged = bool(before) and before == after
     successful_streams = sum(1 for item in results if item.get("provider_available"))

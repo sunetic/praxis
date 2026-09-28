@@ -24,10 +24,14 @@ LIMIT 10;
 Interpret: Focus on queries with high `mean_exec_time` AND high `calls` (frequent + slow = biggest impact).
 
 ### Step 2: Analyze Execution Plan
-For the top suspect query:
+For the top suspect query, call `explain_database_query` with the underlying
+`SELECT`/`WITH` statement. Start with `analyze=false`:
 ```sql
-EXPLAIN (ANALYZE, BUFFERS, FORMAT TEXT) <query>;
+<query>
 ```
+Use `analyze=true` only after the estimated plan shows that the query is scoped
+and the tool timeout is appropriate. Never put an `EXPLAIN` prefix in the SQL
+argument; the tool constructs the engine-specific statement.
 Look for:
 - Seq Scan on large tables (missing index)
 - Nested Loop with high row estimates
@@ -51,6 +55,7 @@ Based on findings:
 - work_mem too small → suggest session-level increase for specific queries
 
 ## Rules
-- Always use `EXPLAIN ANALYZE` (not just `EXPLAIN`) to get actual execution data.
+- Start with an estimated plan. Use an analyzed plan only for a bounded read-only query.
+- Treat an analyzed-plan timeout as evidence; do not automatically retry with a larger timeout.
 - Use `CONCURRENTLY` for index creation on production tables.
 - Before recommending parameter changes, show current value and proposed value with justification.
