@@ -1,6 +1,6 @@
 import re
 from datetime import datetime
-from typing import Any, Literal
+from typing import Any, Literal, Self
 from urllib.parse import urlsplit
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -126,6 +126,7 @@ class DataSourceResponse(DataSourceBase):
 
 class ServiceHttpConfig(BaseModel):
     base_url: str
+    mcp_transport: Literal["streamable_http", "sse"] | None = None
     auth_type: Literal["none", "basic", "bearer", "api_key"] = "none"
     api_key_header: str = "X-API-Key"
     default_headers: dict[str, str] = Field(default_factory=dict)
@@ -245,6 +246,15 @@ class ServiceBase(BaseModel):
     config: ServiceHttpConfig
     resource_ref: str | None = None
 
+    @model_validator(mode="after")
+    def validate_transport(self) -> Self:
+        if self.service_type == "mcp":
+            if self.config.mcp_transport is None:
+                raise ValueError("MCP services require mcp_transport")
+            if self.resource_ref is None:
+                raise ValueError("MCP services require a datasource or cluster binding")
+        return self
+
     @field_validator("name")
     @classmethod
     def validate_name(cls, value: str) -> str:
@@ -345,6 +355,8 @@ class ServiceTestResponse(BaseModel):
     success: bool
     message: str
     http_status: int | None = None
+    tool_count: int | None = None
+    tools: list[str] | None = None
 
 
 class KnowledgeBaseBase(BaseModel):

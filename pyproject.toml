@@ -14,7 +14,7 @@ dependencies = [
     "python-dotenv>=1.0.0",
     "python-multipart>=0.0.6",
     "aiohttp>=3.9.0",
-    "pydantic-ai-slim[openai]==2.43.0",
+    "pydantic-ai-slim[mcp,openai]==2.43.0",
     "httpx2[socks]>=2.7,<3",
     "jsonschema>=4.23,<5",
     "referencing>=0.37,<1",

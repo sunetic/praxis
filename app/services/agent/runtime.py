@@ -74,6 +74,7 @@ async def run_agent(
     model_settings: ModelSettings | None = None,
     toolset_wrapper: Callable[[AbstractToolset[RunDependencies]], AbstractToolset[RunDependencies]]
     | None = None,
+    additional_toolsets: Sequence[AbstractToolset[RunDependencies]] = (),
     capabilities: Sequence[AbstractCapability[RunDependencies]] = (),
 ) -> AgentRunResult[str | DeferredToolRequests]:
     """Run the framework to completion or deferral, including mixed text/tool output.
@@ -91,12 +92,13 @@ async def run_agent(
         raise UsageLimitExceeded("Model request limit exceeded")
     selected = select_tools(tools, definition.tool_names, authorized_tool_names)
     toolset = FunctionToolset(selected)
+    native_toolset = toolset_wrapper(toolset) if toolset_wrapper else toolset
     agent = Agent(
         model,
         name=definition.name,
         deps_type=RunDependencies,
         instructions=definition.instructions,
-        toolsets=[toolset_wrapper(toolset) if toolset_wrapper else toolset],
+        toolsets=[native_toolset, *additional_toolsets],
         output_type=[str, DeferredToolRequests],
         end_strategy="graceful",
         retries={"tools": 2},

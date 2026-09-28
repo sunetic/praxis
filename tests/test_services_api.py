@@ -135,6 +135,62 @@ def test_service_connection_test_uses_configured_health_path(service_api) -> Non
     assert call.await_args.kwargs["raw_secrets"]["bearer_token"] == ("replacement-token")
 
 
+def test_mcp_service_requires_supported_transport_and_binding(
+    service_api, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from app.api import services as services_api
+    from app.services.integration.mcp_service import MCPConnectionResult
+
+    client, _, _, _ = service_api
+    payload = {
+        "name": "Operations MCP",
+        "service_type": "mcp",
+        "resource_ref": "cluster:operations",
+        "config": {
+            "base_url": "http://mcp.internal/mcp",
+            "mcp_transport": "streamable_http",
+        },
+    }
+    check = AsyncMock(return_value=MCPConnectionResult(("lookup", "summarize")))
+    monkeypatch.setattr(services_api, "test_mcp_connection", check)
+
+    created_response = client.post("/api/v1/services", json=payload)
+    assert created_response.status_code == 201, created_response.text
+    created = created_response.json()
+    assert created["config"]["mcp_transport"] == "streamable_http"
+
+    tested = client.post(f"/api/v1/services/{created['id']}/test")
+    assert tested.status_code == 200
+    assert tested.json() == {
+        "success": True,
+        "message": "MCP connection successful; discovered 2 tools",
+        "tool_count": 2,
+        "tools": ["lookup", "summarize"],
+    }
+    assert check.await_args.kwargs["config"]["base_url"] == "http://mcp.internal/mcp"
+
+    missing_transport = {
+        **payload,
+        "config": {"base_url": "http://mcp.internal/mcp"},
+    }
+    assert client.post("/api/v1/services", json=missing_transport).status_code == 422
+
+    missing_binding = {
+        **payload,
+        "resource_ref": None,
+    }
+    assert client.post("/api/v1/services", json=missing_binding).status_code == 422
+
+    unsupported = {
+        **payload,
+        "config": {
+            "base_url": "http://mcp.internal/mcp",
+            "mcp_transport": "stdio",
+        },
+    }
+    assert client.post("/api/v1/services", json=unsupported).status_code == 422
+
+
 def test_service_rejects_invalid_url_and_missing_knowledge_base(service_api) -> None:
     client, _, _, _ = service_api
     invalid_url = _payload(9)

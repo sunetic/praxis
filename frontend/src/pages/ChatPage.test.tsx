@@ -2,12 +2,13 @@ import { StrictMode } from "react"
 import { MemoryRouter } from "react-router-dom"
 import { cleanup, screen, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
-import { afterEach, expect, it, vi } from "vitest"
+import { afterEach, beforeEach, expect, it, vi } from "vitest"
 import { renderWithShell as render } from "@/test/renderWithShell"
 import { agentRunsApi } from "@/lib/agentRuns"
-import { agentsApi, datasourcesApi, type Agent, type DataSource } from "@/lib/api"
+import { agentsApi, datasourcesApi, servicesApi, type Agent, type DataSource, type Service } from "@/lib/api"
 import { ChatPage } from "./ChatPage"
 
+beforeEach(() => { vi.spyOn(servicesApi, "list").mockResolvedValue([]) })
 afterEach(() => { cleanup(); vi.restoreAllMocks() })
 
 it("creates only one native conversation on first load in StrictMode", async () => {
@@ -19,7 +20,7 @@ it("creates only one native conversation on first load in StrictMode", async () 
   await waitFor(() => expect(screen.getByRole("textbox", { name: "消息" })).toBeEnabled())
   expect(screen.queryByRole("option", { name: "全部可用数据源" })).toBeNull()
   expect(create).toHaveBeenCalledTimes(1)
-  expect(create).toHaveBeenCalledWith("新对话", { datasource_ids: [] })
+  expect(create).toHaveBeenCalledWith("新对话", { datasource_ids: [], mcp_service_ids: [] })
   expect(screen.getByRole("combobox", { name: "会话" })).toHaveValue("native-uuid")
 })
 
@@ -44,7 +45,7 @@ it("keeps the persisted scope if saving a datasource change fails", async () => 
   render(<MemoryRouter><ChatPage /></MemoryRouter>)
   await waitFor(() => expect(screen.getByRole("textbox")).toBeEnabled())
   await userEvent.selectOptions(screen.getByRole("combobox", { name: "数据源范围" }), "1")
-  expect(update).toHaveBeenCalledWith("native-uuid", { datasource_ids: [1], auto_approval: null })
+  expect(update).toHaveBeenCalledWith("native-uuid", { datasource_ids: [1], mcp_service_ids: [], auto_approval: null })
   await screen.findByText(/范围未保存/)
   expect(screen.getByRole("combobox", { name: "数据源范围" })).toHaveValue("none")
 })
@@ -88,6 +89,29 @@ it("does not silently open another conversation when a requested ID is unavailab
   await screen.findByRole("alert")
   expect(runs).not.toHaveBeenCalled()
   expect(screen.getByRole("textbox", { name: "消息" })).toBeDisabled()
+})
+
+it("selects only MCP services bound to the current datasource or cluster", async () => {
+  vi.spyOn(agentRunsApi, "conversations").mockResolvedValue([{ id: "native-uuid", title: "现有对话", scene: { datasource_ids: [1], mcp_service_ids: [] }, created_at: 1, active_run_id: null }])
+  vi.spyOn(agentRunsApi, "runs").mockResolvedValue([])
+  vi.spyOn(datasourcesApi, "list").mockResolvedValue([{ id: 1, name: "业务库", cluster_key: "cluster-a", status: "active" } as DataSource])
+  vi.mocked(servicesApi.list).mockResolvedValue([
+    { id: 7, name: "集群 MCP", service_type: "mcp", resource_ref: "cluster:cluster-a", status: "active" } as Service,
+    { id: 8, name: "其他 MCP", service_type: "mcp", resource_ref: "cluster:other", status: "active" } as Service,
+  ])
+  const update = vi.spyOn(agentRunsApi, "updateConversation").mockImplementation(async (id, scene) => ({ id, title: "现有对话", scene, created_at: 1, active_run_id: null }))
+
+  render(<MemoryRouter><ChatPage /></MemoryRouter>)
+
+  const selector = await screen.findByRole("combobox", { name: "MCP 服务" })
+  await waitFor(() => expect(selector).toBeEnabled())
+  expect(screen.getByRole("option", { name: "集群 MCP" })).toBeInTheDocument()
+  expect(screen.queryByRole("option", { name: "其他 MCP" })).toBeNull()
+  await userEvent.selectOptions(selector, "7")
+  expect(update).toHaveBeenCalledWith("native-uuid", {
+    datasource_ids: [1],
+    mcp_service_ids: [7],
+  })
 })
 
 it("shows the custom Agent's authorized scope and retains a multi-source selection", async () => {

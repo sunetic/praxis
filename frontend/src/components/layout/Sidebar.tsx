@@ -1,6 +1,6 @@
 import { NavLink } from "react-router-dom"
 import type { LucideIcon } from "lucide-react"
-import { MessageSquare, Database, Bot, Sparkles, FunctionSquare, CalendarClock, Wrench, Send, Blocks, Settings, Plug, BookOpen, Globe } from "lucide-react"
+import { MessageSquare, Database, Bot, Sparkles, FunctionSquare, CalendarClock, Wrench, Send, Blocks, Settings, Plug, BookOpen, Globe, Server } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { useShellI18n, type ShellCopyKey } from "@/i18n/shellI18nContext"
 
@@ -29,6 +29,7 @@ const navGroups: NavGroup[] = [
     items: [
       { to: "/datasource", icon: Database, labelKey: "sidebar.nav.datasource" },
       { to: "/service", icon: Plug, labelKey: "sidebar.nav.service" },
+      { to: "/mcp", icon: Server, labelKey: "sidebar.nav.mcp" },
       { to: "/knowledge", icon: BookOpen, labelKey: "sidebar.nav.knowledge" },
       { to: "/channel", icon: Send, labelKey: "sidebar.nav.channel" },
     ],

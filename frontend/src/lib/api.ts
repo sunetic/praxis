@@ -353,6 +353,7 @@ export type ServiceInput = {
 
 export type ServiceHTTPConfig = {
   base_url: string;
+  mcp_transport?: "streamable_http" | "sse" | null;
   auth_type: "none" | "basic" | "bearer" | "api_key";
   api_key_header: string;
   default_headers: Record<string, string>;
@@ -384,11 +385,11 @@ export const servicesApi = {
     api.patch<Service>(`/services/${id}`, data).then(res => res.data),
   delete: (id: number) => api.delete(`/services/${id}`),
   test: (id: number) =>
-    api.post<{success: boolean; message: string; http_status?: number | null}>(`/services/${id}/test`).then(res => res.data),
+    api.post<{success: boolean; message: string; http_status?: number | null; tool_count?: number | null; tools?: string[] | null}>(`/services/${id}/test`).then(res => res.data),
   testConfig: (data: ServiceInput) =>
-    api.post<{success: boolean; message: string; http_status?: number | null}>('/services/test-config', data).then(res => res.data),
+    api.post<{success: boolean; message: string; http_status?: number | null; tool_count?: number | null; tools?: string[] | null}>('/services/test-config', data).then(res => res.data),
   testUpdateConfig: (id: number, data: ServiceUpdateInput) =>
-    api.post<{success: boolean; message: string; http_status?: number | null}>(`/services/${id}/test-config`, data).then(res => res.data),
+    api.post<{success: boolean; message: string; http_status?: number | null; tool_count?: number | null; tools?: string[] | null}>(`/services/${id}/test-config`, data).then(res => res.data),
 };
 
 export type KnowledgeBase = {

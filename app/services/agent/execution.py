@@ -63,6 +63,7 @@ class DurableToolset(WrapperToolset[RunDependencies]):
     owner_id: str
     registered: dict[str, RegisteredTool]
     confirmation_bypass: Callable[[], bool] | None = None
+    default_entry: RegisteredTool | None = None
 
     @staticmethod
     def _replay(result: dict[str, Any]) -> Any:
@@ -104,7 +105,9 @@ class DurableToolset(WrapperToolset[RunDependencies]):
         ctx: RunContext[RunDependencies],
         tool: ToolsetTool[RunDependencies],
     ) -> Any:
-        entry = self.registered[name]
+        entry = self.registered.get(name) or self.default_entry
+        if entry is None:
+            raise RunConflictError(f"Tool is not registered for durable execution: {name}")
         access = await entry.authorize(ctx, tool_args)
         if entry.mutating and access.allowed and not access.resource_key:
             raise RunConflictError("Mutating tool has no resolved resource lock key")

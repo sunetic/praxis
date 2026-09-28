@@ -23,6 +23,7 @@ describe("Sidebar", () => {
 
     expect(within(connectivity).getByRole("link", { name: "数据源" })).toBeInTheDocument()
     expect(within(connectivity).getByRole("link", { name: "服务" })).toBeInTheDocument()
+    expect(within(connectivity).getByRole("link", { name: "MCP" })).toHaveAttribute("href", "/mcp")
     expect(within(connectivity).getByRole("link", { name: "知识库" })).toBeInTheDocument()
     expect(within(connectivity).getByRole("link", { name: "渠道" })).toBeInTheDocument()
 

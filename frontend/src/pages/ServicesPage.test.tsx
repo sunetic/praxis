@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest"
 
 import { ShellI18nProvider } from "@/i18n/shellI18n"
 
+import { McpServersPage } from "./McpServersPage"
 import { ServicesPage } from "./ServicesPage"
 
 const { servicesApi, datasourcesApi, knowledgeApi, toast } = vi.hoisted(() => ({
@@ -110,6 +111,21 @@ describe("ServicesPage", () => {
         created_at: "2026-05-11T00:00:00Z",
         updated_at: "2026-05-11T00:00:00Z",
       },
+      {
+        id: 6,
+        name: "orders-mcp",
+        service_type: "mcp",
+        resource_ref: "cluster:cluster-a",
+        config: {
+          base_url: "http://mcp-server:8000/mcp",
+          mcp_transport: "streamable_http",
+        },
+        has_credentials: true,
+        knowledge_base_ids: [],
+        status: "active",
+        created_at: "2026-05-11T00:00:00Z",
+        updated_at: "2026-05-11T00:00:00Z",
+      },
     ])
 
     datasourcesApi.list.mockResolvedValue([
@@ -154,6 +170,27 @@ describe("ServicesPage", () => {
     expect(within(staleClusterRow as HTMLElement).getByText("引用已失效")).toBeInTheDocument()
     expect(within(staleDatasourceRow as HTMLElement).getByText("引用已失效")).toBeInTheDocument()
     expect(within(unboundRow as HTMLElement).getByText("未关联")).toBeInTheDocument()
+    expect(screen.queryByText("orders-mcp")).not.toBeInTheDocument()
+  })
+
+  it("renders MCP servers in their own catalog with an MCP-specific form", async () => {
+    const user = userEvent.setup()
+    render(
+      <ShellI18nProvider initialLocale="zh-CN">
+        <McpServersPage />
+      </ShellI18nProvider>,
+    )
+
+    await screen.findByText("orders-mcp")
+    expect(screen.getByText("MCP Server")).toBeInTheDocument()
+    expect(screen.getByText("Streamable HTTP")).toBeInTheDocument()
+    expect(screen.queryByText("cluster-service")).not.toBeInTheDocument()
+
+    await user.click(screen.getByRole("button", { name: "新增 MCP Server" }))
+    const dialog = await screen.findByRole("dialog", { name: "连接 MCP Server" })
+    expect(within(dialog).getByText("MCP 传输协议")).toBeInTheDocument()
+    expect(within(dialog).getByText("关联资源")).toBeInTheDocument()
+    expect(within(dialog).queryByText("服务类型")).not.toBeInTheDocument()
   })
 
   it("filters by resolved relation resource instead of raw resource_ref", async () => {

@@ -21,6 +21,7 @@ const KnowledgeListPage = lazy(() => import("@/pages/KnowledgeListPage").then((m
 const KnowledgeDetailPage = lazy(() => import("@/pages/KnowledgeDetailPage").then((module) => ({ default: module.KnowledgeDetailPage })))
 const SettingsPage = lazy(() => import("@/pages/SettingsPage").then((module) => ({ default: module.SettingsPage })))
 const ServicesPage = lazy(() => import("@/pages/ServicesPage").then((module) => ({ default: module.ServicesPage })))
+const McpServersPage = lazy(() => import("@/pages/McpServersPage").then((module) => ({ default: module.McpServersPage })))
 const PageListPage = lazy(() => import("@/pages/PageListPage").then((module) => ({ default: module.PageListPage })))
 const PageConsolePage = lazy(() => import("@/pages/PageConsolePage").then((module) => ({ default: module.PageConsolePage })))
 const PagePublishedPage = lazy(() => import("@/pages/PagePublishedPage").then((module) => ({ default: module.PagePublishedPage })))
@@ -88,6 +89,7 @@ function App() {
             <Route path="channel" element={<ChannelConsolePage />} />
             <Route path="channel/:provider" element={<ChannelConsolePage />} />
             <Route path="service" element={<ServicesPage />} />
+            <Route path="mcp" element={<McpServersPage />} />
             <Route path="page" element={<PageListPage />} />
             <Route path="page/workspace/:pageId" element={<PageConsolePage />} />
             <Route path="page/:pageId" element={<PagePublishedPage />} />
