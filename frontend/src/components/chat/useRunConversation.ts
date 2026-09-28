@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react"
 import { agentRunsApi, applyRunEvent, consumeRunEvents, RunSubscriptionError, runView, terminalRun, type Reconciliation, type RunEvent, type RunScene, type RunView, type ToolBlock } from "@/lib/agentRuns"
+import { createClientRequestId } from "@/lib/clientRequestId"
 
 export function useRunConversation(conversationId: string | null, onEvent?: (event: RunEvent, view: RunView) => void) {
   const eventListener = useRef(onEvent)
@@ -86,7 +87,7 @@ export function useRunConversation(conversationId: string | null, onEvent?: (eve
   const send = async (prompt: string, scene: RunScene, mode: "append" | "stop_and_modify" = "append", retryId?: string) => {
     if (!conversationId || !prompt.trim() || loading || loadError) return
     const epoch = generation.current
-    const clientId = retryId ?? crypto.randomUUID()
+    const clientId = retryId ?? createClientRequestId()
     const localId = `local:${clientId}`
     const existing = state.current.get(localId)
     if (existing?.delivery === "sending") return

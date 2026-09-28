@@ -9,6 +9,7 @@ import {
   Plus,
   RefreshCw,
   Search,
+  Server,
   ShieldCheck,
   Trash2,
   Zap,
@@ -55,7 +56,6 @@ const PAGE_SIZE = 10
 
 const PROVIDERS = [
   { value: "http_api", labelKey: "service.provider.http" as const, healthPath: "/health" },
-  { value: "mcp", labelKey: "service.provider.mcp" as const, healthPath: "/" },
   { value: "prometheus", label: "Prometheus", healthPath: "/-/ready" },
   { value: "alertmanager", label: "Alertmanager", healthPath: "/-/ready" },
   { value: "grafana", label: "Grafana", healthPath: "/api/health" },
@@ -68,6 +68,7 @@ const RESOURCE_TYPES = [
 
 type ResourceRefType = (typeof RESOURCE_TYPES)[number]["value"]
 type AuthType = ServiceHTTPConfig["auth_type"]
+type CatalogMode = "service" | "mcp"
 
 type ServiceFormState = {
   name: string
@@ -104,13 +105,18 @@ const emptySecrets: ServiceSecretConfig = {
   headers: {},
 }
 
-function emptyForm(): ServiceFormState {
+function emptyForm(mode: CatalogMode): ServiceFormState {
+  const isMcp = mode === "mcp"
   return {
     name: "",
-    service_type: "http_api",
+    service_type: isMcp ? "mcp" : "http_api",
     resourceType: "cluster",
     resourceValue: "",
-    config: { ...emptyConfig },
+    config: {
+      ...emptyConfig,
+      health_check_path: isMcp ? "/" : emptyConfig.health_check_path,
+      mcp_transport: isMcp ? "streamable_http" : null,
+    },
     secrets: { ...emptySecrets },
     knowledge_base_ids: [],
     defaultHeadersText: "{}",
@@ -198,7 +204,12 @@ function ActionButton({
 }
 
 export function ServicesPage() {
+  return <ServiceCatalogPage mode="service" />
+}
+
+export function ServiceCatalogPage({ mode }: { mode: CatalogMode }) {
   const { t } = useShellI18n()
+  const isMcpPage = mode === "mcp"
   const [services, setServices] = useState<Service[]>([])
   const [datasources, setDatasources] = useState<DataSource[]>([])
   const [knowledgeBases, setKnowledgeBases] = useState<KnowledgeBase[]>([])
@@ -210,7 +221,7 @@ export function ServicesPage() {
 
   const [dialogOpen, setDialogOpen] = useState(false)
   const [editingService, setEditingService] = useState<Service | null>(null)
-  const [form, setForm] = useState<ServiceFormState>(emptyForm)
+  const [form, setForm] = useState<ServiceFormState>(() => emptyForm(mode))
   const [advancedOpen, setAdvancedOpen] = useState(false)
   const [saving, setSaving] = useState(false)
   const [testing, setTesting] = useState(false)
@@ -236,15 +247,18 @@ export function ServicesPage() {
         datasourcesApi.list(),
         knowledgeApi.list(),
       ])
-      setServices(Array.isArray(serviceList) ? serviceList : [])
+      const records = Array.isArray(serviceList) ? serviceList : []
+      setServices(records.filter((service) => isMcpPage
+        ? service.service_type === "mcp"
+        : service.service_type !== "mcp"))
       setDatasources(Array.isArray(datasourceList) ? datasourceList : [])
       setKnowledgeBases(Array.isArray(kbList) ? kbList : [])
     } catch (cause) {
-      setError(getErrorMessage(cause, t("service.loadFailed")))
+      setError(getErrorMessage(cause, t(isMcpPage ? "mcp.loadFailed" : "service.loadFailed")))
     } finally {
       setLoading(false)
     }
-  }, [t])
+  }, [isMcpPage, t])
 
   useEffect(() => { void fetchData() }, [fetchData])
 
@@ -276,7 +290,7 @@ export function ServicesPage() {
 
   function openCreateDialog() {
     setEditingService(null)
-    setForm(emptyForm())
+    setForm(emptyForm(mode))
     setAdvancedOpen(false)
     setDialogOpen(true)
   }
@@ -331,15 +345,15 @@ export function ServicesPage() {
       const payload = buildPayload()
       if (editingService) {
         await servicesApi.update(editingService.id, payload)
-        toast.success(t("service.updated"))
+        toast.success(t(isMcpPage ? "mcp.updated" : "service.updated"))
       } else {
         await servicesApi.create(payload)
-        toast.success(t("service.created"))
+        toast.success(t(isMcpPage ? "mcp.created" : "service.created"))
       }
       setDialogOpen(false)
       await fetchData()
     } catch (cause) {
-      toast.error(getErrorMessage(cause, t("service.saveFailed")))
+      toast.error(getErrorMessage(cause, t(isMcpPage ? "mcp.saveFailed" : "service.saveFailed")))
     } finally {
       setSaving(false)
     }
@@ -352,12 +366,14 @@ export function ServicesPage() {
         ? await servicesApi.testUpdateConfig(editingService.id, buildPayload())
         : await servicesApi.testConfig(buildPayload())
       if (result.success) {
-        toast.success(result.message || t("service.connectSuccess"))
+        toast.success(isMcpPage
+          ? formatCopy(t("mcp.connectDiscovered"), "count", result.tool_count ?? 0)
+          : result.message || t("service.connectSuccess"))
       } else {
-        toast.error(result.message || t("service.connectFailed"))
+        toast.error(result.message || t(isMcpPage ? "mcp.connectFailed" : "service.connectFailed"))
       }
     } catch (cause) {
-      toast.error(getErrorMessage(cause, t("service.testFailed")))
+      toast.error(getErrorMessage(cause, t(isMcpPage ? "mcp.testFailed" : "service.testFailed")))
     } finally {
       setTesting(false)
     }
@@ -368,12 +384,12 @@ export function ServicesPage() {
     try {
       const result = await servicesApi.test(service.id)
       if (result.success) {
-        toast.success(formatCopy(t("service.rowHealthy"), "name", service.name))
+        toast.success(formatCopy(t(isMcpPage ? "mcp.rowHealthy" : "service.rowHealthy"), "name", service.name))
       } else {
-        toast.error(result.message || t("service.connectFailed"))
+        toast.error(result.message || t(isMcpPage ? "mcp.connectFailed" : "service.connectFailed"))
       }
     } catch (cause) {
-      toast.error(getErrorMessage(cause, t("service.testFailed")))
+      toast.error(getErrorMessage(cause, t(isMcpPage ? "mcp.testFailed" : "service.testFailed")))
     } finally {
       setRowTestingId(null)
     }
@@ -384,11 +400,11 @@ export function ServicesPage() {
     setDeleting(true)
     try {
       await servicesApi.delete(deleteTarget.id)
-      toast.success(t("service.deleted"))
+      toast.success(t(isMcpPage ? "mcp.deleted" : "service.deleted"))
       setDeleteTarget(null)
       await fetchData()
     } catch (cause) {
-      toast.error(getErrorMessage(cause, t("service.deleteFailed")))
+      toast.error(getErrorMessage(cause, t(isMcpPage ? "mcp.deleteFailed" : "service.deleteFailed")))
     } finally {
       setDeleting(false)
     }
@@ -420,7 +436,7 @@ export function ServicesPage() {
   const toolbar = (
     <FilterToolbar>
       <FilterToolbarGroup>
-        <Select value={providerFilter} onValueChange={(value) => { setProviderFilter(value); setPage(1) }}>
+        {!isMcpPage && <Select value={providerFilter} onValueChange={(value) => { setProviderFilter(value); setPage(1) }}>
           <SelectTrigger className="w-44 bg-card"><SelectValue /></SelectTrigger>
           <SelectContent>
             <SelectItem value="all">{t("service.filterAll")}</SelectItem>
@@ -433,12 +449,12 @@ export function ServicesPage() {
               </SelectItem>
             ))}
           </SelectContent>
-        </Select>
+        </Select>}
         <div className="relative">
           <Search className="pointer-events-none absolute left-3 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground/60" />
           <Input
-            aria-label={t("service.searchAria")}
-            placeholder={t("service.searchPlaceholder")}
+            aria-label={t(isMcpPage ? "mcp.searchAria" : "service.searchAria")}
+            placeholder={t(isMcpPage ? "mcp.searchPlaceholder" : "service.searchPlaceholder")}
             className="w-72 rounded-lg bg-card pl-9 text-sm"
             value={searchQuery}
             onChange={(event) => { setSearchQuery(event.target.value); setPage(1) }}
@@ -450,7 +466,7 @@ export function ServicesPage() {
           {loading ? <Loader2 className="size-4 animate-spin" /> : <RefreshCw className="size-4" />}
           {t("service.refresh")}
         </Button>
-        <Button size="sm" onClick={openCreateDialog}><Plus className="size-4" />{t("service.create")}</Button>
+        <Button size="sm" onClick={openCreateDialog}><Plus className="size-4" />{t(isMcpPage ? "mcp.create" : "service.create")}</Button>
       </FilterToolbarGroup>
     </FilterToolbar>
   )
@@ -462,7 +478,7 @@ export function ServicesPage() {
       return (
         <TableRow><TableCell colSpan={columnCount} className="h-36 text-center">
           <div className="flex flex-col items-center gap-3">
-            <Plug className="size-8 text-negative/60" />
+            {isMcpPage ? <Server className="size-8 text-negative/60" /> : <Plug className="size-8 text-negative/60" />}
             <p className="text-sm text-negative">{error}</p>
             <Button variant="outline" size="sm" onClick={() => void fetchData()}>{t("service.retry")}</Button>
           </div>
@@ -473,12 +489,12 @@ export function ServicesPage() {
       return (
         <TableRow><TableCell colSpan={columnCount} className="h-40 text-center">
           <div className="flex flex-col items-center gap-3">
-            <Plug className="size-8 text-muted-foreground/40" />
+            {isMcpPage ? <Server className="size-8 text-muted-foreground/40" /> : <Plug className="size-8 text-muted-foreground/40" />}
             <div>
-              <p className="text-sm text-foreground">{searchQuery || providerFilter !== "all" ? t("service.emptyNoMatch") : t("service.emptyNone")}</p>
-              <p className="mt-1 text-xs text-muted-foreground">{t("service.emptyDesc")}</p>
+              <p className="text-sm text-foreground">{searchQuery || providerFilter !== "all" ? t(isMcpPage ? "mcp.emptyNoMatch" : "service.emptyNoMatch") : t(isMcpPage ? "mcp.emptyNone" : "service.emptyNone")}</p>
+              <p className="mt-1 text-xs text-muted-foreground">{t(isMcpPage ? "mcp.emptyDesc" : "service.emptyDesc")}</p>
             </div>
-            {!searchQuery && providerFilter === "all" && <Button size="sm" onClick={openCreateDialog}>{t("service.emptyAdd")}</Button>}
+            {!searchQuery && providerFilter === "all" && <Button size="sm" onClick={openCreateDialog}>{t(isMcpPage ? "mcp.emptyAdd" : "service.emptyAdd")}</Button>}
           </div>
         </TableCell></TableRow>
       )
@@ -487,7 +503,7 @@ export function ServicesPage() {
       <TableRow key={service.id} className="cursor-pointer transition-colors duration-150 hover:bg-muted/40" onClick={() => openEditDialog(service)}>
         <TableCell>
           <div className="flex items-center gap-3">
-            <div className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-primary/10"><Plug className="size-4 text-primary" /></div>
+            <div className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-primary/10">{isMcpPage ? <Server className="size-4 text-primary" /> : <Plug className="size-4 text-primary" />}</div>
             <div className="min-w-0">
               <p className="truncate text-sm font-medium text-foreground">{service.name}</p>
               <div className="mt-1 flex items-center gap-1.5 text-xs text-muted-foreground">
@@ -498,7 +514,9 @@ export function ServicesPage() {
             </div>
           </div>
         </TableCell>
-        <TableCell><Badge variant="outline">{(() => {
+        <TableCell><Badge variant="outline">{isMcpPage
+          ? t(service.config?.mcp_transport === "sse" ? "mcp.transport.sse" : "mcp.transport.streamableHttp")
+          : (() => {
           const provider = PROVIDERS.find((item) => item.value === service.service_type)
           return provider && "labelKey" in provider ? t(provider.labelKey) : provider?.label || service.service_type
         })()}</Badge></TableCell>
@@ -509,11 +527,11 @@ export function ServicesPage() {
         </TableCell>
         <TableCell className="text-right" onClick={(event) => event.stopPropagation()}>
           <div className="flex items-center justify-end gap-1">
-            <ActionButton label={t("service.action.test")} variant="ghost" size="icon-xs" disabled={rowTestingId === service.id} onClick={() => void handleTestConnection(service)}>
+            <ActionButton label={t(isMcpPage ? "mcp.action.test" : "service.action.test")} variant="ghost" size="icon-xs" disabled={rowTestingId === service.id} onClick={() => void handleTestConnection(service)}>
               {rowTestingId === service.id ? <Loader2 className="size-3.5 animate-spin" /> : <Zap className="size-3.5" />}
             </ActionButton>
-            <ActionButton label={t("service.action.edit")} variant="ghost" size="icon-xs" onClick={() => openEditDialog(service)}><Pencil className="size-3.5" /></ActionButton>
-            <ActionButton label={t("service.action.delete")} variant="ghost" size="icon-xs" className="text-destructive hover:text-destructive" onClick={() => setDeleteTarget(service)}><Trash2 className="size-3.5" /></ActionButton>
+            <ActionButton label={t(isMcpPage ? "mcp.action.edit" : "service.action.edit")} variant="ghost" size="icon-xs" onClick={() => openEditDialog(service)}><Pencil className="size-3.5" /></ActionButton>
+            <ActionButton label={t(isMcpPage ? "mcp.action.delete" : "service.action.delete")} variant="ghost" size="icon-xs" className="text-destructive hover:text-destructive" onClick={() => setDeleteTarget(service)}><Trash2 className="size-3.5" /></ActionButton>
           </div>
         </TableCell>
       </TableRow>
@@ -523,13 +541,13 @@ export function ServicesPage() {
   const primary = (
     <div className="rounded-xl bg-card shadow-sm">
       <div className="flex items-center gap-4 border-b border-border px-5 py-3">
-        <Tabs value="all" onValueChange={() => {}}><TabsList><TabsTrigger value="all">{t("service.tabAll")}</TabsTrigger></TabsList></Tabs>
+        <Tabs value="all" onValueChange={() => {}}><TabsList><TabsTrigger value="all">{t(isMcpPage ? "mcp.tabAll" : "service.tabAll")}</TabsTrigger></TabsList></Tabs>
         <span className="text-xs tabular-nums text-muted-foreground">{filtered.length} {t("service.resultCount")}</span>
       </div>
       <ListTable className="overflow-hidden rounded-none border-0">
         <Table>
           <TableHeader><TableRow className="hover:bg-transparent">
-            <TableHead>{t("service.col.name")}</TableHead><TableHead>{t("service.col.type")}</TableHead><TableHead>{t("service.col.address")}</TableHead>
+            <TableHead>{t("service.col.name")}</TableHead><TableHead>{t(isMcpPage ? "mcp.col.transport" : "service.col.type")}</TableHead><TableHead>{t(isMcpPage ? "mcp.col.endpoint" : "service.col.address")}</TableHead>
             <TableHead>{t("service.col.resource")}</TableHead><TableHead>{t("service.col.documents")}</TableHead><TableHead className="text-right">{t("service.col.actions")}</TableHead>
           </TableRow></TableHeader>
           <TableBody>{renderTableBody()}</TableBody>
@@ -540,15 +558,15 @@ export function ServicesPage() {
   )
 
   const authType = form.config.auth_type
-  const isMcp = form.service_type === "mcp"
+  const isMcp = isMcpPage
   return (
     <TooltipProvider>
       <WorkbenchPage toolbar={toolbar} primary={primary} />
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
         <DialogContent className="flex h-[90vh] max-h-192 flex-col overflow-hidden sm:max-w-2xl">
           <DialogHeader>
-            <DialogTitle>{editingService ? t("service.dialogEdit") : t("service.dialogCreate")}</DialogTitle>
-            <DialogDescription>{t("service.dialogDesc")}</DialogDescription>
+            <DialogTitle>{editingService ? t(isMcp ? "mcp.dialogEdit" : "service.dialogEdit") : t(isMcp ? "mcp.dialogCreate" : "service.dialogCreate")}</DialogTitle>
+            <DialogDescription>{t(isMcp ? "mcp.dialogDesc" : "service.dialogDesc")}</DialogDescription>
           </DialogHeader>
 
           <ScrollArea className="h-0 min-h-0 flex-1 [&>[data-slot=scroll-area-viewport]]:absolute [&>[data-slot=scroll-area-viewport]]:inset-0">
@@ -556,9 +574,9 @@ export function ServicesPage() {
             <section className="grid gap-4 sm:grid-cols-2">
               <div>
                 <label className="mb-1.5 block text-sm font-medium">{t("service.label.name")}</label>
-                <Input value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} placeholder={t("service.namePlaceholder")} />
+                <Input aria-label={t("service.label.name")} value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} placeholder={t(isMcp ? "mcp.namePlaceholder" : "service.namePlaceholder")} />
               </div>
-              <div>
+              {!isMcp && <div>
                 <label className="mb-1.5 block text-sm font-medium">{t("service.label.type")}</label>
                 <Select value={form.service_type} onValueChange={(value) => {
                   const preset = PROVIDERS.find((item) => item.value === value)
@@ -572,28 +590,28 @@ export function ServicesPage() {
                     },
                   }))
                 }}>
-                  <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
+                  <SelectTrigger aria-label={t("service.label.type")} className="w-full"><SelectValue /></SelectTrigger>
                   <SelectContent>
                     {PROVIDERS.map((item) => <SelectItem key={item.value} value={item.value}>{"labelKey" in item ? t(item.labelKey) : item.label}</SelectItem>)}
                     {editingService && !PROVIDERS.some((item) => item.value === editingService.service_type) && <SelectItem value={editingService.service_type}>{editingService.service_type}</SelectItem>}
                   </SelectContent>
                 </Select>
-              </div>
+              </div>}
             </section>
 
             <section className="rounded-lg border border-border bg-muted/10 p-4">
               <div className="grid gap-4 sm:grid-cols-[1fr_160px]">
                 <div>
                   <label className="mb-1.5 block text-sm font-medium">{t("service.label.baseUrl")}</label>
-                  <Input value={form.config.base_url} onChange={(event) => updateConfig("base_url", event.target.value)} placeholder={isMcp ? t("service.example.mcpUrl") : t("service.example.baseUrl")} />
+                  <Input aria-label={t("service.label.baseUrl")} value={form.config.base_url} onChange={(event) => updateConfig("base_url", event.target.value)} placeholder={isMcp ? t("mcp.example.url") : t("service.example.baseUrl")} />
                 </div>
                 <div>
-                  <label className="mb-1.5 block text-sm font-medium">{isMcp ? t("service.label.mcpTransport") : t("service.label.response")}</label>
+                  <label className="mb-1.5 block text-sm font-medium">{isMcp ? t("mcp.label.transport") : t("service.label.response")}</label>
                   {isMcp ? <Select value={form.config.mcp_transport || "streamable_http"} onValueChange={(value) => updateConfig("mcp_transport", value as "streamable_http" | "sse")}>
-                    <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
-                    <SelectContent><SelectItem value="streamable_http">{t("service.mcp.streamableHttp")}</SelectItem><SelectItem value="sse">{t("service.mcp.sse")}</SelectItem></SelectContent>
+                    <SelectTrigger aria-label={t("mcp.label.transport")} className="w-full"><SelectValue /></SelectTrigger>
+                    <SelectContent><SelectItem value="streamable_http">{t("mcp.transport.streamableHttp")}</SelectItem><SelectItem value="sse">{t("mcp.transport.sse")}</SelectItem></SelectContent>
                   </Select> : <Select value={form.config.response_format} onValueChange={(value) => updateConfig("response_format", value as ServiceHTTPConfig["response_format"])}>
-                    <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
+                    <SelectTrigger aria-label={t("service.label.response")} className="w-full"><SelectValue /></SelectTrigger>
                     <SelectContent><SelectItem value="auto">{t("service.response.auto")}</SelectItem><SelectItem value="json">{t("service.response.json")}</SelectItem><SelectItem value="text">{t("service.response.text")}</SelectItem></SelectContent>
                   </Select>}
                 </div>
@@ -605,7 +623,7 @@ export function ServicesPage() {
                 </div>}
                 <div>
                   <label className="mb-1.5 block text-sm font-medium">{t("service.label.timeout")}</label>
-                  <Input type="number" min={1} max={120} value={form.config.timeout_seconds} onChange={(event) => updateConfig("timeout_seconds", Number(event.target.value) || 30)} />
+                  <Input aria-label={t("service.label.timeout")} type="number" min={1} max={120} value={form.config.timeout_seconds} onChange={(event) => updateConfig("timeout_seconds", Number(event.target.value) || 30)} />
                 </div>
               </div>
             </section>
@@ -616,7 +634,7 @@ export function ServicesPage() {
                 <div>
                   <label className="mb-1.5 block text-sm font-medium">{t("service.auth.type")}</label>
                   <Select value={authType} onValueChange={(value) => updateAuthType(value as AuthType)}>
-                    <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
+                    <SelectTrigger aria-label={t("service.auth.type")} className="w-full"><SelectValue /></SelectTrigger>
                     <SelectContent><SelectItem value="none">{t("service.auth.none")}</SelectItem><SelectItem value="basic">{t("service.auth.basic")}</SelectItem><SelectItem value="bearer">{t("service.auth.bearer")}</SelectItem><SelectItem value="api_key">{t("service.auth.apiKey")}</SelectItem></SelectContent>
                   </Select>
                 </div>
@@ -635,16 +653,16 @@ export function ServicesPage() {
             <section className="grid gap-4 sm:grid-cols-2">
               <div>
                 <label className="mb-1.5 block text-sm font-medium">{t("service.resource.label")}</label>
-                {isMcp && <p className="mb-2 text-xs text-muted-foreground">{t("service.mcp.bindingHint")}</p>}
+                {isMcp && <p className="mb-2 text-xs text-muted-foreground">{t("mcp.bindingHint")}</p>}
                 <div className="grid grid-cols-[120px_1fr] gap-2">
                   <Select value={form.resourceType} onValueChange={(value) => setForm({ ...form, resourceType: value as ResourceRefType, resourceValue: "" })}>
-                    <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
+                    <SelectTrigger aria-label={t("service.resource.typeAria")} className="w-full"><SelectValue /></SelectTrigger>
                     <SelectContent>{RESOURCE_TYPES.map((item) => <SelectItem key={item.value} value={item.value}>{t(item.labelKey)}</SelectItem>)}</SelectContent>
                   </Select>
                   <Select value={form.resourceValue || "__none__"} onValueChange={(value) => setForm({ ...form, resourceValue: value === "__none__" ? "" : value })}>
-                    <SelectTrigger className="w-full"><SelectValue placeholder={t("service.resource.select")} /></SelectTrigger>
+                    <SelectTrigger aria-label={t("service.resource.targetAria")} className="w-full"><SelectValue placeholder={t("service.resource.select")} /></SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="__none__">{t("service.resource.doNotLink")}</SelectItem>
+                      <SelectItem value="__none__">{t(isMcp ? "mcp.resource.selectRequired" : "service.resource.doNotLink")}</SelectItem>
                       {form.resourceType === "cluster"
                         ? clusterKeys.map((key) => <SelectItem key={key} value={key}>{key}</SelectItem>)
                         : datasources.map((item) => <SelectItem key={item.id} value={String(item.id)}>{item.name}</SelectItem>)}
@@ -688,14 +706,14 @@ export function ServicesPage() {
 
           <DialogFooter className="mt-2 flex items-center justify-between sm:justify-between">
             <Button variant="outline" onClick={() => void handleTestInDialog()} disabled={testing || !form.config.base_url}>
-              {testing ? <Loader2 className="size-4 animate-spin" /> : <Zap className="size-4" />}{t("service.action.test")}
+              {testing ? <Loader2 className="size-4 animate-spin" /> : <Zap className="size-4" />}{t(isMcp ? "mcp.action.test" : "service.action.test")}
             </Button>
             <div className="flex gap-2"><Button variant="outline" onClick={() => setDialogOpen(false)}>{t("service.cancel")}</Button><Button onClick={() => void handleSave()} disabled={saving || !form.name.trim() || !form.config.base_url.trim() || (isMcp && !form.resourceValue)}>{saving && <Loader2 className="size-4 animate-spin" />}{editingService ? t("service.save") : t("service.submitCreate")}</Button></div>
           </DialogFooter>
         </DialogContent>
       </Dialog>
 
-      <ConfirmActionDialog open={!!deleteTarget} title={t("service.deleteTitle")} description={formatCopy(t("service.deleteDesc"), "name", deleteTarget?.name || "")} onOpenChange={(open) => !open && setDeleteTarget(null)} onConfirm={handleDelete} confirming={deleting} />
+      <ConfirmActionDialog open={!!deleteTarget} title={t(isMcp ? "mcp.deleteTitle" : "service.deleteTitle")} description={formatCopy(t(isMcp ? "mcp.deleteDesc" : "service.deleteDesc"), "name", deleteTarget?.name || "")} onOpenChange={(open) => !open && setDeleteTarget(null)} onConfirm={handleDelete} confirming={deleting} />
     </TooltipProvider>
   )
 }
