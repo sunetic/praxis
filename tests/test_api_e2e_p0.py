@@ -15,6 +15,7 @@ from app.core.security import is_encrypted
 from app.db.database import Base, get_db
 from app.models import models
 from app.services.agent.application import RuntimeApplication, local_actor
+from app.services.platform.settings_store import upsert_setting
 
 
 def _datasource_payload(
@@ -249,6 +250,23 @@ def test_p0_onboarding_status_and_complete(api_client):
 
     status_after = client.get("/api/v1/onboarding/status")
     assert status_after.json()["completed"] is True
+
+
+def test_p0_onboarding_rejects_completion_without_model_config(api_client):
+    client, session_local = api_client
+
+    complete = client.post("/api/v1/onboarding/complete", json={"llm_config": {}})
+
+    assert complete.status_code == 422
+    assert "llm_api_key" in complete.json()["detail"]
+    assert "llm_model" in complete.json()["detail"]
+    assert client.get("/api/v1/onboarding/status").json() == {"completed": False}
+
+    # A stale completion marker from an older/demo initializer must not bypass setup.
+    with session_local() as db:
+        upsert_setting(db, "onboarding_completed", True)
+        db.commit()
+    assert client.get("/api/v1/onboarding/status").json() == {"completed": False}
 
 
 def test_p0_skills_list(api_client, monkeypatch: pytest.MonkeyPatch, tmp_path: Path):

@@ -111,31 +111,59 @@ def retry_step(
     raise DemoInitError(f"{label} did not complete: {last_error}") from last_error
 
 
-def ensure_datasource() -> dict[str, Any]:
-    """Create the demo MySQL datasource once."""
+def ensure_datasources() -> tuple[dict[str, Any], dict[str, Any]]:
+    """Create the paired app and admin credentials for the demo cluster once."""
     datasources = api_request("GET", "/datasources")
-    existing = next(
-        (item for item in datasources if item.get("cluster_key") == CLUSTER_KEY),
-        None,
-    )
-    if existing:
-        return existing
-    return api_request(
-        "POST",
-        "/datasources",
-        {
-            "name": "Demo MySQL",
-            "host": "mysql-demo",
-            "port": 3306,
-            "db_type": "mysql",
-            "cluster_key": CLUSTER_KEY,
-            "access_level": "user",
-            "tenant_role": "user",
-            "user": "app",
-            "password": MYSQL_PASSWORD,
-            "database": "app",
-        },
-    )
+
+    def find(access_level: str) -> dict[str, Any] | None:
+        return next(
+            (
+                item
+                for item in datasources
+                if item.get("cluster_key") == CLUSTER_KEY
+                and item.get("access_level") == access_level
+            ),
+            None,
+        )
+
+    user_datasource = find("user")
+    if user_datasource is None:
+        user_datasource = api_request(
+            "POST",
+            "/datasources",
+            {
+                "name": "Demo MySQL",
+                "host": "mysql-demo",
+                "port": 3306,
+                "db_type": "mysql",
+                "cluster_key": CLUSTER_KEY,
+                "access_level": "user",
+                "tenant_role": "user",
+                "user": "app",
+                "password": MYSQL_PASSWORD,
+                "database": "app",
+            },
+        )
+
+    admin_datasource = find("admin")
+    if admin_datasource is None:
+        admin_datasource = api_request(
+            "POST",
+            "/datasources",
+            {
+                "name": "Demo MySQL Admin",
+                "host": "mysql-demo",
+                "port": 3306,
+                "db_type": "mysql",
+                "cluster_key": CLUSTER_KEY,
+                "access_level": "admin",
+                "tenant_role": "sys",
+                "user": "root",
+                "password": MYSQL_ROOT_PASSWORD,
+                "database": "app",
+            },
+        )
+    return user_datasource, admin_datasource
 
 
 def ensure_service() -> dict[str, Any]:
@@ -175,22 +203,28 @@ def ensure_service() -> dict[str, Any]:
     )
 
 
-def wait_for_connections(datasource_id: int, service_id: int, timeout_seconds: int = 120) -> None:
-    """Verify both preconfigured integrations before reporting success."""
+def wait_for_connections(
+    datasource_id: int, admin_datasource_id: int, service_id: int, timeout_seconds: int = 120
+) -> None:
+    """Verify both database credentials and the bound service before reporting success."""
     deadline = time.monotonic() + timeout_seconds
     next_progress = 0.0
-    last_results: tuple[Any, Any] = (None, None)
+    last_results: tuple[Any, Any, Any] = (None, None, None)
     while time.monotonic() < deadline:
         database = api_request("POST", f"/datasources/{datasource_id}/test", {})
+        admin_database = api_request(
+            "POST", f"/datasources/{admin_datasource_id}/test", {}
+        )
         service = api_request("POST", f"/services/{service_id}/test", {})
-        last_results = (database, service)
-        if database.get("success") and service.get("success"):
+        last_results = (database, admin_database, service)
+        if database.get("success") and admin_database.get("success") and service.get("success"):
             return
         now = time.monotonic()
         if now >= next_progress:
             print(
                 "  Still waiting: "
-                f"MySQL={database.get('message', 'unknown')}; "
+                f"MySQL app={database.get('message', 'unknown')}; "
+                f"MySQL admin={admin_database.get('message', 'unknown')}; "
                 f"Prometheus={service.get('message', 'unknown')}",
                 flush=True,
             )
@@ -199,22 +233,30 @@ def wait_for_connections(datasource_id: int, service_id: int, timeout_seconds: i
     raise DemoInitError(f"Demo connections did not become ready: {last_results!r}")
 
 
-def verify_registration(datasource_id: int, service_id: int) -> None:
-    """Confirm fresh list calls expose both objects to the same API used by the UI."""
+def verify_registration(
+    datasource_id: int, admin_datasource_id: int, service_id: int
+) -> None:
+    """Confirm fresh list calls expose both credentials and the bound service."""
     datasources = api_request("GET", "/datasources")
     services = api_request("GET", "/services")
     datasource_visible = any(
-        int(item.get("id", -1)) == datasource_id and item.get("name") == "Demo MySQL"
+        int(item.get("id", -1)) == datasource_id and item.get("access_level") == "user"
+        for item in datasources
+    )
+    admin_datasource_visible = any(
+        int(item.get("id", -1)) == admin_datasource_id
+        and item.get("access_level") == "admin"
         for item in datasources
     )
     service_visible = any(
         int(item.get("id", -1)) == service_id and item.get("name") == "Demo Prometheus"
         for item in services
     )
-    if not datasource_visible or not service_visible:
+    if not datasource_visible or not admin_datasource_visible or not service_visible:
         raise DemoInitError(
             "Demo objects were not visible through list APIs: "
-            f"datasource={datasource_visible}, service={service_visible}"
+            f"datasource={datasource_visible}, "
+            f"admin_datasource={admin_datasource_visible}, service={service_visible}"
         )
 
 
@@ -222,15 +264,21 @@ def main() -> None:
     """Initialize and verify all first-run demo objects."""
     print("[1/5] Waiting for the Praxis API...", flush=True)
     wait_for_praxis()
-    print("[2/5] Registering Demo MySQL and Demo Prometheus...", flush=True)
-    datasource = retry_step("Demo MySQL registration", ensure_datasource)
+    print("[2/5] Registering Demo MySQL app/admin and Demo Prometheus...", flush=True)
+    datasource, admin_datasource = retry_step(
+        "Demo MySQL credential registration", ensure_datasources
+    )
     service = retry_step("Demo Prometheus registration", ensure_service)
-    print("[3/5] Verifying both connections...", flush=True)
-    wait_for_connections(int(datasource["id"]), int(service["id"]))
+    print("[3/5] Verifying both MySQL credentials and Prometheus...", flush=True)
+    wait_for_connections(
+        int(datasource["id"]), int(admin_datasource["id"]), int(service["id"])
+    )
     print("[4/5] Waiting for MySQL container metrics...", flush=True)
     wait_for_cadvisor_metrics()
-    print("[5/5] Confirming both objects are visible in Praxis...", flush=True)
-    verify_registration(int(datasource["id"]), int(service["id"]))
+    print("[5/5] Confirming demo objects are visible in Praxis...", flush=True)
+    verify_registration(
+        int(datasource["id"]), int(admin_datasource["id"]), int(service["id"])
+    )
     print(
         f"""
 Praxis demo is ready.
@@ -240,11 +288,12 @@ Praxis demo is ready.
     Database:       app
     Username:       app
     Password:       {MYSQL_PASSWORD}
-    Root password:  {MYSQL_ROOT_PASSWORD}
+    Admin username: root
+    Admin password: {MYSQL_ROOT_PASSWORD}
   Prometheus:       http://127.0.0.1:{int(os.getenv("DEMO_PROMETHEUS_PORT", "9090"))}
   cAdvisor:         http://127.0.0.1:{int(os.getenv("DEMO_CADVISOR_PORT", "8080"))}
 
-Registered in Praxis: {datasource["name"]} (ID {datasource["id"]}), {service["name"]} (ID {service["id"]})
+Registered in Praxis: {datasource["name"]} (ID {datasource["id"]}), {admin_datasource["name"]} (ID {admin_datasource["id"]}), {service["name"]} (ID {service["id"]})
 Knowledge pack: not installed; download it from Knowledge Packs when needed.
 """.strip()
     )

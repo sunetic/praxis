@@ -13,6 +13,9 @@ Identify and diagnose the most impactful slow queries, provide root cause and ac
 
 ## Workflow
 
+Use `access_level="admin"` for `performance_schema` and `sys` queries. Keep application-table
+queries and execution plans on the default `user` access level.
+
 ### Step 1: Top Slow Queries by Total Time
 ```sql
 SELECT DIGEST_TEXT, COUNT_STAR AS exec_count,

@@ -3,7 +3,7 @@ from __future__ import annotations
 import pathlib
 from typing import Any
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from app.core.logging import get_logger
@@ -19,7 +19,12 @@ _ONBOARDING_KEY = "onboarding_completed"
 
 
 def is_onboarding_completed(db: Session) -> bool:
-    return bool(get_setting(db, _ONBOARDING_KEY))
+    if not get_setting(db, _ONBOARDING_KEY):
+        return False
+    return all(
+        isinstance(value, str) and bool(value.strip())
+        for value in (get_setting(db, "ai_api_key"), get_setting(db, "ai_model"))
+    )
 
 
 @router.get("/status")
@@ -38,6 +43,26 @@ async def complete_onboarding(
     Also triggers scheduler startup if not already running.
     """
     llm_config = payload.get("llm_config", {})
+
+    if not isinstance(llm_config, dict):
+        raise HTTPException(status_code=422, detail="llm_config must be an object")
+
+    required = ("llm_api_key", "llm_model")
+    missing = [
+        key
+        for key in required
+        if not isinstance(llm_config.get(key), str) or not llm_config[key].strip()
+    ]
+    if missing:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Missing required LLM configuration: {', '.join(missing)}",
+        )
+
+    llm_config = {
+        key: value.strip() if isinstance(value, str) else value
+        for key, value in llm_config.items()
+    }
 
     # New logical runs snapshot these settings; existing runs keep their config.
     if "llm_api_key" in llm_config:

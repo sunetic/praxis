@@ -36,7 +36,8 @@ enter LLM provider, model, API URL, and API key information.
 
 On a fresh volume the environment already contains:
 
-- a `Demo MySQL` datasource with cluster key `mysql-prometheus-demo`;
+- a `Demo MySQL` app-user datasource and a `Demo MySQL Admin` root datasource, both with cluster key `mysql-prometheus-demo`;
+- automatic read-only admin routing for `performance_schema` and `sys` diagnostics;
 - a cluster-bound `Demo Prometheus` Service whose connection test passes;
 - cAdvisor container metrics and two hours of Prometheus retention.
 

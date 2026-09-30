@@ -15,6 +15,7 @@ services:
     environment:
       PRAXIS_DEMO_BOOTSTRAP: "true"
       DEMO_MYSQL_APP_PASSWORD: ${DEMO_MYSQL_APP_PASSWORD:-praxis-demo-app}
+      DEMO_MYSQL_ROOT_PASSWORD: ${DEMO_MYSQL_ROOT_PASSWORD:-praxis-demo-root}
     ports:
       - "127.0.0.1:${PRAXIS_DEMO_PORT:-8000}:8000"
     volumes:

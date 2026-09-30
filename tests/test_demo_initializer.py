@@ -47,6 +47,9 @@ def test_demo_compose_starts_without_generated_credentials() -> None:
     assert services["praxis-demo"]["environment"]["DEMO_MYSQL_APP_PASSWORD"] == (
         "${DEMO_MYSQL_APP_PASSWORD:-praxis-demo-app}"
     )
+    assert services["praxis-demo"]["environment"]["DEMO_MYSQL_ROOT_PASSWORD"] == (
+        "${DEMO_MYSQL_ROOT_PASSWORD:-praxis-demo-root}"
+    )
     assert set(services["demo-init"]["depends_on"]) == {
         "praxis-demo",
         "mysql-demo",
@@ -61,7 +64,7 @@ def test_demo_compose_starts_without_generated_credentials() -> None:
     assert services["prometheus-demo"]["depends_on"] == ["cadvisor-demo"]
 
 
-def test_initializer_creates_cluster_bound_datasource_and_service(
+def test_initializer_creates_cluster_bound_datasources_and_service(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     initializer = _load_initializer(monkeypatch)
@@ -72,26 +75,32 @@ def test_initializer_creates_cluster_bound_datasource_and_service(
         if (method, path) == ("GET", "/datasources"):
             return []
         if (method, path) == ("POST", "/datasources"):
-            return {"id": 1, **payload}
+            return {"id": 1 if payload["access_level"] == "user" else 2, **payload}
         if (method, path) == ("GET", "/services"):
             return []
         if (method, path) == ("POST", "/services"):
-            return {"id": 2, **payload}
+            return {"id": 3, **payload}
         raise AssertionError(f"Unexpected request: {method} {path}")
 
     monkeypatch.setattr(initializer, "api_request", fake_request)
 
-    datasource = initializer.ensure_datasource()
+    datasource, admin_datasource = initializer.ensure_datasources()
     service = initializer.ensure_service()
 
     assert datasource["cluster_key"] == "mysql-prometheus-demo"
     assert datasource["host"] == "mysql-demo"
+    assert datasource["user"] == "app"
     assert datasource["password"] == "a" * 48
+    assert datasource["access_level"] == "user"
+    assert admin_datasource["cluster_key"] == datasource["cluster_key"]
+    assert admin_datasource["user"] == "root"
+    assert admin_datasource["password"] == "root-demo-password"
+    assert admin_datasource["access_level"] == "admin"
     assert service["service_type"] == "prometheus"
     assert service["resource_ref"] == "cluster:mysql-prometheus-demo"
     assert service["config"]["base_url"] == "http://prometheus-demo:9090"
     assert service["knowledge_base_ids"] == []
-    assert len(calls) == 4
+    assert len(calls) == 5
 
 
 def test_initializer_creates_service_without_a_knowledge_pack(
@@ -118,9 +127,18 @@ def test_initializer_creates_service_without_a_knowledge_pack(
 
 def test_initializer_reuses_existing_demo_objects(monkeypatch: pytest.MonkeyPatch) -> None:
     initializer = _load_initializer(monkeypatch)
-    datasource = {"id": 3, "cluster_key": "mysql-prometheus-demo"}
-    service = {
+    datasource = {
+        "id": 3,
+        "cluster_key": "mysql-prometheus-demo",
+        "access_level": "user",
+    }
+    admin_datasource = {
         "id": 4,
+        "cluster_key": "mysql-prometheus-demo",
+        "access_level": "admin",
+    }
+    service = {
+        "id": 5,
         "service_type": "prometheus",
         "resource_ref": "cluster:mysql-prometheus-demo",
         "knowledge_base_ids": [8],
@@ -130,14 +148,14 @@ def test_initializer_reuses_existing_demo_objects(monkeypatch: pytest.MonkeyPatc
         assert method == "GET"
         assert payload is None
         if path == "/datasources":
-            return [datasource]
+            return [datasource, admin_datasource]
         if path == "/services":
             return [service]
         raise AssertionError(f"Unexpected request: {method} {path}")
 
     monkeypatch.setattr(initializer, "api_request", fake_request)
 
-    assert initializer.ensure_datasource() is datasource
+    assert initializer.ensure_datasources() == (datasource, admin_datasource)
     assert initializer.ensure_service() is service
 
 
@@ -147,7 +165,14 @@ def test_initializer_main_reports_ready_environment_without_installing_a_pack(
 ) -> None:
     initializer = _load_initializer(monkeypatch)
     monkeypatch.setattr(initializer, "wait_for_praxis", lambda: None)
-    monkeypatch.setattr(initializer, "ensure_datasource", lambda: {"id": 1, "name": "Demo MySQL"})
+    monkeypatch.setattr(
+        initializer,
+        "ensure_datasources",
+        lambda: (
+            {"id": 1, "name": "Demo MySQL"},
+            {"id": 2, "name": "Demo MySQL Admin"},
+        ),
+    )
     service_calls: list[bool] = []
 
     def fake_service():
@@ -168,10 +193,14 @@ def test_initializer_main_reports_ready_environment_without_installing_a_pack(
     assert "Database:       app" in summary
     assert "Username:       app" in summary
     assert f"Password:       {'a' * 48}" in summary
-    assert "Root password:  root-demo-password" in summary
+    assert "Admin username: root" in summary
+    assert "Admin password: root-demo-password" in summary
     assert "Prometheus:       http://127.0.0.1:9090" in summary
     assert "cAdvisor:         http://127.0.0.1:8080" in summary
-    assert "Registered in Praxis: Demo MySQL (ID 1), Demo Prometheus (ID 3)" in summary
+    assert (
+        "Registered in Praxis: Demo MySQL (ID 1), Demo MySQL Admin (ID 2), "
+        "Demo Prometheus (ID 3)" in summary
+    )
     assert "Knowledge pack: not installed" in summary
     assert service_calls == [True]
 
@@ -195,14 +224,17 @@ def test_initializer_waits_for_mysql_cadvisor_series(monkeypatch: pytest.MonkeyP
     assert 'container_label_com_docker_compose_service="mysql-demo"' in queries[0]
 
 
-def test_initializer_requires_both_objects_to_be_visible(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_initializer_requires_all_objects_to_be_visible(monkeypatch: pytest.MonkeyPatch) -> None:
     initializer = _load_initializer(monkeypatch)
 
     def fake_request(method: str, path: str, payload=None, **_kwargs):
         assert method == "GET"
         assert payload is None
         if path == "/datasources":
-            return [{"id": 7, "name": "Demo MySQL"}]
+            return [
+                {"id": 7, "name": "Demo MySQL", "access_level": "user"},
+                {"id": 8, "name": "Demo MySQL Admin", "access_level": "admin"},
+            ]
         if path == "/services":
             return []
         raise AssertionError(path)
@@ -210,7 +242,7 @@ def test_initializer_requires_both_objects_to_be_visible(monkeypatch: pytest.Mon
     monkeypatch.setattr(initializer, "api_request", fake_request)
 
     with pytest.raises(initializer.DemoInitError, match="service=False"):
-        initializer.verify_registration(7, 8)
+        initializer.verify_registration(7, 8, 9)
 
 
 def test_default_compose_builds_one_source_matched_demo() -> None:

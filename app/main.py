@@ -94,11 +94,14 @@ async def startup():
         demo_result = bootstrap_demo_integrations(_demo_db)
         if demo_result is not None:
             logger.info(
-                "demo_integrations_bootstrap_done datasource_id=%s service_id=%s "
-                "datasource_created=%s service_created=%s",
+                "demo_integrations_bootstrap_done datasource_id=%s admin_datasource_id=%s "
+                "service_id=%s datasource_created=%s admin_datasource_created=%s "
+                "service_created=%s",
                 demo_result.datasource_id,
+                demo_result.admin_datasource_id,
                 demo_result.service_id,
                 demo_result.datasource_created,
+                demo_result.admin_datasource_created,
                 demo_result.service_created,
             )
 

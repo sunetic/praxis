@@ -4,7 +4,7 @@ import hashlib
 import hmac
 import json
 from datetime import UTC, datetime
-from typing import Annotated
+from typing import Annotated, Literal
 
 from pydantic import Field, TypeAdapter
 from pydantic_ai import ModelRetry, RunContext, Tool
@@ -17,6 +17,11 @@ from app.services.agent.definitions import RunDependencies
 from app.services.agent.execution import RegisteredTool, ToolAccess
 from app.services.agent.persistence import run_db
 from app.services.agent.store import OutcomeUnknownError, RunStore
+from app.services.datasource.router import (
+    DataSourceRoutingError,
+    list_available_access_levels,
+    resolve_datasource_by_access_level,
+)
 from app.services.datasource.sql_safety import (
     ReadSqlValidationError,
     datasource_dialect,
@@ -80,19 +85,43 @@ def database_tools(session_factory) -> dict[str, RegisteredTool]:
             db.expunge(datasource)
             return datasource
 
+    def resolve_routed(ctx, datasource_id, access_level):
+        if datasource_id not in authorized_ids(ctx):
+            return None
+        with session_factory() as db:
+            source = db.get(DataSource, datasource_id)
+            if source is None or source.status != "active":
+                return None
+            routed = resolve_datasource_by_access_level(db, source.id, access_level)
+            db.expunge(routed.datasource)
+            return routed
+
     async def authorize_list(ctx, _args):
         return ToolAccess(
             allowed=True, target={"datasource_ids": sorted(await run_db(authorized_ids, ctx))}
         )
 
     async def authorize_query(ctx, args):
-        datasource = await run_db(resolve, ctx, args.get("datasource_id"))
-        if datasource is None:
-            return ToolAccess(allowed=False, target={"datasource_id": args.get("datasource_id")})
+        datasource_id = args.get("datasource_id")
+        access_level = args.get("access_level", "user")
+        try:
+            routed = await run_db(resolve_routed, ctx, datasource_id, access_level)
+        except DataSourceRoutingError as exc:
+            return ToolAccess(
+                allowed=False,
+                target={"requested_datasource_id": datasource_id, **exc.to_payload()},
+            )
+        if routed is None:
+            return ToolAccess(allowed=False, target={"datasource_id": datasource_id})
+        datasource = routed.datasource
         return ToolAccess(
             allowed=True,
             target={
                 "datasource_id": datasource.id,
+                "requested_datasource_id": datasource_id,
+                "requested_access_level": routed.requested_access_level,
+                "resolved_access_level": routed.resolved_access_level,
+                "routing_reason": routed.reason,
                 "database": datasource.database,
                 "host": datasource.host,
                 "port": datasource.port,
@@ -180,6 +209,7 @@ def database_tools(session_factory) -> dict[str, RegisteredTool]:
                     "engine": item.db_type,
                     "database": item.database,
                     "access_level": item.access_level,
+                    "available_access_levels": list_available_access_levels(db, item.id),
                     "platform_writes_enabled": get_setting(db, "sql_allow_mutating") is True,
                     "writes_require_approval": True,
                 }
@@ -201,6 +231,16 @@ def database_tools(session_factory) -> dict[str, RegisteredTool]:
                 ),
             ),
         ],
+        access_level: Annotated[
+            Literal["user", "admin"],
+            Field(
+                description=(
+                    "Credential level within the selected datasource cluster. Use user for "
+                    "application data and admin for database-wide or system-schema diagnostics "
+                    "such as performance_schema and sys."
+                )
+            ),
+        ] = "user",
         limit: Annotated[int, Field(ge=1, le=1000)] = 200,
     ) -> dict:
         """Run exactly one SQL statement against an authorized database, read-only.
@@ -214,9 +254,13 @@ def database_tools(session_factory) -> dict[str, RegisteredTool]:
         tool cannot execute writes, even if the user has approved a different
         action. Custom routines and executable comments are not supported.
         """
-        datasource = await run_db(resolve, ctx, datasource_id)
-        if datasource is None:
+        try:
+            routed = await run_db(resolve_routed, ctx, datasource_id, access_level)
+        except DataSourceRoutingError as exc:
+            raise ToolFailed(json.dumps(exc.to_payload(), ensure_ascii=False)) from exc
+        if routed is None:
             raise ToolFailed("Datasource is not currently authorized or active.")
+        datasource = routed.datasource
         dialect = datasource_dialect(datasource.db_type)
         validate_read_sql(sql, dialect)
         pool = get_pool_for_datasource(datasource)
@@ -230,6 +274,10 @@ def database_tools(session_factory) -> dict[str, RegisteredTool]:
         return TypeAdapter(dict).dump_python(
             {
                 "datasource_id": datasource.id,
+                "requested_datasource_id": datasource_id,
+                "requested_access_level": routed.requested_access_level,
+                "resolved_access_level": routed.resolved_access_level,
+                "routing_reason": routed.reason,
                 "database": datasource.database,
                 "observed_at": datetime.now(UTC).isoformat(),
                 **result,
@@ -251,6 +299,15 @@ def database_tools(session_factory) -> dict[str, RegisteredTool]:
                 ),
             ),
         ],
+        access_level: Annotated[
+            Literal["user", "admin"],
+            Field(
+                description=(
+                    "Credential level within the selected datasource cluster. Use admin for "
+                    "system-schema diagnostics and user for application query plans."
+                )
+            ),
+        ] = "user",
         analyze: Annotated[
             bool,
             Field(
@@ -268,9 +325,13 @@ def database_tools(session_factory) -> dict[str, RegisteredTool]:
         plans are the default. An analyzed plan executes the query inside a
         database-native read-only transaction with a server-side timeout.
         """
-        datasource = await run_db(resolve, ctx, datasource_id)
-        if datasource is None:
+        try:
+            routed = await run_db(resolve_routed, ctx, datasource_id, access_level)
+        except DataSourceRoutingError as exc:
+            raise ToolFailed(json.dumps(exc.to_payload(), ensure_ascii=False)) from exc
+        if routed is None:
             raise ToolFailed("Datasource is not currently authorized or active.")
+        datasource = routed.datasource
         validate_read_sql(sql, datasource_dialect(datasource.db_type))
         pool = get_pool_for_datasource(datasource)
         try:
@@ -288,6 +349,10 @@ def database_tools(session_factory) -> dict[str, RegisteredTool]:
         return TypeAdapter(dict).dump_python(
             {
                 "datasource_id": datasource.id,
+                "requested_datasource_id": datasource_id,
+                "requested_access_level": routed.requested_access_level,
+                "resolved_access_level": routed.resolved_access_level,
+                "routing_reason": routed.reason,
                 "database": datasource.database,
                 "observed_at": datetime.now(UTC).isoformat(),
                 **result,

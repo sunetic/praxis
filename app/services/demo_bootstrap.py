@@ -8,6 +8,11 @@ from dataclasses import dataclass
 from sqlalchemy.orm import Session
 
 from app.models import models
+from app.services.datasource.access import (
+    ADMIN_ACCESS_LEVEL,
+    USER_ACCESS_LEVEL,
+    datasource_access_level,
+)
 
 DEMO_CLUSTER_KEY = "mysql-prometheus-demo"
 DEMO_RESOURCE_REF = f"cluster:{DEMO_CLUSTER_KEY}"
@@ -16,8 +21,10 @@ DEMO_RESOURCE_REF = f"cluster:{DEMO_CLUSTER_KEY}"
 @dataclass(frozen=True)
 class DemoBootstrapResult:
     datasource_id: int
+    admin_datasource_id: int
     service_id: int
     datasource_created: bool
+    admin_datasource_created: bool
     service_created: bool
 
 
@@ -32,11 +39,16 @@ def bootstrap_demo_integrations(db: Session) -> DemoBootstrapResult | None:
         return None
 
     mysql_password = os.environ["DEMO_MYSQL_APP_PASSWORD"]
-    datasource = (
+    mysql_root_password = os.environ["DEMO_MYSQL_ROOT_PASSWORD"]
+    datasources = (
         db.query(models.DataSource)
         .filter(models.DataSource.cluster_key == DEMO_CLUSTER_KEY)
         .order_by(models.DataSource.id.asc())
-        .first()
+        .all()
+    )
+    datasource = next(
+        (item for item in datasources if datasource_access_level(item) == USER_ACCESS_LEVEL),
+        None,
     )
     datasource_created = datasource is None
     if datasource is None:
@@ -54,6 +66,28 @@ def bootstrap_demo_integrations(db: Session) -> DemoBootstrapResult | None:
             status="active",
         )
         db.add(datasource)
+        db.flush()
+
+    admin_datasource = next(
+        (item for item in datasources if datasource_access_level(item) == ADMIN_ACCESS_LEVEL),
+        None,
+    )
+    admin_datasource_created = admin_datasource is None
+    if admin_datasource is None:
+        admin_datasource = models.DataSource(
+            name="Demo MySQL Admin",
+            host="mysql-demo",
+            port=3306,
+            db_type="mysql",
+            cluster_key=DEMO_CLUSTER_KEY,
+            access_level="admin",
+            tenant_role="sys",
+            user="root",
+            password=mysql_root_password,
+            database="app",
+            status="active",
+        )
+        db.add(admin_datasource)
         db.flush()
 
     service = (
@@ -92,7 +126,9 @@ def bootstrap_demo_integrations(db: Session) -> DemoBootstrapResult | None:
     db.commit()
     return DemoBootstrapResult(
         datasource_id=datasource.id,
+        admin_datasource_id=admin_datasource.id,
         service_id=service.id,
         datasource_created=datasource_created,
+        admin_datasource_created=admin_datasource_created,
         service_created=service_created,
     )
