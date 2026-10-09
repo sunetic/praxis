@@ -60,8 +60,7 @@ async def complete_onboarding(
         )
 
     llm_config = {
-        key: value.strip() if isinstance(value, str) else value
-        for key, value in llm_config.items()
+        key: value.strip() if isinstance(value, str) else value for key, value in llm_config.items()
     }
 
     # New logical runs snapshot these settings; existing runs keep their config.

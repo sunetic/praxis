@@ -21,7 +21,8 @@ async def _finish(runtime, run_id):
 
 
 async def test_system_schema_query_routes_from_selected_user_to_cluster_admin(
-    custom_app, monkeypatch  # noqa: F811
+    custom_app,  # noqa: F811
+    monkeypatch,
 ):
     runtime, client = custom_app
     with runtime.sessions.begin() as db:

@@ -49,12 +49,8 @@ class MCPServiceError(Exception):
 def _headers_and_auth(
     config: dict[str, Any], secrets: dict[str, Any]
 ) -> tuple[dict[str, str], httpx2.Auth | None]:
-    headers = {
-        str(key): str(value) for key, value in (config.get("default_headers") or {}).items()
-    }
-    headers.update(
-        {str(key): str(value) for key, value in (secrets.get("headers") or {}).items()}
-    )
+    headers = {str(key): str(value) for key, value in (config.get("default_headers") or {}).items()}
+    headers.update({str(key): str(value) for key, value in (secrets.get("headers") or {}).items()})
     auth_type = str(config.get("auth_type") or "none")
     auth: httpx2.Auth | None = None
     if auth_type == "basic":
@@ -212,9 +208,8 @@ class MCPRunToolsets:
     def _current_target(
         self, service_id: int, ctx: RunContext[RunDependencies]
     ) -> dict[str, Any] | None:
-        if (
-            ctx.deps.actor_id != "local"
-            or service_id not in set(ctx.deps.scope.get("mcp_service_ids", []))
+        if ctx.deps.actor_id != "local" or service_id not in set(
+            ctx.deps.scope.get("mcp_service_ids", [])
         ):
             return None
         with self.sessions() as db:

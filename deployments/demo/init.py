@@ -212,9 +212,7 @@ def wait_for_connections(
     last_results: tuple[Any, Any, Any] = (None, None, None)
     while time.monotonic() < deadline:
         database = api_request("POST", f"/datasources/{datasource_id}/test", {})
-        admin_database = api_request(
-            "POST", f"/datasources/{admin_datasource_id}/test", {}
-        )
+        admin_database = api_request("POST", f"/datasources/{admin_datasource_id}/test", {})
         service = api_request("POST", f"/services/{service_id}/test", {})
         last_results = (database, admin_database, service)
         if database.get("success") and admin_database.get("success") and service.get("success"):
@@ -233,9 +231,7 @@ def wait_for_connections(
     raise DemoInitError(f"Demo connections did not become ready: {last_results!r}")
 
 
-def verify_registration(
-    datasource_id: int, admin_datasource_id: int, service_id: int
-) -> None:
+def verify_registration(datasource_id: int, admin_datasource_id: int, service_id: int) -> None:
     """Confirm fresh list calls expose both credentials and the bound service."""
     datasources = api_request("GET", "/datasources")
     services = api_request("GET", "/services")
@@ -244,8 +240,7 @@ def verify_registration(
         for item in datasources
     )
     admin_datasource_visible = any(
-        int(item.get("id", -1)) == admin_datasource_id
-        and item.get("access_level") == "admin"
+        int(item.get("id", -1)) == admin_datasource_id and item.get("access_level") == "admin"
         for item in datasources
     )
     service_visible = any(
@@ -270,15 +265,11 @@ def main() -> None:
     )
     service = retry_step("Demo Prometheus registration", ensure_service)
     print("[3/5] Verifying both MySQL credentials and Prometheus...", flush=True)
-    wait_for_connections(
-        int(datasource["id"]), int(admin_datasource["id"]), int(service["id"])
-    )
+    wait_for_connections(int(datasource["id"]), int(admin_datasource["id"]), int(service["id"]))
     print("[4/5] Waiting for MySQL container metrics...", flush=True)
     wait_for_cadvisor_metrics()
     print("[5/5] Confirming demo objects are visible in Praxis...", flush=True)
-    verify_registration(
-        int(datasource["id"]), int(admin_datasource["id"]), int(service["id"])
-    )
+    verify_registration(int(datasource["id"]), int(admin_datasource["id"]), int(service["id"]))
     print(
         f"""
 Praxis demo is ready.

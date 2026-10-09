@@ -103,9 +103,7 @@ async def running_mcp_server(transport_name: str):
         )
         url = f"http://127.0.0.1:{port}/sse"
 
-    server = uvicorn.Server(
-        uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning")
-    )
+    server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning"))
     task = asyncio.create_task(server.serve())
     async with asyncio.timeout(5):
         while not server.started:
@@ -276,18 +274,14 @@ async def test_chat_invokes_real_streamable_http_mcp_tool(store):
             row = runtime.store.get(run_id, "local")
             assert row["status"] == "finished", row
             assert row["output"] == "真实 MCP 返回了 praxis-mcp-live-chat。"
-            assert calls == [
-                {"name": "resolve_marker", "arguments": {"seed": "chat"}}
-            ]
+            assert calls == [{"name": "resolve_marker", "arguments": {"seed": "chat"}}]
             offered = {tool.name for tool in script.requests[0][1].function_tools}
             assert f"mcp_{service_id}_resolve_marker" in offered
             assert "call_service" not in offered
             assert "list_services" not in offered
             assert row["tool_calls"][0]["name"] == f"mcp_{service_id}_resolve_marker"
             assert row["tool_calls"][0]["status"] == "succeeded"
-            assert row["approvals"][0]["decided_by"] == (
-                "platform_confirmation_bypass"
-            )
+            assert row["approvals"][0]["decided_by"] == ("platform_confirmation_bypass")
             returned = [
                 part
                 for message in script.requests[1][0]
@@ -297,8 +291,6 @@ async def test_chat_invokes_real_streamable_http_mcp_tool(store):
             ]
             assert "praxis-mcp-live-chat" in str(returned[0].content)
             with store.sessions() as db:
-                assert db.scalar(
-                    select(Service.id).where(Service.id == service_id)
-                ) == service_id
+                assert db.scalar(select(Service.id).where(Service.id == service_id)) == service_id
         finally:
             await runtime.close()
