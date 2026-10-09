@@ -34,6 +34,7 @@ class ToolAccess:
     target: dict[str, Any]
     requires_approval: bool = False
     resource_key: str | None = None
+    auto_approval_allowed: bool = True
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -114,7 +115,7 @@ class DurableToolset(WrapperToolset[RunDependencies]):
         if not ctx.tool_call_id:
             raise RunConflictError("Native call identity is required")
         auto_approval = None
-        if access.allowed and access.requires_approval:
+        if access.allowed and access.requires_approval and access.auto_approval_allowed:
             bypass = (
                 await run_db(self.confirmation_bypass)
                 if self.confirmation_bypass is not None

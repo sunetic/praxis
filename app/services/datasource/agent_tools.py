@@ -17,6 +17,10 @@ from app.services.agent.definitions import RunDependencies
 from app.services.agent.execution import RegisteredTool, ToolAccess
 from app.services.agent.persistence import run_db
 from app.services.agent.store import OutcomeUnknownError, RunStore
+from app.services.datasource.risk_assessment import (
+    DatabaseChangeRisk,
+    assess_database_change,
+)
 from app.services.datasource.router import (
     DataSourceRoutingError,
     list_available_access_levels,
@@ -173,11 +177,22 @@ def database_tools(session_factory) -> dict[str, RegisteredTool]:
 
     async def authorize_write(ctx, args):
         snapshot = await run_db(write_snapshot, ctx, args.get("datasource_id"))
+        risk = None
+        if snapshot is not None:
+            supplied = DatabaseChangeRisk.model_validate(args.get("risk_assessment"))
+            risk = assess_database_change(
+                args["sql"], datasource_dialect(snapshot[0].db_type), supplied
+            )
         return ToolAccess(
             allowed=snapshot is not None,
-            target=snapshot[1] if snapshot else {"datasource_id": args.get("datasource_id")},
+            target=(
+                {**snapshot[1], "risk_assessment": risk}
+                if snapshot
+                else {"datasource_id": args.get("datasource_id")}
+            ),
             requires_approval=True,
             resource_key=snapshot[2] if snapshot else None,
+            auto_approval_allowed=bool(risk and risk["auto_approval_eligible"]),
         )
 
     async def validate_write(ctx, **args):
@@ -187,6 +202,11 @@ def database_tools(session_factory) -> dict[str, RegisteredTool]:
         dialect = datasource_dialect(datasource.db_type)
         try:
             validate_write_sql(args["sql"], dialect)
+            assess_database_change(
+                args["sql"],
+                dialect,
+                DatabaseChangeRisk.model_validate(args["risk_assessment"]),
+            )
         except ValueError as exc:
             raise ModelRetry(str(exc)) from exc
 
@@ -364,13 +384,24 @@ def database_tools(session_factory) -> dict[str, RegisteredTool]:
         ctx: RunContext[RunDependencies],
         datasource_id: Annotated[int, Field(gt=0)],
         sql: Annotated[str, Field(min_length=1, max_length=100_000)],
+        risk_assessment: Annotated[
+            DatabaseChangeRisk,
+            Field(
+                description=(
+                    "Required preflight assessment based on current read-only evidence. "
+                    "Include row scale when applicable, locking/availability and resource/replication "
+                    "impact, rollback, and post-change verification. Never guess missing facts."
+                )
+            ),
+        ],
     ) -> dict:
         """Request approval for one SQL data/schema change on an authorized database.
 
         Call this tool to create the platform approval request; SQL is sent only
         after the user approves it. Writing SQL in chat does not create an approval
-        request. Requires platform writes enabled. Approval covers exact SQL and
-        connection; this tool never switches to other/admin credentials. Supports
+        request. A structured, evidence-based risk assessment is mandatory and is
+        shown with the exact SQL. Requires platform writes enabled. Approval covers
+        exact SQL, assessment and connection; this tool never switches to other/admin credentials. Supports
         data/schema changes and GRANT/REVOKE, not scripts, session/transaction
         control or stored procedures. No retries. Returns a server completion
         receipt, not RETURNING rows or proof of the user's overall goal. Use the
@@ -381,6 +412,10 @@ def database_tools(session_factory) -> dict[str, RegisteredTool]:
         if snapshot is None:
             raise ToolFailed("Database write permission is unavailable; no SQL was sent.")
         datasource, target, _ = snapshot
+        assessed_risk = assess_database_change(
+            sql, datasource_dialect(datasource.db_type), risk_assessment
+        )
+        target = {**target, "risk_assessment": assessed_risk}
         row = await run_db(store.get, ctx.deps.run_id, ctx.deps.actor_id)
         call = next(item for item in row["tool_calls"] if item["call_id"] == ctx.tool_call_id)
         if target != call["target"]:

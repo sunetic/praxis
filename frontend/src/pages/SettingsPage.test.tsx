@@ -121,7 +121,7 @@ describe("SettingsPage native model configuration", () => {
       ai_action_confirmation_bypass: true,
     }))
     expect(bypass).toBeChecked()
-    expect(screen.getByText("操作自动执行")).toBeInTheDocument()
+    expect(screen.getByText("符合条件的操作自动执行")).toBeInTheDocument()
   })
 
   it("restores write permission when saving fails", async () => {

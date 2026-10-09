@@ -264,8 +264,9 @@ class RuntimeApplication:
                     f"the request_database_change tool, datasource {grant.datasource_id}, this "
                     f"conversation and the current Agent, until {expires}. It does not authorize "
                     "another datasource, tool, Agent, or conversation and does not expand the "
-                    "requested task. If an operation has an unknown outcome, stop for explicit "
-                    "reconciliation and never retry it automatically.\n"
+                    "requested task. Database changes that the server assesses above low risk still "
+                    "require an explicit approval. If an operation has an unknown outcome, stop for "
+                    "explicit reconciliation and never retry it automatically.\n"
                 )
         selected_sources = [
             {

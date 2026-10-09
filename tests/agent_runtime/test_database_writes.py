@@ -11,6 +11,10 @@ from test_runtime import Script, call
 
 from app.models.models import Agent, DataSource
 from app.services.datasource import agent_tools, write_executor
+from app.services.datasource.risk_assessment import (
+    DatabaseChangeRisk,
+    assess_database_change,
+)
 from app.services.datasource.write_executor import (
     WriteNotExecutedError,
     WriteOutcomeUnknownError,
@@ -19,6 +23,24 @@ from app.services.datasource.write_executor import (
 from app.services.platform.settings_store import upsert_setting
 
 SQL = "UPDATE counters SET n = n + 1 WHERE id = 1"
+LOW_RISK_SQL = "INSERT INTO counters(id,n) VALUES(2,0)"
+
+
+def risk(**overrides):
+    value = {
+        "risk_level": "medium",
+        "summary": "One identified row will be changed.",
+        "observed_facts": ["A read-only check found exactly one matching row."],
+        "estimated_affected_rows": 1,
+        "estimated_table_rows": 1,
+        "row_estimate_basis": "A bounded COUNT query using the same predicate.",
+        "lock_and_availability_impact": "A row lock is expected for the statement duration.",
+        "resource_and_replication_impact": "Negligible write and replication volume.",
+        "rollback_plan": "Restore the previous value with a separately approved statement.",
+        "verification_plan": "Read the row by primary key after completion.",
+    }
+    value.update(overrides)
+    return value
 
 
 @pytest.fixture
@@ -73,8 +95,18 @@ async def submit(writes, script):
     return await wait_state(runtime, response.json()["id"])
 
 
-def write_call(id="write-1", sql=SQL):
-    return call("request_database_change", json.dumps({"datasource_id": 1, "sql": sql}), id)
+def write_call(id="write-1", sql=SQL, assessment=None):
+    return call(
+        "request_database_change",
+        json.dumps(
+            {
+                "datasource_id": 1,
+                "sql": sql,
+                "risk_assessment": assessment or risk(),
+            }
+        ),
+        id,
+    )
 
 
 async def decide(client, row, approved=True):
@@ -92,7 +124,12 @@ async def test_exact_sql_approval_is_durable_and_duplicate_decisions_dispatch_on
     row = await submit(writes, script)
     assert row["status"] == "waiting_approval"
     assert effects == []
-    assert row["tool_calls"][0]["arguments"] == {"datasource_id": 1, "sql": SQL}
+    assert row["tool_calls"][0]["arguments"] == {
+        "datasource_id": 1,
+        "sql": SQL,
+        "risk_assessment": risk(),
+    }
+    assert row["tool_calls"][0]["target"]["risk_assessment"]["risk_level"] == "medium"
     assert row["tool_calls"][0]["target"]["user"] == "test"
     await decide(client, row)
     await decide(client, row)
@@ -209,9 +246,15 @@ async def test_global_confirmation_bypass_executes_and_preserves_write_policy(wr
     runtime, _, _, conversation, effects = writes
     with runtime.sessions.begin() as db:
         upsert_setting(db, "ai_action_confirmation_bypass", True)
-    row = await submit(writes, Script([write_call()], ["已执行。 "]))
+    row = await submit(
+        writes,
+        Script(
+            [write_call(sql=LOW_RISK_SQL, assessment=risk(risk_level="low"))],
+            ["已执行。 "],
+        ),
+    )
     assert row["status"] == "finished"
-    assert effects == [(1, SQL)]
+    assert effects == [(1, LOW_RISK_SQL)]
     approval = row["approvals"][0]
     assert approval["decision"] == "approved"
     assert approval["decided_by"] == "platform_confirmation_bypass"
@@ -239,9 +282,15 @@ async def test_conversation_auto_approval_is_narrow_expiring_and_audited(writes)
         f"/api/v1/conversations/{conversation}", json={"scene": {"auto_approval": grant}}
     )
     assert response.status_code == 200, response.text
-    row = await submit(writes, Script([write_call()], ["已执行一次。 "]))
+    row = await submit(
+        writes,
+        Script(
+            [write_call(sql=LOW_RISK_SQL, assessment=risk(risk_level="low"))],
+            ["已执行一次。 "],
+        ),
+    )
     assert row["status"] == "finished"
-    assert effects == [(1, SQL)]
+    assert effects == [(1, LOW_RISK_SQL)]
     assert row["approvals"] == [
         {
             **row["approvals"][0],
@@ -279,6 +328,33 @@ async def test_expired_or_overlong_auto_approval_cannot_bypass_confirmation(writ
     row = await submit(writes, Script([write_call()], ["取消。 "]))
     assert row["status"] == "waiting_approval"
     assert effects == []
+    runtime.service.cancel(row["id"], "local")
+
+
+@pytest.mark.parametrize("automatic", ["global", "conversation"])
+async def test_elevated_risk_always_requires_explicit_approval(writes, automatic):
+    runtime, client, agent, conversation, effects = writes
+    if automatic == "global":
+        with runtime.sessions.begin() as db:
+            upsert_setting(db, "ai_action_confirmation_bypass", True)
+    else:
+        grant = {
+            "tool_name": "request_database_change",
+            "agent_id": agent["id"],
+            "datasource_id": 1,
+            "expires_at": time.time() + 30 * 60,
+        }
+        response = await client.patch(
+            f"/api/v1/conversations/{conversation}", json={"scene": {"auto_approval": grant}}
+        )
+        assert response.status_code == 200
+
+    row = await submit(writes, Script([write_call()], ["已执行。 "]))
+    assert row["status"] == "waiting_approval"
+    assert effects == []
+    assessment = row["tool_calls"][0]["target"]["risk_assessment"]
+    assert assessment["risk_level"] == "medium"
+    assert assessment["requires_explicit_approval"] is True
     runtime.service.cancel(row["id"], "local")
 
 
@@ -412,6 +488,45 @@ def test_write_statement_boundary_accepts_supported_single_statements(sql):
 def test_write_statement_boundary_rejects_scripts_and_session_control(sql):
     with pytest.raises(ValueError):
         validate_write_sql(sql, "mysql")
+
+
+def test_index_risk_requires_table_scale_and_cannot_be_reported_as_low():
+    supplied = DatabaseChangeRisk.model_validate(
+        risk(
+            risk_level="low",
+            estimated_affected_rows=None,
+            estimated_table_rows=2_000_000,
+            summary="Build an index on a large table.",
+        )
+    )
+    assessed = assess_database_change(
+        "CREATE INDEX counters_n_idx ON counters(n)", "mysql", supplied
+    )
+    assert assessed["risk_level"] == "critical"
+    assert assessed["server_risk_floor"] == "critical"
+    assert assessed["auto_approval_eligible"] is False
+    assert any("index creation" in reason for reason in assessed["server_risk_reasons"])
+
+
+def test_index_risk_rejects_missing_table_row_estimate():
+    supplied = DatabaseChangeRisk.model_validate(
+        risk(
+            risk_level="high",
+            estimated_affected_rows=None,
+            estimated_table_rows=None,
+        )
+    )
+    with pytest.raises(ValueError, match="estimated_table_rows"):
+        assess_database_change("CREATE INDEX counters_n_idx ON counters(n)", "mysql", supplied)
+
+
+def test_insert_select_is_not_eligible_for_automatic_approval():
+    supplied = DatabaseChangeRisk.model_validate(risk(risk_level="low"))
+    assessed = assess_database_change(
+        "INSERT INTO counters(id, n) SELECT id + 10, n FROM counters", "mysql", supplied
+    )
+    assert assessed["risk_level"] == "medium"
+    assert assessed["auto_approval_eligible"] is False
 
 
 @pytest.mark.parametrize("engine", ["mysql", "postgresql"])
