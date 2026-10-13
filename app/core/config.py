@@ -4,7 +4,7 @@ import re
 from functools import lru_cache
 from pathlib import Path
 
-from pydantic import model_validator
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -108,10 +108,12 @@ class Settings(BaseSettings):
     monitor_db_password: str = ""
     monitor_db_database: str = "praxis_collector"
 
-    tracing_enabled: bool = True
+    tracing_enabled: bool = False
     tracing_db_path: str = str(DEFAULT_TRACING_DB_PATH)
-    tracing_sample_rate: float = 1.0
-    tracing_retention_hours: int = 24
+    tracing_sample_rate: float = Field(default=0.1, ge=0, le=1)
+    tracing_retention_hours: int = Field(default=24, gt=0)
+    tracing_cleanup_interval_seconds: int = Field(default=300, gt=0)
+    tracing_excluded_urls: str = "/health"
 
     datasource_encryption_key: str = ""
 

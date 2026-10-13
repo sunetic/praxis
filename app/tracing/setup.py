@@ -31,13 +31,17 @@ def init_tracing(settings, app=None) -> None:
     sampler = TraceIdRatioBased(settings.tracing_sample_rate)
     provider = TracerProvider(resource=resource, sampler=sampler)
 
-    exporter = SQLiteSpanExporter(db_path=settings.tracing_db_path)
+    exporter = SQLiteSpanExporter(
+        db_path=settings.tracing_db_path,
+        retention_hours=settings.tracing_retention_hours,
+        cleanup_interval_seconds=settings.tracing_cleanup_interval_seconds,
+    )
     provider.add_span_processor(BatchSpanProcessor(exporter))
 
     trace.set_tracer_provider(provider)
     _provider = provider
 
-    _instrument_fastapi(app)
+    _instrument_fastapi(app, excluded_urls=settings.tracing_excluded_urls)
     _instrument_aiohttp()
     _instrument_httpx()
     _instrument_sqlalchemy(settings)
@@ -58,14 +62,14 @@ def shutdown_tracing() -> None:
         logger.info("tracing_shutdown_ok")
 
 
-def _instrument_fastapi(app=None) -> None:
+def _instrument_fastapi(app=None, *, excluded_urls: str = "/health") -> None:
     try:
         from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 
         if app is not None:
-            FastAPIInstrumentor.instrument_app(app)
+            FastAPIInstrumentor.instrument_app(app, excluded_urls=excluded_urls)
         else:
-            FastAPIInstrumentor.instrument()
+            FastAPIInstrumentor.instrument(excluded_urls=excluded_urls)
         logger.info("tracing_instrumentor_ok name=fastapi")
     except Exception as e:
         logger.warning("tracing_instrumentor_fail name=fastapi error=%s", e)

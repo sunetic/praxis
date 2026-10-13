@@ -3,17 +3,29 @@
 import json
 import sqlite3
 import threading
+import time
 from collections.abc import Sequence
 
 from opentelemetry.sdk.trace import ReadableSpan
 from opentelemetry.sdk.trace.export import SpanExporter, SpanExportResult
 
+from app.tracing.cleanup import purge_expired_spans
+
 
 class SQLiteSpanExporter(SpanExporter):
     """Exports spans to a local SQLite database."""
 
-    def __init__(self, db_path: str = "./tracing.db"):
+    def __init__(
+        self,
+        db_path: str = "./tracing.db",
+        *,
+        retention_hours: int = 24,
+        cleanup_interval_seconds: int = 300,
+    ):
         self._db_path = db_path
+        self._retention_hours = retention_hours
+        self._cleanup_interval_seconds = cleanup_interval_seconds
+        self._last_cleanup = 0.0
         self._lock = threading.Lock()
         self._conn: sqlite3.Connection | None = None
         self._ensure_table()
@@ -21,6 +33,10 @@ class SQLiteSpanExporter(SpanExporter):
     def _get_conn(self) -> sqlite3.Connection:
         if self._conn is None:
             self._conn = sqlite3.connect(self._db_path, check_same_thread=False)
+            self._conn.execute("PRAGMA busy_timeout=5000")
+            # This must be selected before WAL mode and before the first table
+            # is created. Existing databases keep their current setting.
+            self._conn.execute("PRAGMA auto_vacuum=INCREMENTAL")
             self._conn.execute("PRAGMA journal_mode=WAL")
             self._conn.execute("PRAGMA synchronous=NORMAL")
         return self._conn
@@ -45,9 +61,24 @@ class SQLiteSpanExporter(SpanExporter):
                 )
                 """
             )
-            conn.execute("CREATE INDEX IF NOT EXISTS idx_spans_trace ON spans (trace_id)")
+            # Do not create the old idx_spans_trace index: the primary key
+            # already supports trace_id prefix lookups. Existing databases are
+            # left unchanged here so startup never performs surprise DDL on a
+            # potentially large trace store.
             conn.execute("CREATE INDEX IF NOT EXISTS idx_spans_start ON spans (start_time_ns)")
             conn.commit()
+
+    def _cleanup_if_due(self) -> None:
+        now = time.monotonic()
+        if now - self._last_cleanup < self._cleanup_interval_seconds:
+            return
+        self._last_cleanup = now
+        purge_expired_spans(
+            self._db_path,
+            self._retention_hours,
+            batch_size=5_000,
+            max_batches=5,
+        )
 
     def export(self, spans: Sequence[ReadableSpan]) -> SpanExportResult:
         if not spans:
@@ -83,6 +114,7 @@ class SQLiteSpanExporter(SpanExporter):
                     rows,
                 )
                 conn.commit()
+            self._cleanup_if_due()
             return SpanExportResult.SUCCESS
         except Exception:
             return SpanExportResult.FAILURE

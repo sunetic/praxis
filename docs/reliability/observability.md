@@ -8,7 +8,7 @@ Chat, Function, and Scheduler expose steps, tool results, status, duration, or r
 
 ## End-to-end tracing
 
-Praxis uses OpenTelemetry to collect spans for HTTP, model requests, selected database access, Chat tool calls, and Scheduler runs. By default, spans are stored in a local SQLite trace database. Query them through the API:
+Praxis can use OpenTelemetry to collect spans for HTTP, model requests, selected database access, Chat tool calls, and Scheduler runs. Tracing is disabled by default. When explicitly enabled, spans are stored in a local SQLite trace database and expired spans are removed automatically in bounded batches. Query them through the API:
 
 | Request | Purpose |
 | --- | --- |
@@ -17,7 +17,7 @@ Praxis uses OpenTelemetry to collect spans for HTTP, model requests, selected da
 | `GET /api/v1/traces/{trace_id}` | Span tree for one trace |
 | `POST /api/v1/traces/cleanup` | Remove expired spans |
 
-Related environment settings include `TRACING_ENABLED`, `TRACING_DB_PATH`, `TRACING_SAMPLE_RATE`, and `TRACING_RETENTION_HOURS`. Before reducing the sample rate in a high-volume environment, make sure critical failures will still have enough samples.
+Related environment settings include `TRACING_ENABLED`, `TRACING_DB_PATH`, `TRACING_SAMPLE_RATE`, `TRACING_RETENTION_HOURS`, `TRACING_CLEANUP_INTERVAL_SECONDS`, and `TRACING_EXCLUDED_URLS`. Health checks are excluded by default. Before increasing the sample rate in a high-volume environment, estimate the resulting span volume and make sure the configured retention fits the available disk.
 
 ## Troubleshooting order
 

@@ -8,7 +8,7 @@ Chat、Function 和 Scheduler 会展示步骤、工具结果、状态、耗时�
 
 ## 全链路追踪
 
-Praxis 使用 OpenTelemetry 采集 HTTP、模型请求、部分数据库访问、Chat 工具调用和 Scheduler 运行等 span，并默认写入本地 SQLite 追踪库。追踪可通过 API 查询：
+Praxis 可使用 OpenTelemetry 采集 HTTP、模型请求、部分数据库访问、Chat 工具调用和 Scheduler 运行等 span。Tracing 默认关闭；显式开启后，span 写入本地 SQLite 追踪库，过期记录会按小批次自动清理。追踪可通过 API 查询：
 
 | 请求 | 用途 |
 | --- | --- |
@@ -17,7 +17,7 @@ Praxis 使用 OpenTelemetry 采集 HTTP、模型请求、部分数据库访问�
 | `GET /api/v1/traces/{trace_id}` | 一条 trace 的 span 树 |
 | `POST /api/v1/traces/cleanup` | 清理过期 span |
 
-相关环境配置包括 `TRACING_ENABLED`、`TRACING_DB_PATH`、`TRACING_SAMPLE_RATE` 和 `TRACING_RETENTION_HOURS`。在高流量环境降低采样率前，应确认关键故障仍有足够样本。
+相关环境配置包括 `TRACING_ENABLED`、`TRACING_DB_PATH`、`TRACING_SAMPLE_RATE`、`TRACING_RETENTION_HOURS`、`TRACING_CLEANUP_INTERVAL_SECONDS` 和 `TRACING_EXCLUDED_URLS`。健康检查默认不采集。在高流量环境提高采样率前，应先估算 span 规模，并确认保留周期与可用磁盘匹配。
 
 ## 排障顺序
 

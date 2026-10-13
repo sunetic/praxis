@@ -12,6 +12,7 @@ services:
     image: praxis-demo:local
     environment:
       PRAXIS_DEMO_BOOTSTRAP: "true"
+      TRACING_ENABLED: "false"
       DEMO_MYSQL_APP_PASSWORD: ${DEMO_MYSQL_APP_PASSWORD:-praxis-demo-app}
       DEMO_MYSQL_ROOT_PASSWORD: ${DEMO_MYSQL_ROOT_PASSWORD:-praxis-demo-root}
     ports:
